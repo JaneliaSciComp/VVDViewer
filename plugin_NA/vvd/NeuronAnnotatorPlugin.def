@@ -1,5 +1,0 @@
-LIBRARY	"NeuronAnnotatorPlugin"
-
-EXPORTS
-	CreatePlugin=CreatePlugin
-	DeletePlugin=DeletePlugin
