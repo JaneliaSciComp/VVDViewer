@@ -55,7 +55,7 @@ DEALINGS IN THE SOFTWARE.
 #include <stdarg.h>
 #include <unordered_map>
 #include <memory>
-#include "nv/timer.h"
+#include "NV/Timer.h"
 
 #include <glm/glm.hpp>
 

@@ -220,6 +220,14 @@ public:
 #elif (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
 	void* view;
 	void setWindow(void *pView) { view = pView;}
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
+	wl_display *display = nullptr;
+	wl_surface *surface = nullptr;
+	void setWindow(wl_display *p_disp, wl_surface *p_surf) { display = p_win; surface = p_surf; }
+#elif defined(VK_USE_PLATFORM_XCB_KHR)
+	xcb_connection_t *connection;
+	xcb_window_t window;
+	void setWindow(xcb_window_t p_win, xcb_connection_t *p_connection) { window = p_win; connection = p_connection; }
 #endif
 	void setSize(int width, int height);
 

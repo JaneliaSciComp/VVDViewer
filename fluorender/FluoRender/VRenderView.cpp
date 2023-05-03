@@ -44,11 +44,19 @@ DEALINGS IN THE SOFTWARE.
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 //#include <boost/process.hpp>
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-#ifdef __WXMAC__
-#include "MetalCompatibility.h"
+#if defined(_WIN32)
+  #include <Windows.h>
+#elif defined(__WXMAC__)
+  #include "MetalCompatibility.h"
+#elif defined(__WXGTK__)
+  #include <gtk/gtk.h>
+  #if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+    #include <wayland-client.h>
+    #include "xdg-shell-client-protocol.h"
+  #elif defined(VK_USE_PLATFORM_XCB_KHR)
+    #include <gdk/gdkx.h>
+    #include <X11/Xlib-xcb.h>
+  #endif
 #endif
 
 int VRenderView::m_id = 1;
@@ -715,9 +723,23 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_vulkan->initVulkan();
 #if defined(_WIN32)
 	m_vulkan->setWindow((HWND)GetHWND(), GetModuleHandle(NULL));
-#elif (defined(__WXMAC__))
+#elif defined(__WXMAC__)
     makeViewMetalCompatible(GetHandle());
 	m_vulkan->setWindow(GetHandle());
+#elif defined(__WXGTK__)
+	GtkWidget* gtk_widget = GetHandle();
+    GdkWindow *gtk_window = gtk_widget_get_window(gtk_widget);
+	GdkDisplay *gtk_display = gtk_widget_get_display(gtk_widget);
+#if defined(VK_USE_PLATFORM_XCB_KHR)
+	Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
+    xcb_window_t win = GDK_WINDOW_XID(gtk_window);
+	xcb_connection_t *c = XGetXCBConnection(dpy);
+	m_vulkan->setWindow(win, c);
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
+	wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
+	wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
+	m_vulkan->setWindow(wdisp, wsurf);
+#endif
 #endif
 	m_vulkan->prepare();
 
@@ -7361,7 +7383,7 @@ void VRenderVulkanView::SetParams(double t)
 	Interpolator *interpolator = vr_frame->GetInterpolator();
 	if(!interpolator)
 		return;
-	KeyCode keycode;
+	FLKeyCode keycode;
 	keycode.l0 = 1;
 	keycode.l0_name = m_vrv->GetName();
     
@@ -17622,7 +17644,7 @@ void VRenderVulkanView::SetManipKey(double t, int interpolation, const Point *vi
 
 	ClippingView* clip_view = vr_frame->GetClippingView();
 
-	KeyCode keycode;
+	FLKeyCode keycode;
 	FlKeyDouble* flkey = 0;
 	FlKeyQuaternion* flkeyQ = 0;
 	FlKeyBoolean* flkeyB = 0;
@@ -17783,7 +17805,7 @@ void VRenderVulkanView::SetManipParams(double t)
 	if (!vr_frame)
 		return;
 	ClippingView* clip_view = vr_frame->GetClippingView();
-	KeyCode keycode;
+	FLKeyCode keycode;
 	keycode.l0 = 1;
 	keycode.l0_name = m_vrv->GetName();
     

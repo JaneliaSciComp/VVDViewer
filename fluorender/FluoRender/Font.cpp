@@ -7,15 +7,15 @@
 #include "Font.h"
 #include <algorithm>
 
-Font::Font(const FT_Face& face, std::shared_ptr<TextureAtlas> ta) : m_face(face), m_textureAtlas(std::move(ta)) {
+FLFont::FLFont(const FT_Face& face, std::shared_ptr<TextureAtlas> ta) : m_face(face), m_textureAtlas(std::move(ta)) {
 
 }
 
-int Font::GetNumGlyphs() {
+int FLFont::GetNumGlyphs() {
     return static_cast<int>(m_face->num_glyphs);
 }
 
-std::shared_ptr<Glyph> Font::GetGlyph(wchar_t c) {
+std::shared_ptr<Glyph> FLFont::GetGlyph(wchar_t c) {
     auto foundIt = m_glyphs.find(c);
     if(foundIt != m_glyphs.end()) {
         return foundIt->second;
@@ -28,7 +28,7 @@ std::shared_ptr<Glyph> Font::GetGlyph(wchar_t c) {
     return glyph;
 }
 
-TextDimensions Font::Measure(const std::wstring& text) {
+TextDimensions FLFont::Measure(const std::wstring& text) {
     int width = 0;
     int height = 0;
 

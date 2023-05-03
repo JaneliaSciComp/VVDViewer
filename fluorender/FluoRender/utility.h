@@ -30,6 +30,10 @@ DEALINGS IN THE SOFTWARE.
 
 #include <vector>
 
+#ifdef LINUX
+#include "stddef.h"
+#endif
+
 #include "DLLExport.h"
 
 #define PI_2 1.5707963267948966192313216916398

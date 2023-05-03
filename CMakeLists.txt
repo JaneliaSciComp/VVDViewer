@@ -73,6 +73,8 @@ add_definitions(-DVERSION_COPYRIGHT="November 2015")   # Up to here!
 #static compile
 add_definitions(-DSTATIC_COMPILE)
 
+set(CMAKE_SHARED_LINKER_FLAGS "-Wl,-Bsymbolic")
+
 #teem required definitions
 add_definitions(-DTEEM_DIO=0)
 add_definitions(-DTEEM_ENDIAN=1234)
@@ -101,12 +103,13 @@ endif()
 
 include(${wxWidgets_USE_FILE})
 set(wxWidgets_USE_STATIC ON)
-if (APPLE)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+   include_directories(${wxWidgets_ROOT_DIR}/src/tiff/libtiff)
+else()
    find_package(TIFF REQUIRED)
    include_directories(${TIFF_INCLUDE_DIR})
-else()
-   include_directories(${wxWidgets_ROOT_DIR}/src/tiff/libtiff)
 endif()
+
 add_definitions(-DUNICODE)
 add_definitions(-D_UNICODE)
 #solution for wxWidgets linking "ambiguous" errors
@@ -127,14 +130,16 @@ endif()
 #find_package(OpenGL REQUIRED)
 
 #Boost
-set(Boost_USE_STATIC_LIBS        ON) # only find static libs
+#set(Boost_USE_STATIC_LIBS        ON) # only find static libs
 set(Boost_USE_MULTITHREADED      ON)
 set(Boost_USE_STATIC_RUNTIME    OFF)
-find_package(Boost COMPONENTS system chrono REQUIRED)
+find_package(Boost COMPONENTS system chrono filesystem REQUIRED)
 include_directories(${Boost_INCLUDE_DIR})
+add_definitions( -DBOOST_ALL_NO_LIB )
 
 #teem
 # add zlib
+set(ZLIB_USE_STATIC_LIBS ON)
 mark_as_advanced(CLEAR ZLIB_INCLUDE_DIR)
 mark_as_advanced(CLEAR ZLIB_LIBRARY)
 find_package(ZLIB REQUIRED)
@@ -177,9 +182,12 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     set(ffmpeg_LIBRARIES ${ffmpeg_LIBRARIES} optimized ${f})
   endforeach()
   add_definitions(-D__STDC_CONSTANT_MACROS)
-else()
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   include_directories(${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/OSX/include)
   file(GLOB ffmpeg_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/OSX/lib/*.a)
+else()
+  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Linux/include)
+  file(GLOB ffmpeg_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Linux/lib/*.a)
 endif()
 
 #curl
@@ -190,6 +198,7 @@ find_package(CURL REQUIRED)
 include_directories(${CURL_INCLUDE_DIR})
 
 #openssl
+set(OPENSSL_USE_STATIC_LIBS TRUE)
 find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -269,18 +278,89 @@ add_library(PLUGINS_OBJ OBJECT ${PLUGIN_DIR}/stdwx.h
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   include_directories(${VVDViewer_SOURCE_DIR}/fluorender/hdf5/win/include)
   file(GLOB hdf5_LIBS_DR ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/win/lib/*.lib)
-  set(hdf5_LIBRARIES)
+  set(HDF5_LIBRARIES)
   foreach(f ${hdf5_LIBS_DR})
     if(f MATCHES "_D.lib$")
-      set(hdf5_LIBRARIES ${hdf5_LIBRARIES} debug ${f})
+      set(HDF5_LIBRARIES ${HDF5_LIBRARIES} debug ${f})
 	elseif(f MATCHES ".lib$")
-	  set(hdf5_LIBRARIES ${hdf5_LIBRARIES} optimized ${f})
+	  set(HDF5_LIBRARIES ${HDF5_LIBRARIES} optimized ${f})
 	endif()
   endforeach()
-else()
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   include_directories(${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/include)
-  file(GLOB hdf5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
+  file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
+else()
+  find_package(HDF5 REQUIRED)
+  include_directories(${HDF5_INCLUDE_DIRS})
+  file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
 endif()
+
+#libCZI
+find_path(CZI_INCLUDE_DIR NAMES libCZI.h PATHS ${CZI_INCLUDE_DIR} /usr/local/include/libCZI /usr/include/libCZI /opt/local/include/libCZI)
+include_directories(${CZI_INCLUDE_DIR})
+set(CZI_NAMES ${CZI_NAMES} libCZIStatic liblibCZIStatic)
+find_library(LIBCZI_LIBRARY NAMES ${CZI_NAMES} HINTS ${CZI_LIBRARY_DIR})
+find_library(JXRDECODE_LIBRARY NAMES libJxrDecodeStatic HINTS ${CZI_LIBRARY_DIR})
+set(CZI_LIBRARIES ${LIBCZI_LIBRARY})
+if ( JXRDECODE_LIBRARY )
+set(CZI_LIBRARIES ${CZI_LIBRARIES} ${JXRDECODE_LIBRARY})
+endif()
+mark_as_advanced(CZI_LIBRARY)
+message(CZI_INCLUDE_DIR="${CZI_INCLUDE_DIR}")
+message(CZI_LIBRARIES="${CZI_LIBRARIES}")
+
+#nd2
+find_path(ND2_INCLUDE_DIR NAMES Nd2ReadSdk.h PATHS ${ND2_INCLUDE_DIR} /usr/local/nd2readsdk/include /usr/nd2readsdk/include /opt/nd2readsdk/include /opt/local/nd2readsdk/include)
+include_directories(${ND2_INCLUDE_DIR})
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	set(ND2_NAMES libnd2readsdk-static.lib liblzma.lib liblimfile.lib libjbig.lib)
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+	set(ND2_NAMES libnd2readsdk-static.a liblzma.a liblimfile.a libjbig.a libnd2readsdk-shared.so liblimfile.so)
+else()
+	set(ND2_NAMES libnd2readsdk-shared.so liblimfile.so)
+endif()
+foreach(LIB ${ND2_NAMES})
+	find_library(FOUND_LIB_${LIB} NAMES ${LIB} HINTS ${ND2_LIBRARY_DIR} /usr/local/nd2readsdk/lib /usr/nd2readsdk/lib /opt/nd2readsdk/lib /opt/local/nd2readsdk/lib)
+	if (FOUND_LIB_${LIB})
+		LIST(APPEND ND2_LIBRARIES ${FOUND_LIB_${LIB}})
+	endif()
+endforeach()
+mark_as_advanced(ND2_LIBRARY)
+message(ND2_INCLUDE_DIR="${ND2_INCLUDE_DIR}")
+message(ND2_LIBRARIES="${ND2_LIBRARIES}")
+
+#png
+find_package(PNG REQUIRED)
+include_directories(${PNG_INCLUDE_DIR})
+
+#bzip2
+find_package(BZip2 REQUIRED)
+include_directories(${BZIP2_INCLUDE_DIR})
+
+#lz4
+#find_package(LZ4 REQUIRED)
+find_path(LZ4_INCLUDE_DIR NAMES lz4.h)
+find_library(LZ4_LIBRARY NAMES lz4)
+include(FindPackageHandleStandardArgs)
+FIND_PACKAGE_HANDLE_STANDARD_ARGS(
+        LZ4 DEFAULT_MSG
+        LZ4_LIBRARY LZ4_INCLUDE_DIR)
+
+mark_as_advanced(LZ4_INCLUDE_DIR LZ4_LIBRARY)
+include_directories(${LZ4_INCLUDE_DIR})
+
+#blosc2
+find_path(BLOSC_INCLUDE_DIR blosc2.h)
+include_directories(${BLOSC_INCLUDE_DIR})
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	set(BLOSC_NAMES ${BLOSC_NAMES} libblosc2.lib)
+else()
+	set(BLOSC_NAMES ${BLOSC_NAMES} libblosc2.a)
+endif()
+find_library(BLOSC_LIBRARIES NAMES ${BLOSC_NAMES} HINTS ${BLOSC_LIBRARY_DIR} /usr/lib /usr/local/lib)
+mark_as_advanced(BLOSC_LIBRARIES)
+message(BLOSC_INCLUDE_DIR="${BLOSC_INCLUDE_DIR}")
+message(BLOSC_LIBRARIES="${BLOSC_LIBRARIES}")
 
 #freetype
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/freetype/include)
@@ -302,13 +382,9 @@ include_directories(${VVDViewer_SOURCE_DIR}/external/assimp)
 include_directories(${VVDViewer_SOURCE_DIR}/external/gli)
 #include_directories(${VVDViewer_SOURCE_DIR}/external/glm)
 include_directories(${VVDViewer_SOURCE_DIR}/external/imgui)
-find_package(vulkan REQUIRED)
+find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIR})
-if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	add_definitions(-DVK_USE_PLATFORM_MACOS_MVK)
-    get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
-    file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	add_definitions(-DVK_USE_PLATFORM_WIN32_KHR)
     file(GLOB SPIRV_LIBRARIES_R "$ENV{VULKAN_SDK}/glslang/lib/*.lib")
 	file(GLOB SPIRV_LIBRARIES_D "$ENV{VULKAN_SDK}/glslang/lib/Debug/*.lib")
@@ -323,8 +399,54 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		endif()
 	endforeach()
 	include_directories("$ENV{VULKAN_SDK}/glslang/include")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+	add_definitions(-DVK_USE_PLATFORM_MACOS_MVK)
+    get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
+    file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
+else()
+    get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
+    file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
 endif()
 add_definitions(-DGLM_FORCE_DEPTH_ZERO_TO_ONE)
+
+
+if( (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows") AND (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin") )
+#GTK3
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+  include_directories(${GTK3_INCLUDE_DIRS})
+  message(GTK3_INCLUDE_DIRS="${GTK3_INCLUDE_DIRS}")
+  
+#X11
+  find_package(X11)
+  include_directories(${X11_INCLUDE_DIR})
+  message(X11_INCLUDE_DIR="${X11_INCLUDE_DIR}")
+  message(X11_LIBRARIES="${X11_LIBRARIES}")
+  if(X11_FOUND)
+    add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
+  else()
+#Wayland 
+    FIND_PACKAGE(PkgConfig)
+    PKG_CHECK_MODULES(PKG_WAYLAND QUIET wayland-client wayland-server wayland-egl wayland-cursor)
+
+    SET(WAYLAND_DEFINITIONS ${PKG_WAYLAND_CFLAGS})
+
+    FIND_PATH(WAYLAND_CLIENT_INCLUDE_DIR  NAMES wayland-client.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+    FIND_PATH(WAYLAND_SERVER_INCLUDE_DIR  NAMES wayland-server.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+    FIND_PATH(WAYLAND_EGL_INCLUDE_DIR     NAMES wayland-egl.h    HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+    FIND_PATH(WAYLAND_CURSOR_INCLUDE_DIR  NAMES wayland-cursor.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+
+    FIND_LIBRARY(WAYLAND_CLIENT_LIBRARIES NAMES wayland-client   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+    FIND_LIBRARY(WAYLAND_SERVER_LIBRARIES NAMES wayland-server   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+    FIND_LIBRARY(WAYLAND_EGL_LIBRARIES    NAMES wayland-egl      HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+    FIND_LIBRARY(WAYLAND_CURSOR_LIBRARIES NAMES wayland-cursor   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+
+    set(WAYLAND_INCLUDE_DIR ${WAYLAND_CLIENT_INCLUDE_DIR} ${WAYLAND_SERVER_INCLUDE_DIR} ${WAYLAND_EGL_INCLUDE_DIR} ${WAYLAND_CURSOR_INCLUDE_DIR})
+    set(WAYLAND_LIBRARIES ${WAYLAND_CLIENT_LIBRARIES} ${WAYLAND_SERVER_LIBRARIES} ${WAYLAND_EGL_LIBRARIES} ${WAYLAND_CURSOR_LIBRARIES})
+	list(REMOVE_DUPLICATES WAYLAND_INCLUDE_DIR)
+	add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
+  endif()
+endif()
 
 #other sources
 file(GLOB srcall ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/*.cpp)
@@ -351,20 +473,7 @@ endif()
 set(src ${src} ${vsrc} ${imgui_src})
 set(hdr ${hdr} ${vhdr} ${imgui_hdr})
 
-if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	add_library(VVDMainFrame SHARED
-	    ${src} ${hdr} ${rsc}
-		$<TARGET_OBJECTS:IMAGES_OBJ>
-	    $<TARGET_OBJECTS:CONVERTERS_OBJ>
-	    $<TARGET_OBJECTS:FLIVR_OBJ>
-	    $<TARGET_OBJECTS:ANIMATORS_OBJ>
-	    $<TARGET_OBJECTS:NV_OBJ>
-	    $<TARGET_OBJECTS:FORMATS_OBJ>
-	    $<TARGET_OBJECTS:TRACKING_OBJ>
-	    $<TARGET_OBJECTS:POLE_OBJ>
-	    $<TARGET_OBJECTS:TEEM_OBJ>
-		$<TARGET_OBJECTS:PLUGINS_OBJ>)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/WacUtils)
     include_directories(${VVDViewer_SOURCE_DIR}/fluorender/Wacom/Include)
     file(GLOB wac_src fluorender/FluoRender/WacUtils/*.cpp)
@@ -384,6 +493,19 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		$<TARGET_OBJECTS:TEEM_OBJ>
 		$<TARGET_OBJECTS:PLUGINS_OBJ>
 		$<TARGET_OBJECTS:WACUTILS_OBJ>)
+else()
+	add_library(VVDMainFrame SHARED
+		${src} ${hdr} ${rsc}
+		$<TARGET_OBJECTS:IMAGES_OBJ>
+		$<TARGET_OBJECTS:CONVERTERS_OBJ>
+		$<TARGET_OBJECTS:FLIVR_OBJ>
+		$<TARGET_OBJECTS:ANIMATORS_OBJ>
+		$<TARGET_OBJECTS:NV_OBJ>
+		$<TARGET_OBJECTS:FORMATS_OBJ>
+		$<TARGET_OBJECTS:TRACKING_OBJ>
+		$<TARGET_OBJECTS:POLE_OBJ>
+		$<TARGET_OBJECTS:TEEM_OBJ>
+		$<TARGET_OBJECTS:PLUGINS_OBJ>)
 endif()
 
 #platform specific rules
@@ -468,22 +590,34 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       add_executable(VVDViewer WIN32
           			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
 					 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)
-   endif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	else()
+		add_definitions(-D_LINUX)
+		add_definitions(-DLINUX)
+		set(CFLAGS "-fPIC")
+   		set(CXXFLAGS "-fPIC ")
+		add_executable(VVDViewer 
+          			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
+					 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)
+	endif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 endif()
 
 #architecture specific rules
 if(${ARCHITECTURE} MATCHES 64)
-   if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+   if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       set(ARCH_FLAGS "-m64 -arch x86_64")
-   endif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+   elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+      set(ARCH_FLAGS "-march=native -mtune=generic")
+   endif()
    add_definitions(-DTEEM_32BIT=0)
    set(CMAKE_C_FLAGS "${ARCH_FLAGS} ${CFLAGS}")
    set(CMAKE_CXX_FLAGS "${ARCH_FLAGS} ${CXXFLAGS} ${CXX_11_FLAG}")
    set(CMAKE_EXE_LINKER_FLAGS "${ARCH_FLAGS} ${CXX_11_FLAG}")
 else()
-   if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+   if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       set(ARCH_FLAGS "-m32 -arch i386")
-   endif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+   elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+      set(ARCH_FLAGS "-march=native -mtune=generic")
+   endif()
    add_definitions(-DTEEM_32BIT=1)
    set(CMAKE_C_FLAGS "${ARCH_FLAGS} ${CFLAGS}" )
    set(CMAKE_CXX_FLAGS "${ARCH_FLAGS} ${CXXFLAGS} ${CXX_11_FLAG}")
@@ -491,7 +625,7 @@ else()
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-   set(CMAKE_EXE_LINKER_FLAGS "-L/usr/local/lib -L/usr/lib ${CMAKE_EXE_LINKER_FLAGS} -lpng -lbz2 -framework IOSurface -framework Metal -framework VideoToolbox -framework CoreMedia -framework Security -framework CoreFoundation -framework CoreVideo -framework VideoDecodeAcceleration -framework QuartzCore")
+   set(CMAKE_EXE_LINKER_FLAGS "-L/usr/local/lib -L/usr/lib ${CMAKE_EXE_LINKER_FLAGS} -framework IOSurface -framework Metal -framework VideoToolbox -framework CoreMedia -framework Security -framework CoreFoundation -framework CoreVideo -framework VideoDecodeAcceleration -framework QuartzCore")
    set(CMAKE_SHARED_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mmacosx-version-min=10.9 -DWX_PRECOMP -std=c++14 -stdlib=libc++")
    #make sure png is static linked
@@ -516,7 +650,12 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	   ${Boost_LIBRARIES}
 	   ${FREETYPE_LIBRARIES}
 	   ${wxWidgets_LIBRARIES}
-	   ${hdf5_LIBRARIES}
+	   ${HDF5_LIBRARIES}
+	   ${CZI_LIBRARIES}
+	   ${ND2_LIBRARIES}
+	   ${BZIP2_LIBRARIES}
+	   ${LZ4_LIBRARIES}
+	   ${BLOSC_LIBRARIES}
 	   ${Vulkan_LIBRARY}
 	   ${SPIRV_LIBRARIES})
 	target_link_libraries(VVDViewer
@@ -535,9 +674,111 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   ${Boost_LIBRARIES}
 	   ${FREETYPE_LIBRARIES}
 	   ${wxWidgets_LIBRARIES}
-	   ${hdf5_LIBRARIES}
+	   ${HDF5_LIBRARIES}
+	   ${CZI_LIBRARIES}
+	   ${ND2_LIBRARIES}
+	   ${BZIP2_LIBRARIES}
+	   ${LZ4_LIBRARIES}
+	   ${PNG_LIBRARIES}
+	   ${BLOSC_LIBRARIES}
        ${Vulkan_LIBRARY}
        ${SPIRV_LIBRARIES})
+	target_link_libraries(VVDViewer
+	   VVDMainFrame
+	   ${wxWidgets_LIBRARIES})
+elseif(X11_FOUND)
+    set(LINK_LIBRARIES_X11
+       ${CURL_LIBRARIES}
+	   ${JPEG_LIBRARIES}
+	   ${ZLIB_LIBRARIES}
+	   ${TIFF_LIBRARIES}
+	   ${OPENSSL_LIBRARIES}
+	   ${SSL_DEP_LIBRARIES}
+	   ${ffmpeg_LIBRARIES}
+	   ${Boost_LIBRARIES}
+	   ${FREETYPE_LIBRARIES}
+	   ${wxWidgets_LIBRARIES}
+	   ${HDF5_LIBRARIES}
+	   ${CZI_LIBRARIES}
+	   ${ND2_LIBRARIES}
+	   ${BZIP2_LIBRARIES}
+	   ${LZ4_LIBRARIES}
+	   ${PNG_LIBRARIES}
+	   ${BLOSC_LIBRARIES}
+       ${Vulkan_LIBRARY}
+       ${SPIRV_LIBRARIES}
+	   ${GTK3_LIBRARIES}
+	   ${X11_LIBRARIES} vdpau va va-drm va-x11)
+	list(REMOVE_DUPLICATES LINK_LIBRARIES_X11)
+	set(LINK_LIBRARIES_X11_FINAL)
+	foreach(lib ${LINK_LIBRARIES_X11})
+		if( lib MATCHES "libmcheck.a$" OR 
+			lib MATCHES "libm-2.35.a$" OR 
+			lib MATCHES "libc_nonshared.a$")
+			message(lib="${lib}")
+		elseif( lib MATCHES "libpixman-1.a$" OR
+				lib MATCHES "libselinux.a$" OR
+				lib MATCHES "libuuid.a$" OR
+				lib MATCHES "libX11.a$" OR 
+				lib MATCHES "libc.a$" OR
+				lib MATCHES "libm.a$" OR
+				lib MATCHES "libmvec.a$" OR
+				lib MATCHES "libboost_chrono.a$" OR
+				lib MATCHES "libboost_filesystem.a$" OR
+				lib MATCHES "libfontconfig.a$" OR
+				lib MATCHES "libhdf5_serial.a$" OR
+				lib MATCHES "libhdf5_serial_cpp.a$" OR
+				lib MATCHES "libXrender.a$" OR
+				lib MATCHES "libXcomposite.a$" OR
+				lib MATCHES "libXcursor.a$" OR
+				lib MATCHES "libXdamage.a$" OR
+				lib MATCHES "libXfixes.a$" OR
+				lib MATCHES "libXext.a$" OR
+				lib MATCHES "libSM.a$" OR
+				lib MATCHES "libcairo.a$" OR
+				lib MATCHES "libpng.a$" OR
+				lib MATCHES "libpng16.a$" )
+			message(lib="${lib}")
+			string(REGEX REPLACE "a$" "so" lib ${lib})
+			message(lib="${lib}")
+			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+		elseif( lib MATCHES "libx264.a$" )
+			set( lib "/usr/lib/x86_64-linux-gnu/libx264.so" )
+			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+		else()
+			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+  		endif()
+	endforeach()
+	#set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} "/usr/lib/x86_64-linux-gnu/libva.so")
+	message(LINK_LIBRARIES_X11_FINAL="${LINK_LIBRARIES_X11_FINAL}")
+
+	target_link_libraries(VVDMainFrame ${LINK_LIBRARIES_X11_FINAL})
+	target_link_libraries(VVDViewer
+	   VVDMainFrame
+	   ${wxWidgets_LIBRARIES})
+else()
+	target_link_libraries(VVDMainFrame
+	   ${CURL_LIBRARIES}
+	   ${JPEG_LIBRARIES}
+	   ${ZLIB_LIBRARIES}
+	   ${TIFF_LIBRARIES}
+	   ${OPENSSL_LIBRARIES}
+	   ${SSL_DEP_LIBRARIES}
+	   ${ffmpeg_LIBRARIES}
+	   ${Boost_LIBRARIES}
+	   ${FREETYPE_LIBRARIES}
+	   ${wxWidgets_LIBRARIES}
+	   ${HDF5_LIBRARIES}
+	   ${CZI_LIBRARIES}
+	   ${ND2_LIBRARIES}
+	   ${BZIP2_LIBRARIES}
+	   ${LZ4_LIBRARIES}
+	   ${PNG_LIBRARIES}
+	   ${BLOSC_LIBRARIES}
+       ${Vulkan_LIBRARY}
+       ${SPIRV_LIBRARIES}
+	   ${GTK3_LIBRARIES}
+	   ${WAYLAND_LIBRARIES})
 	target_link_libraries(VVDViewer
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})

@@ -32,7 +32,7 @@ using namespace std;
 #define FLKEY_TYPE_BOOLEAN	3
 #define FLKEY_TYPE_INT		4
 
-class EXPORT_API KeyCode
+class EXPORT_API FLKeyCode
 {
 public:
 	int l0;//view: 1
@@ -42,7 +42,7 @@ public:
 	int l2;//volume property: 0
 	string l2_name;//volume property name
 
-	KeyCode& operator=(const KeyCode& keycode)
+	FLKeyCode& operator=(const FLKeyCode& keycode)
 	{
 		l0 = keycode.l0;
 		l0_name = keycode.l0_name;
@@ -53,7 +53,7 @@ public:
 		return *this;
 	}
 
-	int operator==(const KeyCode& keycode) const
+	int operator==(const FLKeyCode& keycode) const
 	{
 		return l0==keycode.l0 &&
 			l0_name==keycode.l0_name &&
@@ -63,7 +63,7 @@ public:
 			l2_name==keycode.l2_name;
 	}
 
-	int operator!=(const KeyCode& keycode) const
+	int operator!=(const FLKeyCode& keycode) const
 	{
 		return l0!=keycode.l0 ||
 			l0_name!=keycode.l0_name ||
@@ -82,11 +82,11 @@ public:
 	virtual ~FlKey() {};
 
 	virtual int GetType() = 0;
-	KeyCode GetKeyCode()
+	FLKeyCode GetKeyCode()
 	{return m_code;}
 
 protected:
-	KeyCode m_code;
+	FLKeyCode m_code;
 };
 
 #endif//_FLKEY_H_

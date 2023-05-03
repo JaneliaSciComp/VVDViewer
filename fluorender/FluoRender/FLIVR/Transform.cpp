@@ -24,6 +24,7 @@ DEALINGS IN THE SOFTWARE.
 #include <FLIVR/Point.h>
 #include <FLIVR/Plane.h>
 #include <iostream>
+#include <cstring>
 
 using namespace FLIVR;
 using namespace std;

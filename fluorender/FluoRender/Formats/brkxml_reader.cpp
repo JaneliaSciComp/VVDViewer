@@ -1753,8 +1753,8 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadata(wstring jpath)
                     ret->m_blosc_param.ctype = BLOSC_LZ4;
                 else if (bcptype == BLOSC_LZ4HC_COMPNAME)
                     ret->m_blosc_param.ctype = BLOSC_LZ4HC;
-                else if (bcptype == BLOSC_SNAPPY_COMPNAME)
-                    ret->m_blosc_param.ctype = BLOSC_SNAPPY;
+                //else if (bcptype == BLOSC_SNAPPY_COMPNAME)
+                //    ret->m_blosc_param.ctype = BLOSC_SNAPPY;
                 else if (bcptype == BLOSC_ZLIB_COMPNAME)
                     ret->m_blosc_param.ctype = BLOSC_ZLIB;
                 else if (bcptype == BLOSC_ZSTD_COMPNAME)

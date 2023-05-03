@@ -342,7 +342,7 @@ void Interpolator::ChangeDuration(int index, double duration)
 	}
 }
 
-bool Interpolator::GetDouble(KeyCode keycode, double t, double &dval)
+bool Interpolator::GetDouble(FLKeyCode keycode, double t, double &dval)
 {
 	int g1 = -1;
 	int g2 = -1;
@@ -392,7 +392,7 @@ bool Interpolator::GetDouble(KeyCode keycode, double t, double &dval)
 	return false;
 }
 
-bool Interpolator::GetBoolean(KeyCode keycode, double t, bool &bval)
+bool Interpolator::GetBoolean(FLKeyCode keycode, double t, bool &bval)
 {
 	int g1 = -1;
 	int g2 = -1;
@@ -434,7 +434,7 @@ bool Interpolator::GetBoolean(KeyCode keycode, double t, bool &bval)
 	return false;
 }
 
-bool Interpolator::GetInt(KeyCode keycode, double t, int &ival)
+bool Interpolator::GetInt(FLKeyCode keycode, double t, int &ival)
 {
 	int g1 = -1;
 	int g2 = -1;
@@ -476,7 +476,7 @@ bool Interpolator::GetInt(KeyCode keycode, double t, int &ival)
 	return false;
 }
 
-bool Interpolator::GetQuaternion(KeyCode keycode, double t, Quaternion &qval)
+bool Interpolator::GetQuaternion(FLKeyCode keycode, double t, Quaternion &qval)
 {
 	int g1 = -1;
 	int g2 = -1;
@@ -527,7 +527,7 @@ bool Interpolator::GetQuaternion(KeyCode keycode, double t, Quaternion &qval)
 }
 
 //search
-FlKey* Interpolator::SearchKey(KeyCode keycode, FlKeyGroup* g)
+FlKey* Interpolator::SearchKey(FLKeyCode keycode, FlKeyGroup* g)
 {
 	if (!g) return 0;
 	for (int i=0; i<(int)g->keys.size(); i++)
@@ -537,7 +537,7 @@ FlKey* Interpolator::SearchKey(KeyCode keycode, FlKeyGroup* g)
 }
 
 //interpolations
-bool Interpolator::StepDouble(KeyCode keycode, FlKeyGroup* g, double &dval)
+bool Interpolator::StepDouble(FLKeyCode keycode, FlKeyGroup* g, double &dval)
 {
 	dval = 0.0;
 	if (!g) return false;
@@ -548,7 +548,7 @@ bool Interpolator::StepDouble(KeyCode keycode, FlKeyGroup* g, double &dval)
 	return true;
 }
 
-bool Interpolator::LinearDouble(KeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, double &dval)
+bool Interpolator::LinearDouble(FLKeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, double &dval)
 {
 	dval = 0.0;
 	if (!g1 || !g2) return false;
@@ -573,7 +573,7 @@ bool Interpolator::LinearDouble(KeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2,
 	return true;
 }
 
-bool Interpolator::StepQuaternion(KeyCode keycode, FlKeyGroup* g, Quaternion &qval)
+bool Interpolator::StepQuaternion(FLKeyCode keycode, FlKeyGroup* g, Quaternion &qval)
 {
 	qval = Quaternion(0, 0, 0, 1);
 	if (!g) return false;
@@ -585,7 +585,7 @@ bool Interpolator::StepQuaternion(KeyCode keycode, FlKeyGroup* g, Quaternion &qv
 	return true;
 }
 
-bool Interpolator::LinearQuaternion(KeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, Quaternion &qval)
+bool Interpolator::LinearQuaternion(FLKeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, Quaternion &qval)
 {
 	qval = Quaternion(0, 0, 0, 1);
 	if (!g1 || !g2) return false;

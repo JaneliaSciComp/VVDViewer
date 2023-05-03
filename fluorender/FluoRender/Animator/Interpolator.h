@@ -85,10 +85,10 @@ public:
 	void MoveKeyAfter(int from_idx, int to_idx);
 
 	//get values
-	bool GetDouble(KeyCode keycode, double t, double &dval);
-	bool GetQuaternion(KeyCode keycode, double t, Quaternion &qval);
-	bool GetBoolean(KeyCode keycode, double t, bool &bval);
-	bool GetInt(KeyCode keycode, double t, int &ival);
+	bool GetDouble(FLKeyCode keycode, double t, double &dval);
+	bool GetQuaternion(FLKeyCode keycode, double t, Quaternion &qval);
+	bool GetBoolean(FLKeyCode keycode, double t, bool &bval);
+	bool GetInt(FLKeyCode keycode, double t, int &ival);
 
 	static int m_id;
 
@@ -98,11 +98,11 @@ private:
 	vector<FlKeyGroup*> m_key_list;
 
 private:
-	FlKey* SearchKey(KeyCode keycode, FlKeyGroup* g);
-	bool StepDouble(KeyCode keycode, FlKeyGroup* g, double &dval);
-	bool LinearDouble(KeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, double &dval);
-	bool StepQuaternion(KeyCode keycode, FlKeyGroup* g, Quaternion &qval);
-	bool LinearQuaternion(KeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, Quaternion &qval);
+	FlKey* SearchKey(FLKeyCode keycode, FlKeyGroup* g);
+	bool StepDouble(FLKeyCode keycode, FlKeyGroup* g, double &dval);
+	bool LinearDouble(FLKeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, double &dval);
+	bool StepQuaternion(FLKeyCode keycode, FlKeyGroup* g, Quaternion &qval);
+	bool LinearQuaternion(FLKeyCode keycode, FlKeyGroup* g1, FlKeyGroup* g2, double t, Quaternion &qval);
 	double Smooth(double ft, bool s1, bool s2);
 
 };
