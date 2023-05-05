@@ -719,22 +719,85 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+#if defined(_WIN32) || defined(__WXMAC__)
+	InitVulkan();
+#endif
+
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (vr_frame)
+	{
+        m_selector.SetDataManager(vr_frame->GetDataManager());
+	}
+
+	goTimer = new nv::Timer(10);
+	m_sb_num = "50";
+
+#ifdef _WIN32
+	//tablet initialization
+	if (m_use_pres && LoadWintab())
+	{
+		gpWTInfoA(0, 0, NULL);
+		m_hTab = TabletInit((HWND)GetHWND());
+	}
+#endif
+
+	LoadDefaultBrushSettings();
+
+	m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
+	m_searcher->Hide();
+
+	Thaw();
+	SetEvtHandlerEnabled(true);
+	
+	m_idleTimer = new wxTimer(this, ID_Timer);
+	m_idleTimer->Start(50);
+}
+
+void VRenderVulkanView::InitVulkan()
+{
+	if (m_vulkan)
+		return;
+
+	SetEvtHandlerEnabled(false);
+	Freeze();
+
+#if defined(_WIN32)
 	m_vulkan = make_shared<VVulkan>();
 	m_vulkan->initVulkan();
-#if defined(_WIN32)
 	m_vulkan->setWindow((HWND)GetHWND(), GetModuleHandle(NULL));
 #elif defined(__WXMAC__)
+	m_vulkan = make_shared<VVulkan>();
+	m_vulkan->initVulkan();
     makeViewMetalCompatible(GetHandle());
 	m_vulkan->setWindow(GetHandle());
 #elif defined(__WXGTK__)
 	GtkWidget* gtk_widget = GetHandle();
-    GdkWindow *gtk_window = gtk_widget_get_window(gtk_widget);
-	GdkDisplay *gtk_display = gtk_widget_get_display(gtk_widget);
+	//gtk_widget_realize(gtk_widget);
+	GdkWindow *gtk_window = gtk_widget_get_window(gtk_widget);
+	if (!gtk_window)
+	{
+		Thaw();
+		SetEvtHandlerEnabled(true);
+		return;
+	}
+	GdkDisplay *gtk_display = gdk_window_get_display(gtk_window);
+	m_vulkan = make_shared<VVulkan>();
+	m_vulkan->initVulkan();
 #if defined(VK_USE_PLATFORM_XCB_KHR)
 	Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
     xcb_window_t win = GDK_WINDOW_XID(gtk_window);
-	xcb_connection_t *c = XGetXCBConnection(dpy);
+	//xcb_connection_t *c = XGetXCBConnection(dpy);
+	//m_vulkan->setWindow(win, c);
+
+	xcb_connection_t *c = xcb_connect(NULL, NULL);
+    if (xcb_connection_has_error(c) > 0) {
+        printf("Cannot connect to XCB.\nExiting ...\n");
+        fflush(stdout);
+        return;
+    }
+
 	m_vulkan->setWindow(win, c);
+
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
 	wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
 	wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
@@ -770,32 +833,10 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 		m_text_renderer = new TextRenderer(font_file.ToStdString(), m_v2drender);
 		if (setting_dlg)
 			m_text_renderer->SetSize(setting_dlg->GetTextSize());
-        
-        m_selector.SetDataManager(vr_frame->GetDataManager());
 	}
-
-	goTimer = new nv::Timer(10);
-	m_sb_num = "50";
-
-#ifdef _WIN32
-	//tablet initialization
-	if (m_use_pres && LoadWintab())
-	{
-		gpWTInfoA(0, 0, NULL);
-		m_hTab = TabletInit((HWND)GetHWND());
-	}
-#endif
-
-	LoadDefaultBrushSettings();
-
-	m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
-	m_searcher->Hide();
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
-	
-	m_idleTimer = new wxTimer(this, ID_Timer);
-	m_idleTimer->Start(50);
 }
 
 VRenderVulkanView::~VRenderVulkanView()
@@ -944,7 +985,8 @@ void VRenderVulkanView::Resize(bool refresh)
 
 	if (refresh)
 	{
-		m_vulkan->setSize(size.GetWidth(), size.GetHeight());
+		if (m_vulkan)
+			m_vulkan->setSize(size.GetWidth(), size.GetHeight());
 		wxRect refreshRect(size);
 		RefreshRect(refreshRect, false);
 		RefreshGL();
@@ -973,7 +1015,8 @@ void VRenderVulkanView::Init()
 void VRenderVulkanView::Clear()
 {
 	m_loader.RemoveAllLoadedData();
-	m_vulkan->clearTexPools();
+	if (m_vulkan)
+		m_vulkan->clearTexPools();
 
 	//delete groups
 	for (int i=0; i<(int)m_layer_list.size(); i++)
@@ -2672,7 +2715,8 @@ void VRenderVulkanView::RandomizeColor()
 void VRenderVulkanView::ClearVolList()
 {
 	m_loader.RemoveAllLoadedData();
-	m_vulkan->clearTexPools();
+	if (m_vulkan)
+		m_vulkan->clearTexPools();
 	m_vd_pop_list.clear();
 }
 
@@ -8583,15 +8627,6 @@ void VRenderVulkanView::OnDraw(wxPaintEvent& event)
 
 void VRenderVulkanView::UpdateScreen()
 {
-	if (m_abort)
-	{
-		m_abort = false;
-		return;
-	}
-
-	Init();
-	//wxPaintDC dc(this);
-
 	m_nx = GetSize().x;
 	m_ny = GetSize().y;
 	if (m_tile_rendering) {
@@ -8606,6 +8641,21 @@ void VRenderVulkanView::UpdateScreen()
 	{
 		return;
 	}
+	
+	if(!m_vulkan)
+	{
+		InitVulkan();
+		return;
+	}
+
+	if (m_abort)
+	{
+		m_abort = false;
+		return;
+	}
+
+	Init();
+	//wxPaintDC dc(this);
     
     SetEvtHandlerEnabled(false);
 

@@ -132,6 +132,7 @@ public:
 #elif defined(VK_USE_PLATFORM_XCB_KHR)
 		VkXcbSurfaceCreateInfoKHR surfaceCreateInfo = {};
 		surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+		surfaceCreateInfo.flags = 0;
 		surfaceCreateInfo.connection = connection;
 		surfaceCreateInfo.window = window;
 		err = vkCreateXcbSurfaceKHR(instance, &surfaceCreateInfo, nullptr, &surface);
@@ -155,7 +156,9 @@ public:
 		std::vector<VkBool32> supportsPresent(queueCount);
 		for (uint32_t i = 0; i < queueCount; i++) 
 		{
-			fpGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &supportsPresent[i]);
+			err = fpGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &supportsPresent[i]);
+			if (err != VK_SUCCESS)
+				std::cerr << vks::tools::errorString(err) << std::endl;
 		}
 
 		// Search for a graphics and a present queue in the array of queue

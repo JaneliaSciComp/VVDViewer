@@ -363,15 +363,43 @@ bool VulkanExampleBase::initVulkan()
 	}
 
 	// GPU selection
+	/* Try to auto select most suitable device */
+	int gpu_number = -1;
 
-	// Select physical device to be used for the Vulkan example
-	// Defaults to the first device unless specified by command line
-	uint32_t selectedDevice = 0;
+    constexpr uint32_t device_type_count = static_cast<uint32_t>(VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU) + 1;
+    std::array<uint32_t, device_type_count> count_device_type{};
 
-	physicalDevice = physicalDevices[selectedDevice];
+    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+        assert(deviceProperties.deviceType <= VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU);
+        count_device_type[static_cast<int>(deviceProperties.deviceType)]++;
+    }
+
+    std::array<VkPhysicalDeviceType, device_type_count> const device_type_preference = {
+        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU,
+        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_OTHER};
+
+    VkPhysicalDeviceType search_for_device_type = VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    for (uint32_t i = 0; i < sizeof(device_type_preference) / sizeof(VkPhysicalDeviceType); i++) {
+        if (count_device_type[static_cast<int>(device_type_preference[i])]) {
+            search_for_device_type = device_type_preference[i];
+            break;
+        }
+    }
+
+    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+        if (deviceProperties.deviceType == search_for_device_type) {
+            gpu_number = i;
+            break;
+        }
+    }
+    assert(gpu_number >= 0);
+    physicalDevice = physicalDevices[gpu_number];
 
 	// Store properties (including limits), features and memory properties of the phyiscal device (so that examples can check against them)
 	vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+	fprintf(stderr, "Selected GPU %d: %s, type: %s\n", gpu_number, deviceProperties.deviceName, std::to_string(deviceProperties.deviceType).c_str());
 	vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
 

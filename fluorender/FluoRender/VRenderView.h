@@ -238,6 +238,8 @@ public:
 	//initialization
 	void Init();
 
+	void InitVulkan();
+
 	//Clear all layers
 	void Clear();
 
