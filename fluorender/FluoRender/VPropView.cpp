@@ -2644,13 +2644,13 @@ void VPropView::OnSaveDefault(wxCommandEvent& event)
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_volume_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\default_volume_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/default_volume_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_volume_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_volume_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/default_volume_settings.dft";
 #endif
 
 	wxFileOutputStream os(dft);

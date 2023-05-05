@@ -875,7 +875,12 @@ endif()
 ]]  
 
 #post build setting files copy
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+	add_custom_command(TARGET VVDViewer PRE_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		"${VVDViewer_SOURCE_DIR}/Settings"
+		"$<TARGET_FILE_DIR:VVDViewer>/../Resources")
+else()
 	file(GLOB settings_files Settings/*)
 	foreach (f ${settings_files})
 		add_custom_command(TARGET VVDViewer PRE_BUILD
@@ -883,9 +888,4 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 			${f}
 			$<TARGET_FILE_DIR:VVDViewer>)
 	endforeach()
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	add_custom_command(TARGET VVDViewer PRE_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		"${VVDViewer_SOURCE_DIR}/Settings"
-		"$<TARGET_FILE_DIR:VVDViewer>/../Resources")
 endif()

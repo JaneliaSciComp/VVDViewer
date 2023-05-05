@@ -511,12 +511,12 @@ bool SampleGuiPlugin1::StartFiji()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
-#ifdef _WIN32
-    wxString rootdir = m_fiji_path.BeforeLast(wxFILE_SEP_PATH, NULL);
-	wxString rdir = expath + wxFILE_SEP_PATH;
-#else
+#ifdef _DARWIN
 	wxString rootdir = m_fiji_path;
 	wxString rdir = expath + _("/../Resources") + wxFILE_SEP_PATH;
+#else
+    wxString rootdir = m_fiji_path.BeforeLast(wxFILE_SEP_PATH, NULL);
+	wxString rdir = expath + wxFILE_SEP_PATH;
 #endif
 	wxString macrodir = rootdir + wxFILE_SEP_PATH + _("macros") + wxFILE_SEP_PATH;
 	wxString plugindir = rootdir + wxFILE_SEP_PATH + _("plugins") + wxFILE_SEP_PATH;
@@ -573,12 +573,12 @@ void SampleGuiPlugin1::CloseFiji()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
-#ifdef _WIN32
-    wxString rootdir = m_fiji_path.BeforeLast(wxFILE_SEP_PATH, NULL);
-	wxString rdir = expath + wxFILE_SEP_PATH;
-#else
+#ifdef _DARWIN
 	wxString rootdir = m_fiji_path;
 	wxString rdir = expath + _("/../Resources") + wxFILE_SEP_PATH;
+#else
+    wxString rootdir = m_fiji_path.BeforeLast(wxFILE_SEP_PATH, NULL);
+	wxString rdir = expath + wxFILE_SEP_PATH;
 #endif
 	wxString macrodir = rootdir + wxFILE_SEP_PATH + _("macros") + wxFILE_SEP_PATH;
 	wxString plugindir = rootdir + wxFILE_SEP_PATH + _("plugins") + wxFILE_SEP_PATH;
@@ -642,12 +642,12 @@ void SampleGuiPlugin1::LoadConfigFile()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\fiji_interface_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\fiji_interface_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/fiji_interface_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "fiji_interface_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "fiji_interface_settings.dft";
 #endif
 	if (wxFileExists(dft))
 	{
@@ -677,13 +677,13 @@ void SampleGuiPlugin1::SaveConfigFile()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\fiji_interface_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\fiji_interface_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/fiji_interface_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "fiji_interface_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "fiji_interface_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/fiji_interface_settings.dft";
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);

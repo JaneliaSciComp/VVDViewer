@@ -1542,13 +1542,13 @@ void VMovieView::SaveDefault()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_movie_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\default_movie_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/default_movie_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_movie_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_movie_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/default_movie_settings.dft";
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
@@ -1559,12 +1559,12 @@ void VMovieView::LoadSettings()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_movie_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_movie_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_movie_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_movie_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_movie_settings.dft";
 #endif
 
 	wxFileInputStream is(dft);

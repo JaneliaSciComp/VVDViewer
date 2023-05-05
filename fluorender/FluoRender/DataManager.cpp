@@ -6912,12 +6912,12 @@ m_vol_exb(0.0),
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_volume_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_volume_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_volume_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_volume_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_volume_settings.dft";
 #endif
 	wxFileInputStream is(dft);
 	if (!is.IsOk())

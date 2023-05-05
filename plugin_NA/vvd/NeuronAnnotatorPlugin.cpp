@@ -1500,12 +1500,12 @@ void NAGuiPlugin::LoadConfigFile()
 {
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
     expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\NA_plugin_settings.dft";
-    if (!wxFileExists(dft))
-        dft = wxStandardPaths::Get().GetUserConfigDir() + "\\NA_plugin_settings.dft";
-#else
+#ifdef _DARWIN
     wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
+#else
+   wxString dft = expath + GETSLASHS() + "NA_plugin_settings.dft";
+    if (!wxFileExists(dft))
+        dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NA_plugin_settings.dft";
 #endif
     LoadProjectSettingFile(dft);
 }
@@ -1848,13 +1848,13 @@ void NAGuiPlugin::SaveConfigFile()
 {
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
     expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\NA_plugin_settings.dft";
-    wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\NA_plugin_settings.dft";
+#ifdef _DARWIN
+    wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
+#else
+    wxString dft = expath + GETSLASHS() + "NA_plugin_settings.dft";
+    wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NA_plugin_settings.dft";
     if (!wxFileExists(dft) && wxFileExists(dft2))
         dft = dft2;
-#else
-    wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
 #endif
     
     SaveProjectSettingFile(dft);

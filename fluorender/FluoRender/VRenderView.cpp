@@ -772,7 +772,6 @@ void VRenderVulkanView::InitVulkan()
 	m_vulkan->setWindow(GetHandle());
 #elif defined(__WXGTK__)
 	GtkWidget* gtk_widget = GetHandle();
-	//gtk_widget_realize(gtk_widget);
 	GdkWindow *gtk_window = gtk_widget_get_window(gtk_widget);
 	if (!gtk_window)
 	{
@@ -786,18 +785,13 @@ void VRenderVulkanView::InitVulkan()
 #if defined(VK_USE_PLATFORM_XCB_KHR)
 	Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
     xcb_window_t win = GDK_WINDOW_XID(gtk_window);
-	//xcb_connection_t *c = XGetXCBConnection(dpy);
-	//m_vulkan->setWindow(win, c);
-
 	xcb_connection_t *c = xcb_connect(NULL, NULL);
     if (xcb_connection_has_error(c) > 0) {
         printf("Cannot connect to XCB.\nExiting ...\n");
         fflush(stdout);
         return;
     }
-
 	m_vulkan->setWindow(win, c);
-
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
 	wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
 	wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
@@ -3472,12 +3466,12 @@ void VRenderVulkanView::LoadDefaultBrushSettings()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_brush_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_brush_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
 #endif
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
@@ -20807,13 +20801,13 @@ void VRenderView::SaveDefault(unsigned int mask)
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_view_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\default_view_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/default_view_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
@@ -20830,12 +20824,12 @@ void VRenderView::LoadSettings()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_view_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_view_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_view_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
 #endif
 
 	wxFileInputStream is(dft);

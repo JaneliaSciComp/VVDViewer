@@ -671,12 +671,12 @@ void SettingDlg::GetSettings()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\" + SETTING_FILE_NAME;
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\" + SETTING_FILE_NAME;
-#else
+#ifdef _DARWIN
     wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
+#else
+    wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
 #endif
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
@@ -1104,13 +1104,13 @@ void SettingDlg::SaveSettings()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\" + SETTING_FILE_NAME;
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\" + SETTING_FILE_NAME;
+#ifdef _DARWIN
+    wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
+#else
+	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-    wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);

@@ -969,12 +969,14 @@ void VRenderFrame::OnNewView(wxCommandEvent& WXUNUSED(event))
 {
 	//wxString str = CreateView();
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
-#ifdef _DARWIN
+#if defined(_DARWIN)
     expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
     expath = "open -n " + expath + "/../../";
     std::system(expath.ToStdString().c_str());
-#elif _WIN32
+#elif defined(_WIN32)
     ShellExecute(NULL, _T("open"), expath.ToStdWstring().c_str(), NULL, NULL, SW_SHOW);
+#else
+	system(expath.ToStdString().c_str());
 #endif
 
 }

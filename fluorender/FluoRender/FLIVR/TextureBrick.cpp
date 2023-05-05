@@ -1251,19 +1251,19 @@ z
 
 			   wxString expath = wxStandardPaths::Get().GetExecutablePath();
 			   expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-			   wxString dft = expath + "\\vvd_cache";
-			   wxString dft2 = wxStandardPaths::Get().GetUserDataDir() + "\\vvd_cache";
-			   if (!wxDirExists(dft) && wxDirExists(dft2))
-				   dft = dft2;
-			   else if (!wxDirExists(dft))
-				   wxMkdir(dft);
-			   dft += L"\\";
-#else
+#ifdef _DARWIN
 			   wxString dft = expath + "/../Resources/vvd_cache";
 			   if (!wxDirExists(dft))
 				   wxMkdir(dft);
 			   dft += L"/";
+#else
+			   wxString dft = expath + GETSLASHS() + "vvd_cache";
+			   wxString dft2 = wxStandardPaths::Get().GetUserDataDir() + GETSLASHS() + "vvd_cache";
+			   if (!wxDirExists(dft) && wxDirExists(dft2))
+				   dft = dft2;
+			   else if (!wxDirExists(dft))
+				   wxMkdir(dft);
+			   dft += GETSLASH();
 #endif
 			   wstring randname;
 			   int len = 16;
