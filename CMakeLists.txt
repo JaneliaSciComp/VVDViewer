@@ -418,34 +418,46 @@ if( (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows") AND (NOT ${CMAKE_SYSTEM_NAME} M
   message(GTK3_INCLUDE_DIRS="${GTK3_INCLUDE_DIRS}")
   
 #X11
-  find_package(X11)
-  include_directories(${X11_INCLUDE_DIR})
-  message(X11_INCLUDE_DIR="${X11_INCLUDE_DIR}")
-  message(X11_LIBRARIES="${X11_LIBRARIES}")
-  if(X11_FOUND)
+  	find_package(X11)
+  	include_directories(${X11_INCLUDE_DIR})
+  	message(X11_INCLUDE_DIR="${X11_INCLUDE_DIR}")
+  	message(X11_LIBRARIES="${X11_LIBRARIES}")
     add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
-  else()
 #Wayland 
-    FIND_PACKAGE(PkgConfig)
-    PKG_CHECK_MODULES(PKG_WAYLAND QUIET wayland-client wayland-server wayland-egl wayland-cursor)
+	FIND_PACKAGE(PkgConfig)
+	PKG_CHECK_MODULES(PKG_WAYLAND QUIET wayland-client wayland-server wayland-egl wayland-cursor)
 
-    SET(WAYLAND_DEFINITIONS ${PKG_WAYLAND_CFLAGS})
+	SET(WAYLAND_DEFINITIONS ${PKG_WAYLAND_CFLAGS})
 
-    FIND_PATH(WAYLAND_CLIENT_INCLUDE_DIR  NAMES wayland-client.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
-    FIND_PATH(WAYLAND_SERVER_INCLUDE_DIR  NAMES wayland-server.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
-    FIND_PATH(WAYLAND_EGL_INCLUDE_DIR     NAMES wayland-egl.h    HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
-    FIND_PATH(WAYLAND_CURSOR_INCLUDE_DIR  NAMES wayland-cursor.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+	FIND_PATH(WAYLAND_CLIENT_INCLUDE_DIR  NAMES wayland-client.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+	FIND_PATH(WAYLAND_SERVER_INCLUDE_DIR  NAMES wayland-server.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+	FIND_PATH(WAYLAND_EGL_INCLUDE_DIR     NAMES wayland-egl.h    HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
+	FIND_PATH(WAYLAND_CURSOR_INCLUDE_DIR  NAMES wayland-cursor.h HINTS ${PKG_WAYLAND_INCLUDE_DIRS})
 
-    FIND_LIBRARY(WAYLAND_CLIENT_LIBRARIES NAMES wayland-client   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
-    FIND_LIBRARY(WAYLAND_SERVER_LIBRARIES NAMES wayland-server   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
-    FIND_LIBRARY(WAYLAND_EGL_LIBRARIES    NAMES wayland-egl      HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
-    FIND_LIBRARY(WAYLAND_CURSOR_LIBRARIES NAMES wayland-cursor   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+	FIND_LIBRARY(WAYLAND_CLIENT_LIBRARIES NAMES wayland-client   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+	FIND_LIBRARY(WAYLAND_SERVER_LIBRARIES NAMES wayland-server   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+	FIND_LIBRARY(WAYLAND_EGL_LIBRARIES    NAMES wayland-egl      HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
+	FIND_LIBRARY(WAYLAND_CURSOR_LIBRARIES NAMES wayland-cursor   HINTS ${PKG_WAYLAND_LIBRARY_DIRS})
 
-    set(WAYLAND_INCLUDE_DIR ${WAYLAND_CLIENT_INCLUDE_DIR} ${WAYLAND_SERVER_INCLUDE_DIR} ${WAYLAND_EGL_INCLUDE_DIR} ${WAYLAND_CURSOR_INCLUDE_DIR})
-    set(WAYLAND_LIBRARIES ${WAYLAND_CLIENT_LIBRARIES} ${WAYLAND_SERVER_LIBRARIES} ${WAYLAND_EGL_LIBRARIES} ${WAYLAND_CURSOR_LIBRARIES})
+	set(WAYLAND_INCLUDE_DIR ${WAYLAND_CLIENT_INCLUDE_DIR} ${WAYLAND_SERVER_INCLUDE_DIR} ${WAYLAND_EGL_INCLUDE_DIR} ${WAYLAND_CURSOR_INCLUDE_DIR})
+	set(WAYLAND_LIBRARIES ${WAYLAND_CLIENT_LIBRARIES} ${WAYLAND_SERVER_LIBRARIES} ${WAYLAND_EGL_LIBRARIES} ${WAYLAND_CURSOR_LIBRARIES})
 	list(REMOVE_DUPLICATES WAYLAND_INCLUDE_DIR)
+
+	pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
+	if (NOT WAYLAND_PROTOCOLS_FOUND)
+		message(FATAL_ERROR "Wayland protocols package not found")
+	endif ()
+	find_program(WAYLAND_SCANNER wayland-scanner)
+	if (NOT WAYLAND_SCANNER)
+		message(FATAL_ERROR "wayland-scanner binary not found")
+	endif ()
+	pkg_get_variable(protocol_dir wayland-protocols pkgdatadir)
+	execute_process(COMMAND ${WAYLAND_SCANNER} client-header ${protocol_dir}/stable/xdg-shell/xdg-shell.xml ${CMAKE_BINARY_DIR}/xdg-shell-client-protocol.h
+		COMMAND ${WAYLAND_SCANNER} private-code ${protocol_dir}/stable/xdg-shell/xdg-shell.xml ${CMAKE_BINARY_DIR}/xdg-shell-protocol.c)
+	include_directories(${WAYLAND_INCLUDE_DIR})
+	include_directories(${CMAKE_BINARY_DIR})
+    set(WAYLAND_LIBRARIES ${WAYLAND_CLIENT_LIBRARIES})
 	add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
-  endif()
 endif()
 
 #other sources
@@ -688,8 +700,8 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	target_link_libraries(VVDViewer
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})
-elseif(X11_FOUND)
-    set(LINK_LIBRARIES_X11
+else()
+    set(LINK_LIBRARIES_LINUX
        ${CURL_LIBRARIES}
 	   ${JPEG_LIBRARIES}
 	   ${ZLIB_LIBRARIES}
@@ -711,9 +723,9 @@ elseif(X11_FOUND)
        ${SPIRV_LIBRARIES}
 	   ${GTK3_LIBRARIES}
 	   ${X11_LIBRARIES} vdpau va va-drm va-x11)
-	list(REMOVE_DUPLICATES LINK_LIBRARIES_X11)
-	set(LINK_LIBRARIES_X11_FINAL)
-	foreach(lib ${LINK_LIBRARIES_X11})
+	list(REMOVE_DUPLICATES LINK_LIBRARIES_LINUX)
+	set(LINK_LIBRARIES_LINUX_FINAL)
+	foreach(lib ${LINK_LIBRARIES_LINUX})
 		if( lib MATCHES "libmcheck.a$" OR 
 			lib MATCHES "libm-2.35.a$" OR 
 			lib MATCHES "libc_nonshared.a$")
@@ -743,44 +755,18 @@ elseif(X11_FOUND)
 			message(lib="${lib}")
 			string(REGEX REPLACE "a$" "so" lib ${lib})
 			message(lib="${lib}")
-			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
 		elseif( lib MATCHES "libx264.a$" )
 			set( lib "/usr/lib/x86_64-linux-gnu/libx264.so" )
-			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
 		else()
-			set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} ${lib})
+			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
   		endif()
 	endforeach()
-	#set(LINK_LIBRARIES_X11_FINAL ${LINK_LIBRARIES_X11_FINAL} "/usr/lib/x86_64-linux-gnu/libva.so")
-	message(LINK_LIBRARIES_X11_FINAL="${LINK_LIBRARIES_X11_FINAL}")
+	#set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} "/usr/lib/x86_64-linux-gnu/libva.so")
+	message(LINK_LIBRARIES_LINUX_FINAL="${LINK_LIBRARIES_LINUX_FINAL}")
 
-	target_link_libraries(VVDMainFrame ${LINK_LIBRARIES_X11_FINAL})
-	target_link_libraries(VVDViewer
-	   VVDMainFrame
-	   ${wxWidgets_LIBRARIES})
-else()
-	target_link_libraries(VVDMainFrame
-	   ${CURL_LIBRARIES}
-	   ${JPEG_LIBRARIES}
-	   ${ZLIB_LIBRARIES}
-	   ${TIFF_LIBRARIES}
-	   ${OPENSSL_LIBRARIES}
-	   ${SSL_DEP_LIBRARIES}
-	   ${ffmpeg_LIBRARIES}
-	   ${Boost_LIBRARIES}
-	   ${FREETYPE_LIBRARIES}
-	   ${wxWidgets_LIBRARIES}
-	   ${HDF5_LIBRARIES}
-	   ${CZI_LIBRARIES}
-	   ${ND2_LIBRARIES}
-	   ${BZIP2_LIBRARIES}
-	   ${LZ4_LIBRARIES}
-	   ${PNG_LIBRARIES}
-	   ${BLOSC_LIBRARIES}
-       ${Vulkan_LIBRARY}
-       ${SPIRV_LIBRARIES}
-	   ${GTK3_LIBRARIES}
-	   ${WAYLAND_LIBRARIES})
+	target_link_libraries(VVDMainFrame ${LINK_LIBRARIES_LINUX_FINAL})
 	target_link_libraries(VVDViewer
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})

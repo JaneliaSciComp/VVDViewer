@@ -837,6 +837,17 @@ public:
 	shared_ptr<VVulkan> m_vulkan;
 	std::shared_ptr<Vulkan2dRender> m_v2drender;
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	bool m_readyToDraw;
+	wl_compositor *m_wlCompositor;
+    wl_subcompositor *m_wlSubcompositor;
+	wl_surface *m_wlSurface;
+    wl_region *m_wlRegion;
+    wl_subsurface *m_wlSubsurface;
+	wl_callback *m_wlFrameCallbackHandler;
+	friend void VVVUpdatePosition(VRenderVulkanView* win);
+#endif
+
 private:
 	wxWindow* m_frame;
 	VRenderView* m_vrv;

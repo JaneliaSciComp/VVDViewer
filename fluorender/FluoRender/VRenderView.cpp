@@ -50,10 +50,10 @@ DEALINGS IN THE SOFTWARE.
   #include "MetalCompatibility.h"
 #elif defined(__WXGTK__)
   #include <gtk/gtk.h>
-  #if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+  #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
     #include <wayland-client.h>
     #include "xdg-shell-client-protocol.h"
-  #elif defined(VK_USE_PLATFORM_XCB_KHR)
+	#include <gdk/gdkwayland.h>
     #include <gdk/gdkx.h>
     #include <X11/Xlib-xcb.h>
   #endif
@@ -753,6 +753,68 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_idleTimer->Start(50);
 }
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+
+void VVVUpdatePosition(VRenderVulkanView* win)
+{
+    int x, y;
+    gdk_window_get_origin(win->GTKGetDrawingWindow(), &x, &y);
+    wl_subsurface_set_position(win->m_wlSubsurface, x, y);
+}
+
+extern "C"
+{
+
+	static void wl_global(void *data,
+						  struct wl_registry *wl_registry,
+						  uint32_t name,
+						  const char *interface,
+						  uint32_t)
+	{
+		VRenderVulkanView *vvv = static_cast<VRenderVulkanView *>(data);
+
+		if (!strcmp(interface, "wl_compositor"))
+			vvv->m_wlCompositor = (struct wl_compositor *)wl_registry_bind(wl_registry, name, &wl_compositor_interface, 3);
+		else if (!strcmp(interface, "wl_subcompositor"))
+			vvv->m_wlSubcompositor = (struct wl_subcompositor *)wl_registry_bind(wl_registry, name, &wl_subcompositor_interface, 1);
+	}
+
+	static void wl_global_remove(void *,
+								 struct wl_registry *,
+								 uint32_t)
+	{
+	}
+
+	static const struct wl_registry_listener wl_registry_listener = {
+		wl_global,
+		wl_global_remove};
+
+	static void wl_frame_callback_handler(void *data,
+										  struct wl_callback *,
+										  uint32_t)
+	{
+		VRenderVulkanView *vvv = static_cast<VRenderVulkanView *>(data);
+		vvv->m_readyToDraw = true;
+		g_clear_pointer(&vvv->m_wlFrameCallbackHandler, wl_callback_destroy);
+		vvv->SendSizeEvent();
+		gtk_widget_queue_draw(vvv->m_wxwindow);
+	}
+
+	static const struct wl_callback_listener wl_frame_listener = {
+		wl_frame_callback_handler};
+
+	static void gtk_glcanvas_size_callback(GtkWidget *widget,
+										   GtkAllocation *,
+										   VRenderVulkanView *win)
+	{
+		int scale = gtk_widget_get_scale_factor(widget);
+		//wl_egl_window_resize(win->m_wlEGLWindow, win->m_width * scale, win->m_height * scale, 0, 0);
+
+		VVVUpdatePosition(win);
+	}
+}
+#endif
+
 void VRenderVulkanView::InitVulkan()
 {
 	if (m_vulkan)
@@ -781,21 +843,54 @@ void VRenderVulkanView::InitVulkan()
 	}
 	GdkDisplay *gtk_display = gdk_window_get_display(gtk_window);
 	m_vulkan = make_shared<VVulkan>();
-	m_vulkan->initVulkan();
-#if defined(VK_USE_PLATFORM_XCB_KHR)
-	Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
-    xcb_window_t win = GDK_WINDOW_XID(gtk_window);
-	xcb_connection_t *c = xcb_connect(NULL, NULL);
-    if (xcb_connection_has_error(c) > 0) {
-        printf("Cannot connect to XCB.\nExiting ...\n");
-        fflush(stdout);
-        return;
-    }
-	m_vulkan->setWindow(win, c);
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-	wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
-	wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
-	m_vulkan->setWindow(wdisp, wsurf);
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (GDK_IS_WAYLAND_DISPLAY(gtk_display))
+	{
+		//m_readyToDraw = false;
+		m_vulkan->initVulkan(VVulkan::PLATFORM_WAYLAND);
+		wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
+		wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
+		m_vulkan->setWindow(wdisp, wsurf);
+
+		int w = gdk_window_get_width(gtk_window);
+        int h = gdk_window_get_height(gtk_window);
+        struct wl_display *display = gdk_wayland_display_get_wl_display(gdk_window_get_display(gtk_window));
+        struct wl_surface *surface = gdk_wayland_window_get_wl_surface(gtk_window);
+        struct wl_registry *registry = wl_display_get_registry(display);
+        wl_registry_add_listener(registry, &wl_registry_listener, this);
+        wl_display_roundtrip(display);
+        if ( !m_wlCompositor || !m_wlSubcompositor )
+        {
+            wxFAIL_MSG("Invalid Wayland compositor or subcompositor");
+            return;
+        }
+        m_wlSurface = wl_compositor_create_surface(m_wlCompositor);
+        m_wlRegion = wl_compositor_create_region(m_wlCompositor);
+        m_wlSubsurface = wl_subcompositor_get_subsurface(m_wlSubcompositor,
+                                                         m_wlSurface,
+                                                         surface);
+        wl_surface_set_input_region(m_wlSurface, m_wlRegion);
+        wl_subsurface_set_desync(m_wlSubsurface);
+        VVVUpdatePosition(this);
+		m_vulkan->setWindow(display, m_wlSurface);
+
+		//m_wlFrameCallbackHandler = wl_surface_frame(surface);
+        //wl_callback_add_listener(m_wlFrameCallbackHandler, &wl_frame_listener, this);
+        //g_signal_connect(m_widget, "size-allocate", G_CALLBACK(gtk_glcanvas_size_callback), this);
+	}
+	else
+	{
+		m_vulkan->initVulkan(VVulkan::PLATFORM_X11);
+		Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
+    	xcb_window_t win = GDK_WINDOW_XID(gtk_window);
+		xcb_connection_t *c = xcb_connect(NULL, NULL);
+    	if (xcb_connection_has_error(c) > 0) {
+    	    printf("Cannot connect to XCB.\nExiting ...\n");
+    	    fflush(stdout);
+    	    return;
+    	}
+		m_vulkan->setWindow(win, c);
+	}
 #endif
 #endif
 	m_vulkan->prepare();
@@ -1665,7 +1760,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		params2.loc[1] = glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f );
 		params2.loc[2] = glm::vec4( 0.0f, 0.0f, 0.0f, 0.0f );
 		params2.clear = m_frame_clear;
-		params2.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+		params2.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 		m_frame_clear = false;
 		
 		if (!current_fbo->renderPass)
@@ -1690,7 +1785,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		params.loc[1] = glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f );
 		params.loc[2] = glm::vec4( 0.0f, 0.0f, 0.0f, 0.0f );
 		params.clear = m_frame_clear;
-		params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+		params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 		m_frame_clear = false;
 		
 		if (!current_fbo->renderPass)
@@ -4284,7 +4379,7 @@ void VRenderVulkanView::DrawFinalBuffer(bool clear)
 	params.loc[2] = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
 	params.clear = clear;
-	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 0.0f };
+	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 	m_frame_clear = false;
 	
 	if (!current_fbo->renderPass)
@@ -11383,7 +11478,7 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 			Vulkan2dRender::V2DRenderParams params;
 			params.matrix[0] = matrix;
 			params.clear = m_frame_clear;
-			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 			m_frame_clear = false;
 			params.obj = &m_clip_vobj;
 
@@ -11775,7 +11870,7 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 			Vulkan2dRender::V2DRenderParams params;
 			params.matrix[0] = matrix;
 			params.clear = m_frame_clear;
-			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 			m_frame_clear = false;
 			params.obj = &m_clip_vobj;
 
@@ -12841,7 +12936,7 @@ void VRenderVulkanView::DrawGradBg()
 		);
 	params.matrix[0] = proj_mat;
 	params.clear = m_frame_clear;
-	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 	m_frame_clear = false;
 
 	params.obj = &m_grad_vobj;

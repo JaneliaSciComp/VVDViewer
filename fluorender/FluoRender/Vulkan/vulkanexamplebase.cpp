@@ -34,10 +34,11 @@ VkResult VulkanExampleBase::createInstance(bool enableValidation)
 	instanceExtensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 #elif defined(_DIRECT2DISPLAY)
 	instanceExtensions.push_back(VK_KHR_DISPLAY_EXTENSION_NAME);
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-	instanceExtensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
-#elif defined(VK_USE_PLATFORM_XCB_KHR)
-	instanceExtensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (m_platform == PLATFORM_WAYLAND)
+		instanceExtensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+	else
+		instanceExtensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(VK_USE_PLATFORM_IOS_MVK)
 	instanceExtensions.push_back(VK_MVK_IOS_SURFACE_EXTENSION_NAME);
 #elif defined(VK_USE_PLATFORM_MACOS_MVK)
@@ -217,6 +218,10 @@ void VulkanExampleBase::submitFrame()
 
 VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 {
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	m_platform = PLATFORM_WAYLAND;
+#endif
+
 	settings.validation = enableValidation;
 
 	char* numConvPtr;
@@ -328,8 +333,16 @@ VulkanExampleBase::~VulkanExampleBase()
 	vkDestroyInstance(instance, nullptr);
 }
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+bool VulkanExampleBase::initVulkan(int platform)
+#else
 bool VulkanExampleBase::initVulkan()
+#endif
 {
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	m_platform = platform;
+#endif
+
 	VkResult err;
 
 	// Vulkan instance
@@ -714,10 +727,11 @@ void VulkanExampleBase::initSwapchain()
 	swapChain.initSurface(view);
 #elif defined(_DIRECT2DISPLAY)
 	swapChain.initSurface(width, height);
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-	swapChain.initSurface(display, surface);
-#elif defined(VK_USE_PLATFORM_XCB_KHR)
-	swapChain.initSurface(connection, window);
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (m_platform == PLATFORM_WAYLAND)
+		swapChain.initSurface(display, surface);
+	else
+		swapChain.initSurface(connection, window);
 #endif
 }
 

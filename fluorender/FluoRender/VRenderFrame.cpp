@@ -2612,7 +2612,8 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
 
 	m_tree_panel->SaveExpState();
 	int scroll_pos;
-	scroll_pos = m_tree_panel->GetScrollPos(wxVERTICAL);
+	if (HasScrollbar(wxVERTICAL))
+		scroll_pos = m_tree_panel->GetScrollPos(wxVERTICAL);
 
 	m_tree_panel->SetEvtHandlerEnabled(false);
 	m_tree_panel->Freeze();
@@ -2832,7 +2833,8 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
     m_clip_view->SyncClippingPlanes();
     
     m_tree_panel->LoadExpState(expand_newitem);
-	m_tree_panel->SetScrollPos(wxVERTICAL, scroll_pos);
+	if (HasScrollbar(wxVERTICAL))
+		m_tree_panel->SetScrollPos(wxVERTICAL, scroll_pos);
 
 	if (sel_item.IsOk())
 		m_tree_panel->SelectItem(sel_item);
