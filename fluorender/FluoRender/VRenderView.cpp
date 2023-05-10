@@ -803,7 +803,7 @@ extern "C"
 	static const struct wl_callback_listener wl_frame_listener = {
 		wl_frame_callback_handler};
 
-	static void gtk_glcanvas_size_callback(GtkWidget *widget,
+	static void gtk_vvv_size_callback(GtkWidget *widget,
 										   GtkAllocation *,
 										   VRenderVulkanView *win)
 	{
@@ -874,9 +874,9 @@ void VRenderVulkanView::InitVulkan()
         VVVUpdatePosition(this);
 		m_vulkan->setWindow(display, m_wlSurface);
 
-		//m_wlFrameCallbackHandler = wl_surface_frame(surface);
-        //wl_callback_add_listener(m_wlFrameCallbackHandler, &wl_frame_listener, this);
-        //g_signal_connect(m_widget, "size-allocate", G_CALLBACK(gtk_glcanvas_size_callback), this);
+		m_wlFrameCallbackHandler = wl_surface_frame(surface);
+        wl_callback_add_listener(m_wlFrameCallbackHandler, &wl_frame_listener, this);
+        g_signal_connect(m_widget, "size-allocate", G_CALLBACK(gtk_vvv_size_callback), this);
 	}
 	else
 	{
