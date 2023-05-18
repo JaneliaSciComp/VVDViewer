@@ -1889,7 +1889,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 					wxProgressDialog *prg_diag = new wxProgressDialog(
 						"VVDViewer: Baking volume data...",
 						"Baking volume data. Please wait.",
-						100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+						100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 					//process the data
 					int bits = data->type==nrrdTypeUShort?16:8;
@@ -1999,7 +1999,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                         wxProgressDialog *prg_diag = new wxProgressDialog(
                                                                           "VVDViewer: Saving volume data...",
                                                                           "Saving volume data. Please wait.",
-                                                                          100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+                                                                          100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
                         
                         uint8 *mskdata = NULL;
                         if (m_tex->nmask() != -1 && save_msk && GetMaskHideMode() != VOL_MASK_HIDE_NONE)
@@ -2126,7 +2126,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                 wxProgressDialog *prg_diag = new wxProgressDialog(
                                                                   "VVDViewer: Saving volume data...",
                                                                   "Saving volume data. Please wait.",
-                                                                  100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+                                                                  100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
                 
 				int curlv = -1;
 				curlv = GetLevel();
@@ -2378,7 +2378,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 			"VVDViewer: Export Segments...",
 			"Please wait.",
 			100, 0,
-			wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 		int progress = 0;
 
 		BaseWriter *writer = 0;

@@ -609,6 +609,11 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    		set(CXXFLAGS "-fPIC ")
 		SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D_DEBUG")
 		SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -D_DEBUG")
+		
+		set(CMAKE_CXX_FLAGS "-Wall -Wextra")
+		set(CMAKE_CXX_FLAGS_DEBUG "-g")
+		set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+		
 		add_executable(VVDViewer 
           			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
 					 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)

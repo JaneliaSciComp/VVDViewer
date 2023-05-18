@@ -294,7 +294,7 @@ int VolumeSelector::CompAnalysis(double min_voxels, double max_voxels, double th
 		"FluoRender: Component Analysis...",
 		"Analyzing... Please wait.",
 		100, 0,
-		wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 	m_progress = 0;
 
 	if (use_sel)
@@ -1333,7 +1333,7 @@ int VolumeSelector::NoiseAnalysis(double min_voxels, double max_voxels, double b
 		"FluoRender: Noise Analysis...",
 		"Analyzing... Please wait.",
 		100, 0,
-		wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 	m_progress = 0;
 
 	int nx, ny, nz;
@@ -1387,7 +1387,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		"FluoRender: Component Analysis...",
 		"Analyzing... Please wait.",
 		100, 0,
-		wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 	m_progress = 0;
 	m_total_pr = iter+1;
 
@@ -1478,7 +1478,7 @@ void VolumeSelector::EVEAnalysis(int min_radius, int max_radius, double thresh, 
 		"VVDViewer: EVE Analysis...",
 		"Analyzing... Please wait.",
 		100, 0,
-		wxPD_SMOOTH | wxPD_ELAPSED_TIME | wxPD_AUTO_HIDE);
+		wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_ELAPSED_TIME | wxPD_AUTO_HIDE);
 	m_progress = 0;
 
 	/*

@@ -153,6 +153,26 @@ wxPanel(parent, id, pos, size,style, name),
 	//validator: integer
 	wxIntegerValidator<unsigned int> vald_int;
 
+#if defined(__WXGTK__)
+	int col1_text_w = 60;
+	int col2_text_w = 70;
+	int unit_comb_w = 90;
+	int digit_comb_w = 80;
+#else
+	int col1_text_w = 50;
+	int col2_text_w = 60;
+	int unit_comb_w = 50;
+	int digit_comb_w = 40;
+#endif
+
+#ifdef _DARWIN
+	int spc_formsize = 50;
+	int sb_formsize = 55;
+#else
+	int spc_formsize = 60;
+	int sb_formsize = 80;
+#endif
+
 	//1st line
 	//gamma
 	st = new wxStaticText(this, 0, ":Gamma",
@@ -160,7 +180,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_gamma_sldr = new wxSlider(this, ID_GammaSldr, 100, 10, 400,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL|wxSL_INVERSE);
 	m_gamma_text = new wxTextCtrl(this, ID_GammaText, "1.00",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_fp2);
 	sizer_l1->Add(m_gamma_sldr, 1, wxEXPAND);
 	sizer_l1->Add(m_gamma_text, 0, wxALIGN_CENTER);
 	sizer_l1->Add(st, 0, wxALIGN_CENTER);
@@ -170,7 +190,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_boundary_sldr = new wxSlider(this, ID_BoundarySldr, 0, 0, 1000,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_boundary_text = new wxTextCtrl(this, ID_BoundaryText, "0.0000",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_fp4);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_fp4);
 	sizer_r1->Add(st, 0, wxALIGN_CENTER);
 	sizer_r1->Add(m_boundary_text, 0, wxALIGN_CENTER);
 	sizer_r1->Add(m_boundary_sldr, 1, wxEXPAND);
@@ -182,7 +202,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_contrast_sldr = new wxSlider(this, ID_ContrastSldr, 255, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_contrast_text = new wxTextCtrl(this, ID_ContrastText, "50",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_int);
 	sizer_l2->Add(m_contrast_sldr, 1, wxEXPAND);
 	sizer_l2->Add(m_contrast_text, 0, wxALIGN_CENTER);
 	sizer_l2->Add(st, 0, wxALIGN_CENTER);
@@ -192,11 +212,11 @@ wxPanel(parent, id, pos, size,style, name),
 	m_left_thresh_sldr = new wxSlider(this, ID_LeftThreshSldr, 5, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_left_thresh_text = new wxTextCtrl(this, ID_LeftThreshText, "5",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_int);
 	m_right_thresh_sldr = new wxSlider(this, ID_RightThreshSldr, 230, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_right_thresh_text = new wxTextCtrl(this, ID_RightThreshText, "230",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_int);
 	sizer_r2->Add(m_threh_st, 0, wxALIGN_CENTER);
 	sizer_r2->Add(m_left_thresh_text, 0, wxALIGN_CENTER);
 	sizer_r2->Add(m_left_thresh_sldr, 1, wxEXPAND);
@@ -210,7 +230,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_luminance_sldr = new wxSlider(this, ID_LuminanceSldr, 128, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_luminance_text = new wxTextCtrl(this, ID_LuminanceText, "128",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_int);
 	sizer_l3->Add(m_luminance_sldr, 1, wxEXPAND, 0);
 	sizer_l3->Add(m_luminance_text, 0, wxALIGN_CENTER, 0);
 	sizer_l3->Add(st, 0, wxALIGN_CENTER, 0);
@@ -221,7 +241,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_shadow_sldr = new wxSlider(this, ID_ShadowSldr, 0, 0, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_shadow_text = new wxTextCtrl(this, ID_ShadowText, "0.00",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_fp2);
 	sizer_r3->Add(m_shadow_chk, 0, wxALIGN_CENTER);
 	sizer_r3->Add(m_shadow_text, 0, wxALIGN_CENTER);
 	sizer_r3->Add(m_shadow_sldr, 1, wxEXPAND);
@@ -229,7 +249,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_hi_shading_sldr = new wxSlider(this, ID_HiShadingSldr, 0, 0, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_hi_shading_text = new wxTextCtrl(this, ID_HiShadingText, "0.00",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_fp2);
     m_hi_shading_sldr->Hide();
     m_hi_shading_text->Hide();
     //sizer_r3->Add(m_hi_shading_text, 0, wxALIGN_CENTER);
@@ -244,7 +264,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_alpha_sldr = new wxSlider(this, ID_AlphaSldr, 127, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_alpha_text = new wxTextCtrl(this, ID_Alpha_Text, "127",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_int);
 	sizer_l4->Add(m_alpha_sldr, 1, wxEXPAND);
 	sizer_l4->Add(m_alpha_text, 0, wxALIGN_CENTER);
 	sizer_l4->Add(st, 0, wxALIGN_CENTER);
@@ -255,7 +275,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_sample_sldr = new wxSlider(this, ID_SampleSldr, 50, 0, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_sample_text = new wxTextCtrl(this, ID_SampleText, "1.0",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(col2_text_w, 20), 0, vald_fp2);
 	sizer_r4->Add(st, 0, wxALIGN_CENTER);
 	sizer_r4->Add(m_sample_text, 0, wxALIGN_CENTER);
 	sizer_r4->Add(m_sample_sldr, 1, wxEXPAND);
@@ -265,7 +285,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_low_shading_sldr = new wxSlider(this, ID_LowShadingSldr, 0, 0, 200,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_low_shading_text = new wxTextCtrl(this, ID_LowShadingText, "0.00",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_fp2);
 	st = new wxStaticText(this, 0, ":",
 		wxDefaultPosition, wxSize(5, 20));
 	m_shading_enable_chk = new wxCheckBox(this, ID_ShadingEnableChk, "Shading",
@@ -280,13 +300,13 @@ wxPanel(parent, id, pos, size,style, name),
 		wxDefaultPosition, wxSize(140, 20), wxALIGN_RIGHT);
 	m_sizer_r5->Add(m_colormap_enable_chk, 0, wxALIGN_CENTER);
 	m_colormap_low_value_text = new wxTextCtrl(this, ID_ColormapLowValueText, "0",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(col1_text_w, 20), 0, vald_int);
 	m_sizer_r5->Add(m_colormap_low_value_text, 0, wxALIGN_CENTER);
 	m_colormap_low_value_sldr = new wxSlider(this, ID_ColormapLowValueSldr, 0, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_sizer_r5->Add(m_colormap_low_value_sldr, 1, wxEXPAND);
 	m_colormap_high_value_text = new wxTextCtrl(this, ID_ColormapHighValueText, "255",
-		wxDefaultPosition + wxPoint(10,0), wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition + wxPoint(10,0), wxSize(col1_text_w, 20), 0, vald_int);
 	m_sizer_r5->Add(m_colormap_high_value_text, 0, wxALIGN_CENTER);
 	m_colormap_high_value_sldr = new wxSlider(this, ID_ColormapHighValueSldr, 255, 0, 255,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
@@ -364,12 +384,6 @@ wxPanel(parent, id, pos, size,style, name),
 	//m_color_text->Hide();
 
 	//spaceings
-
-#ifdef _DARWIN
-	int spc_formsize = 50;
-#else
-	int spc_formsize = 60;
-#endif
 	//x
 	st = new wxStaticText(this, 0, "X:");
 	m_space_x_text = new wxTextCtrl(this, ID_SpaceXText, "1.000000",
@@ -392,11 +406,6 @@ wxPanel(parent, id, pos, size,style, name),
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_z_text, 0, wxALIGN_CENTER);
 
-#ifdef _DARWIN
-	int sb_formsize = 55;
-#else
-	int sb_formsize = 80;
-#endif
 	//scale bar
 	m_scale_chk = new wxCheckBox(this, ID_ScaleChk, "SclBar:",
 		wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
@@ -405,7 +414,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_scale_text = new wxTextCtrl(this, ID_ScaleText, "",
 		wxDefaultPosition, wxSize(sb_formsize, 20), 0, vald_fp8);
 	m_scale_cmb = new wxComboBox(this, ID_ScaleCmb, "",
-		wxDefaultPosition, wxSize(50, 30), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(unit_comb_w, 30), 0, NULL, wxCB_READONLY);
 	m_scale_cmb->Append("nm");
 	m_scale_cmb->Append(L"\u03BCm");
 	m_scale_cmb->Append("mm");
@@ -413,7 +422,7 @@ wxPanel(parent, id, pos, size,style, name),
 	
 	st = new wxStaticText(this, 0, "Digit:");
 	m_scale_digit_cmb = new wxComboBox(this, ID_ScaleDigitCombo, "",
-		wxDefaultPosition, wxSize(35, 30), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(digit_comb_w, 30), 0, NULL, wxCB_READONLY);
 	for (int c = 0; c <= 8; c++)
 		m_scale_digit_cmb->Append(wxString::Format(wxT(" %i"), c));
 	m_scale_digit_cmb->Select(2);

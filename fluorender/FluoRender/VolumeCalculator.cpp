@@ -359,7 +359,7 @@ void VolumeCalculator::FillHoles(double thresh)
          "FluoRender: Voxel Consolidation",
          "Consolidating... Please wait.",
          100, 0,
-         wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+         wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
    int progress = 0;
    int total_prg = nx*2;
 

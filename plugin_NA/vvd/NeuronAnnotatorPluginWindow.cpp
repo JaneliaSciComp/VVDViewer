@@ -1400,6 +1400,8 @@ void NAGuiPluginWindow::OnInteropMessageReceived(wxCommandEvent & event)
 
 void NAGuiPluginWindow::OnIdle(wxTimerEvent& event)
 {
+	if (!IsShown())
+		return;
 /*	if (m_results)
 	{
 		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))

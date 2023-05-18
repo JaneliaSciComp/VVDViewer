@@ -116,7 +116,7 @@ wxWindow* SettingDlg::CreateProjectPage(wxWindow *parent)
 	wxBoxSizer *sizer2_1 = new wxBoxSizer(wxHORIZONTAL);
 	st = new wxStaticText(page, 0, "Font:");
 	m_font_cmb = new wxComboBox(page, ID_FontCmb, "",
-		wxDefaultPosition, wxSize(150, -1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(150+comb_size_fix_w, -1), 0, NULL, wxCB_READONLY);
 	//populate fonts
 	std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
 	exePath = exePath.substr(0,exePath.find_last_of(std::string()+GETSLASH()));
@@ -137,7 +137,7 @@ wxWindow* SettingDlg::CreateProjectPage(wxWindow *parent)
 	sizer2_1->Add(10, 10);
 	st = new wxStaticText(page, 0, "Size:");
 	m_font_size_cmb = new wxComboBox(page, ID_FontSizeCmb, "",
-		wxDefaultPosition, wxSize(50, -1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(50+comb_size_fix_w, -1), 0, NULL, wxCB_READONLY);
 	for (int font_size=10; font_size<31; font_size+=2)
 		m_font_size_cmb->Append(wxString::Format("%d", font_size));
 	sizer2_1->Add(st);
@@ -146,7 +146,7 @@ wxWindow* SettingDlg::CreateProjectPage(wxWindow *parent)
 	sizer2_1->Add(10, 10);
 	st = new wxStaticText(page, 0, "Color:");
 	m_text_color_cmb = new wxComboBox(page, ID_TextColorCmb, "",
-		wxDefaultPosition, wxSize(100, -1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(100+comb_size_fix_w, -1), 0, NULL, wxCB_READONLY);
 	m_text_color_cmb->Append("BG inverted");
 	m_text_color_cmb->Append("Background");
 	m_text_color_cmb->Append("Vol sec color");
@@ -281,7 +281,7 @@ wxWindow* SettingDlg::CreateRenderingPage(wxWindow *parent)
 	m_shadow_dir_sldr = new wxSlider(page, ID_ShadowDirSldr, -45, -180, 180,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_shadow_dir_text = new wxTextCtrl(page, ID_ShadowDirText, "-45",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, 20), 0, vald_fp2);
 	st = new wxStaticText(page, 0, 
 		"The direction of the shadows, when shadow is enabled for volume data.");
 	sizer3_1->Add(m_shadow_dir_chk, 0, wxALIGN_CENTER);
@@ -368,7 +368,7 @@ wxWindow* SettingDlg::CreatePerformancePage(wxWindow *parent)
 	m_graphics_mem_sldr = new wxSlider(page, ID_GraphicsMemSldr, 10, 1, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_graphics_mem_text = new wxTextCtrl(page, ID_GraphicsMemText, "1000",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, -1), 0, vald_int);
 	st = new wxStaticText(page, 0, "MB",
 		wxDefaultPosition, wxSize(20, -1));
 	sizer2_1->Add(m_graphics_mem_sldr, 1, wxEXPAND);
@@ -381,7 +381,7 @@ wxWindow* SettingDlg::CreatePerformancePage(wxWindow *parent)
 	m_large_data_sldr = new wxSlider(page, ID_LargeDataSldr, 20, 5, 200,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_large_data_text = new wxTextCtrl(page, ID_LargeDataText, "200",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, -1), 0, vald_int);
 	st = new wxStaticText(page, 0, "MB",
 		wxDefaultPosition, wxSize(20, -1));
 	sizer2_2->Add(m_large_data_sldr, 1, wxEXPAND);
@@ -394,7 +394,7 @@ wxWindow* SettingDlg::CreatePerformancePage(wxWindow *parent)
 	m_block_size_sldr = new wxSlider(page, ID_BlockSizeSldr, 7, 4, 11,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_block_size_text = new wxTextCtrl(page, ID_BlockSizeText, "128",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, -1), 0, vald_int);
 	st = new wxStaticText(page, 0, "vx",
 		wxDefaultPosition, wxSize(20, -1));
 	sizer2_3->Add(m_block_size_sldr, 1, wxEXPAND);
@@ -407,7 +407,7 @@ wxWindow* SettingDlg::CreatePerformancePage(wxWindow *parent)
 	m_response_time_sldr = new wxSlider(page, ID_ResponseTimeSldr, 10, 1, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_response_time_text = new wxTextCtrl(page, ID_ResponseTimeText, "100",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, -1), 0, vald_int);
 	st = new wxStaticText(page, 0, "ms",
 		wxDefaultPosition, wxSize(20, -1));
 	sizer2_4->Add(m_response_time_sldr, 1, wxEXPAND);
@@ -441,7 +441,7 @@ wxWindow* SettingDlg::CreatePerformancePage(wxWindow *parent)
 	m_main_mem_buf_sldr = new wxSlider(page, ID_MainMemBufSizeSldr, 40, 0, 200,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_main_mem_buf_text = new wxTextCtrl(page, ID_MainMemBufSizeText, "4000",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+txt_size_fix_w, -1), 0, vald_int);
 	st = new wxStaticText(page, 0, "MB",
 		wxDefaultPosition, wxSize(20, -1));
 	sizer3_1->Add(m_main_mem_buf_sldr, 1, wxEXPAND);
@@ -485,13 +485,13 @@ wxWindow* SettingDlg::CreateFormatPage(wxWindow *parent)
 	//combo box line
 	wxBoxSizer *sizer2_1 = new wxBoxSizer(wxHORIZONTAL);
 	m_wav_color1_cmb = new wxComboBox(page, ID_WavColor1Cmb, "",
-		wxDefaultPosition, wxSize(75, 23), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(75+comb_size_fix_w, 23), 0, NULL, wxCB_READONLY);
 	m_wav_color2_cmb = new wxComboBox(page, ID_WavColor2Cmb, "",
-		wxDefaultPosition, wxSize(75, 23), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(75+comb_size_fix_w, 23), 0, NULL, wxCB_READONLY);
 	m_wav_color3_cmb = new wxComboBox(page, ID_WavColor3Cmb, "",
-		wxDefaultPosition, wxSize(75, 23), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(75+comb_size_fix_w, 23), 0, NULL, wxCB_READONLY);
 	m_wav_color4_cmb = new wxComboBox(page, ID_WavColor4Cmb, "",
-		wxDefaultPosition, wxSize(75, 23), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(75+comb_size_fix_w, 23), 0, NULL, wxCB_READONLY);
 	//1
 	m_wav_color1_cmb->Append("Red");
 	m_wav_color1_cmb->Append("Green");

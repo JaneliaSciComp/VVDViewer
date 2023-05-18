@@ -270,6 +270,14 @@ private:
     
     bool m_use_fog_mesh;
 
+#if defined(__WXGTK__)
+	static constexpr int txt_size_fix_w = 10;
+	static constexpr int comb_size_fix_w = 35;
+#else
+	static constexpr int txt_size_fix_w = 0;
+	static constexpr int comb_size_fix_w = 0;
+#endif
+
 private:
 	//save project
 	wxCheckBox *m_prj_save_chk;

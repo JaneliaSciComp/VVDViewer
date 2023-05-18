@@ -439,7 +439,11 @@ BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
 	EVT_PAINT(VRenderVulkanView::OnDraw)
 	EVT_SIZE(VRenderVulkanView::OnResize)
 	EVT_ERASE_BACKGROUND(VRenderVulkanView::OnErase)
+#if defined(__WXGTK__)
+	EVT_IDLE(VRenderVulkanView::OnIdle)
+#else
 	EVT_TIMER(ID_Timer ,VRenderVulkanView::OnIdle)
+#endif
 	EVT_MOUSE_EVENTS(VRenderVulkanView::OnMouse)
 	EVT_KEY_DOWN(VRenderVulkanView::OnKeyDown)
 END_EVENT_TABLE()
@@ -6655,7 +6659,11 @@ bool VRenderVulkanView::SelLabelSegVolumeMax(int mode, vector<VolumeData*> ref)
 	return rval;
 }
 
+#if defined(__WXGTK__)
+void VRenderVulkanView::OnIdle(wxIdleEvent& event)
+#else
 void VRenderVulkanView::OnIdle(wxTimerEvent& event)
+#endif
 {
 	bool refresh = m_refresh | m_refresh_start_loop;
 	bool ref_stat = false;
@@ -16974,6 +16982,10 @@ return wxWindow::MSWWindowProc(message, wParam, lParam);
 
 void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 {
+#ifdef _DEBUG
+	cout << "OnMouse" << endl;
+#endif
+
 	wxWindow *window = wxWindow::FindFocus();
 	//	if (window &&
 	//		window->GetClassInfo()->IsKindOf(CLASSINFO(wxTextCtrl)))
@@ -18861,8 +18873,13 @@ BEGIN_EVENT_TABLE(VRenderView, wxPanel)
 	EVT_COMMAND_SCROLL(ID_ScaleFactorSldr, VRenderView::OnScaleFactorChange)
 	EVT_TEXT(ID_ScaleFactorText, VRenderView::OnScaleFactorEdit)
 	EVT_BUTTON(ID_ScaleResetBtn, VRenderView::OnScaleReset)
+#if defined(__WXGTK__)
+	EVT_SPIN_UP(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinUp)
+	EVT_SPIN_DOWN(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinDown)
+#else
 	EVT_SPIN_UP(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinDown)
 	EVT_SPIN_DOWN(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinUp)
+#endif
 	//bar bottom
 	EVT_CHECKBOX(ID_RotLinkChk, VRenderView::OnRotLink)
 	EVT_BUTTON(ID_RotResetBtn, VRenderView::OnRotReset)
@@ -18874,12 +18891,21 @@ BEGIN_EVENT_TABLE(VRenderView, wxPanel)
 	EVT_COMMAND_SCROLL(ID_ZRotSldr, VRenderView::OnZRotScroll)
 	EVT_CHECKBOX(ID_RotLockChk, VRenderView::OnRotLockCheck)
 	//spin buttons
+#if defined(__WXGTK__)
+	EVT_SPIN_UP(ID_XRotSpin, VRenderView::OnXRotSpinDown)
+	EVT_SPIN_DOWN(ID_XRotSpin, VRenderView::OnXRotSpinUp)
+	EVT_SPIN_UP(ID_YRotSpin, VRenderView::OnYRotSpinDown)
+	EVT_SPIN_DOWN(ID_YRotSpin, VRenderView::OnYRotSpinUp)
+	EVT_SPIN_UP(ID_ZRotSpin, VRenderView::OnZRotSpinDown)
+	EVT_SPIN_DOWN(ID_ZRotSpin, VRenderView::OnZRotSpinUp)
+#else
 	EVT_SPIN_UP(ID_XRotSpin, VRenderView::OnXRotSpinUp)
 	EVT_SPIN_DOWN(ID_XRotSpin, VRenderView::OnXRotSpinDown)
 	EVT_SPIN_UP(ID_YRotSpin, VRenderView::OnYRotSpinUp)
 	EVT_SPIN_DOWN(ID_YRotSpin, VRenderView::OnYRotSpinDown)
 	EVT_SPIN_UP(ID_ZRotSpin, VRenderView::OnZRotSpinUp)
 	EVT_SPIN_DOWN(ID_ZRotSpin, VRenderView::OnZRotSpinDown)
+#endif
 	//reset
 	EVT_BUTTON(ID_DefaultBtn, VRenderView::OnSaveDefault)
 	EVT_TIMER(ID_Timer, VRenderView::OnAovSldrIdle)
@@ -18965,6 +18991,18 @@ void VRenderView::CreateBar()
 	wxBoxSizer* sizer_m = new wxBoxSizer(wxHORIZONTAL);
 	wxStaticText *st1, *st2, *st3, *st4;
 
+#if defined(__WXGTK__)
+	int top_h = 32;
+	int spin_right_w = 70;
+	int spin_w = 70;
+	int combo_w = 140;
+#else
+	int top_h = 24;
+	int spin_right_w = 40;
+	int spin_w = 20;
+	int combo_w = 100;
+#endif
+
 	//bar top///////////////////////////////////////////////////
 	wxBoxSizer* sizer_h_1 = new wxBoxSizer(wxHORIZONTAL);
 	m_volume_seq_rd = new wxRadioButton(this, ID_VolumeSeqRd, "Layered",
@@ -18989,28 +19027,28 @@ void VRenderView::CreateBar()
 		break;
 	}
 	m_capture_btn = new wxButton(this, ID_CaptureBtn, "Capture",
-		wxDefaultPosition, wxSize(80, 20));
+		wxDefaultPosition, wxSize(80, top_h));
 	st1 = new wxStaticText(this, 0, "Background:");
 	m_bg_color_picker = new wxColourPickerCtrl(this, ID_BgColorPicker, *wxBLACK,
 		wxDefaultPosition, wxDefaultSize/*wxSize(40, 20)*/);
 	m_cam_ctr_chk = new wxCheckBox(this, ID_CamCtrChk, "Center",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_cam_ctr_chk->SetValue(false);
 	m_fps_chk = new wxCheckBox(this, ID_FpsChk, "Info.",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_fps_chk->SetValue(false);
     m_legend_chk = new wxCheckBox(this, ID_LegendChk, "",
-                                  wxDefaultPosition, wxSize(-1, 20));
+                                  wxDefaultPosition, wxSize(-1, top_h));
     m_legend_chk->SetValue(true);
     m_legend_chk->Hide();
     m_legend_btn = new wxButton(this, ID_LegendBtn, "Legend",
-                                 wxDefaultPosition, wxSize(60, 20));
+                                 wxDefaultPosition, wxSize(60, top_h));
     m_legend_list = NULL;
 	m_intp_chk = new wxCheckBox(this, ID_IntpChk, "Intrp.",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_intp_chk->SetValue(true);
 	m_search_chk = new wxCheckBox(this, ID_SearchChk, "Search",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_search_chk->SetValue(false);
 	m_search_chk->Hide();
 #ifndef WITH_DATABASE
@@ -19019,28 +19057,28 @@ void VRenderView::CreateBar()
 	//angle of view
 	st2 = new wxStaticText(this, 0, "V. AOV:");
 	m_aov_sldr = new wxSlider(this, ID_AovSldr, 45, 10, 100,
-		wxDefaultPosition, wxSize(120, 20), wxSL_HORIZONTAL);
+		wxDefaultPosition, wxSize(120, top_h), wxSL_HORIZONTAL);
 	m_aov_sldr->SetValue(GetPersp()?GetAov():10);
 	m_aov_text = new wxTextCtrl(this, ID_AovText, "",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(60, top_h), 0, vald_int);
 	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):"Ortho");
 	m_free_chk = new wxCheckBox(this, ID_FreeChk, "FreeFly",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	if (GetFree())
 		m_free_chk->SetValue(true);
 	else
 		m_free_chk->SetValue(false);
 
 	m_ppi_sldr = new wxSlider(this, ID_PPISldr, 20, 5, 100,
-		wxDefaultPosition, wxSize(120, 20), wxSL_HORIZONTAL);
+		wxDefaultPosition, wxSize(120, top_h), wxSL_HORIZONTAL);
 	m_ppi_sldr->Hide();
 	m_ppi_text = new wxTextCtrl(this, ID_PPIText, "20",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(40, top_h), 0, vald_int);
 	m_ppi_text->Hide();
 
     m_res_mode_text = new wxStaticText(this, 0, "Quality:");
 	m_res_mode_combo = new wxComboBox(this, ID_ResCombo, "",
-		wxDefaultPosition, wxSize(100, 24), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(combo_w, top_h), 0, NULL, wxCB_READONLY);
 	vector<string>mode_list;
 	mode_list.push_back("Max");
 	mode_list.push_back("Best(x1)");
@@ -19103,7 +19141,7 @@ void VRenderView::CreateBar()
 	sizer_v_3->Add(m_depth_atten_chk, 0, wxALIGN_CENTER);
 	sizer_v_3->Add(m_depth_atten_factor_sldr, 1, wxALIGN_CENTER);
 	sizer_v_3->Add(m_depth_atten_reset_btn, 0, wxALIGN_CENTER);
-	sizer_v_3->Add(m_depth_atten_factor_text, 0, wxALIGN_CENTER);
+	sizer_v_3->Add(m_depth_atten_factor_text, 0, wxEXPAND);
 
 	//bar right///////////////////////////////////////////////////
 	wxBoxSizer* sizer_v_4 = new wxBoxSizer(wxVERTICAL);
@@ -19117,8 +19155,8 @@ void VRenderView::CreateBar()
 	m_scale_factor_text = new wxTextCtrl(this, ID_ScaleFactorText, "100",
 		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
 	m_scale_factor_spin = new wxSpinButton(this, ID_ScaleFactorSpin,
-		wxDefaultPosition, wxSize(40, 20));
-    m_scale_factor_spin->SetRange(0, 1000);
+		wxDefaultPosition, wxSize(spin_right_w, 25), wxSP_VERTICAL|wxSP_ARROW_KEYS);
+    m_scale_factor_spin->SetRange(-INT_MAX, INT_MAX);
     m_scale_factor_spin->SetValue(100);
 	sizer_v_4->Add(5, 10, 0);
 	sizer_v_4->Add(st1, 0, wxALIGN_CENTER);
@@ -19126,7 +19164,7 @@ void VRenderView::CreateBar()
 	sizer_v_4->Add(m_scale_factor_sldr, 1, wxALIGN_CENTER);
 	sizer_v_4->Add(m_scale_factor_spin, 0, wxALIGN_CENTER);
 	sizer_v_4->Add(m_scale_reset_btn, 0, wxALIGN_CENTER);
-	sizer_v_4->Add(m_scale_factor_text, 0, wxALIGN_CENTER);
+	sizer_v_4->Add(m_scale_factor_text, 0, wxEXPAND);
 
 	//middle sizer
 	sizer_m->Add(sizer_v_3, 0, wxEXPAND);
@@ -19144,8 +19182,8 @@ void VRenderView::CreateBar()
 	m_x_rot_text = new wxTextCtrl(this, ID_XRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_x_rot_spin = new wxSpinButton(this, ID_XRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_x_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_x_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_x_rot_spin->SetValue(180);
 	st2 = new wxStaticText(this, 0, "Y:");
 	m_y_rot_sldr = new wxSlider(this, ID_YRotSldr, 0, 0, 360,
@@ -19153,8 +19191,8 @@ void VRenderView::CreateBar()
 	m_y_rot_text = new wxTextCtrl(this, ID_YRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_y_rot_spin = new wxSpinButton(this, ID_YRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_y_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_y_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_y_rot_spin->SetValue(180);
 	st3 = new wxStaticText(this, 0, "Z:");
 	m_z_rot_sldr = new wxSlider(this, ID_ZRotSldr, 0, 0, 360,
@@ -19162,8 +19200,8 @@ void VRenderView::CreateBar()
 	m_z_rot_text = new wxTextCtrl(this, ID_ZRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_z_rot_spin = new wxSpinButton(this, ID_ZRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_z_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_z_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_z_rot_spin->SetValue(180);
 	m_rot_lock_chk = new wxCheckBox(this, ID_RotLockChk, "45 Increments");
     m_center_btn = new wxButton(this, ID_CenterBtn, "Reset Transl.",
@@ -20368,7 +20406,7 @@ void VRenderView::OnScaleFactorSpinUp(wxSpinEvent& event)
 	val++;
 	str_val = wxString::Format("%ld", val);
 	m_scale_factor_text->SetValue(str_val);
-    m_scale_factor_spin->SetValue(100);
+    //m_scale_factor_spin->SetValue(100);
 }
 
 void VRenderView::OnScaleFactorSpinDown(wxSpinEvent& event)
@@ -20376,10 +20414,11 @@ void VRenderView::OnScaleFactorSpinDown(wxSpinEvent& event)
 	wxString str_val = m_scale_factor_text->GetValue();
 	long val;
 	str_val.ToLong(&val);
-	val--;
+	if (val > 1) val--;
+	
 	str_val = wxString::Format("%ld", val);
 	m_scale_factor_text->SetValue(str_val);
-    m_scale_factor_spin->SetValue(100);
+    //m_scale_factor_spin->SetValue(100);
 }
 
 void VRenderView::OnScaleReset(wxCommandEvent &event)
@@ -20538,7 +20577,7 @@ void VRenderView::OnXRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_x_rot_text->SetValue(str);
-    m_x_rot_spin->SetValue(180);
+    //m_x_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnXRotSpinUp(wxSpinEvent& event)
@@ -20548,7 +20587,7 @@ void VRenderView::OnXRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_x_rot_text->SetValue(str);
-    m_x_rot_spin->SetValue(180);
+    //m_x_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnYRotSpinDown(wxSpinEvent& event)
@@ -20558,7 +20597,7 @@ void VRenderView::OnYRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_y_rot_text->SetValue(str);
-    m_y_rot_spin->SetValue(180);
+    //m_y_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnYRotSpinUp(wxSpinEvent& event)
@@ -20568,7 +20607,7 @@ void VRenderView::OnYRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_y_rot_text->SetValue(str);
-    m_y_rot_spin->SetValue(180);
+    //m_y_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnZRotSpinDown(wxSpinEvent& event)
@@ -20578,7 +20617,7 @@ void VRenderView::OnZRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_z_rot_text->SetValue(str);
-    m_z_rot_spin->SetValue(180);
+    //m_z_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnZRotSpinUp(wxSpinEvent& event)
@@ -20588,7 +20627,7 @@ void VRenderView::OnZRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_z_rot_text->SetValue(str);
-    m_z_rot_spin->SetValue(180);
+    //m_z_rot_spin->SetValue(180);
 }
 
 //top

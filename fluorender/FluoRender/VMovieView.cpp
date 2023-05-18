@@ -81,6 +81,14 @@ wxTextCtrl * VMovieView::m_movie_time = 0;
 
 wxWindow* VMovieView::CreateSimplePage(wxWindow *parent) {
 	wxPanel *page = new wxPanel(parent);
+
+#if defined(__WXGTK__)
+	int style_w = 105;
+	int time_btn_w = 40;
+#else
+	int style_w = 65;
+	int time_btn_w = 30;
+#endif
 	
 	//validator: integer
 	wxIntegerValidator<unsigned int> vald_int;
@@ -121,11 +129,11 @@ wxWindow* VMovieView::CreateSimplePage(wxWindow *parent) {
 	sizer_2->Add(st2, 0, wxALIGN_CENTER);
 	sizer_2->Add(m_time_end_text, 0, wxALIGN_CENTER);
 	m_inc_time_btn = new wxButton(page, ID_IncTimeBtn, "",
-		wxDefaultPosition, wxSize(30, 30));
+		wxDefaultPosition, wxSize(time_btn_w, 30));
 	m_dec_time_btn = new wxButton(page, ID_DecTimeBtn, "",
-		wxDefaultPosition, wxSize(30, 30));
+		wxDefaultPosition, wxSize(time_btn_w, 30));
 	m_time_current_text = new wxTextCtrl(page, ID_CurrentTimeText, "0",
-		wxDefaultPosition,wxSize(35,-1));
+		wxDefaultPosition,wxSize(50,-1));
 	m_inc_time_btn->SetBitmap(wxGetBitmapFromMemory(plus));
 	m_dec_time_btn->SetBitmap(wxGetBitmapFromMemory(minus));
 	sizer_2->AddStretchSpacer();
@@ -164,7 +172,7 @@ wxWindow* VMovieView::CreateSimplePage(wxWindow *parent) {
 	//rotation interpolation
 	st2 = new wxStaticText(page, wxID_ANY, "Style:");
 	m_rot_int_cmb = new wxComboBox(page, ID_RotIntCmb, "",
-		wxDefaultPosition, wxSize(65, -1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(style_w, -1), 0, NULL, wxCB_READONLY);
 	m_rot_int_cmb->Append("Linear");
 	m_rot_int_cmb->Append("Smooth");
 	m_rot_int_cmb->Select(0);
@@ -274,6 +282,12 @@ wxWindow* VMovieView::CreateAutoKeyPage(wxWindow *parent) {
 
 wxWindow* VMovieView::CreateCroppingPage(wxWindow *parent) {
 	wxPanel *page = new wxPanel(parent);
+
+#if defined(__WXGTK__)
+	int spin_w = 70;
+#else
+	int spin_w = 20;
+#endif
 	
 	//validator: integer
 	wxIntegerValidator<unsigned int> vald_int;
@@ -303,7 +317,8 @@ wxWindow* VMovieView::CreateCroppingPage(wxWindow *parent) {
 	m_center_x_text = new wxTextCtrl(page, ID_CenterXText, "",
 		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
 	m_center_x_spin = new wxSpinButton(page, ID_CenterXSpin,
-		wxDefaultPosition, wxSize(20, 20));
+		wxDefaultPosition, wxSize(spin_w, 20));
+	m_center_x_spin->SetRange(-INT_MAX, INT_MAX);
 	sizer_9->Add(5, 5, 0);
 	sizer_9->Add(st, 0, wxALIGN_CENTER);
 	sizer_9->Add(m_center_x_text, 0, wxALIGN_CENTER);
@@ -313,7 +328,8 @@ wxWindow* VMovieView::CreateCroppingPage(wxWindow *parent) {
 	m_center_y_text = new wxTextCtrl(page, ID_CenterYText, "",
 		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
 	m_center_y_spin = new wxSpinButton(page, ID_CenterYSpin,
-		wxDefaultPosition, wxSize(20, 20));
+		wxDefaultPosition, wxSize(spin_w, 20));
+	m_center_y_spin->SetRange(-INT_MAX, INT_MAX);
 	sizer_9->Add(st, 0, wxALIGN_CENTER);
 	sizer_9->Add(m_center_y_text, 0, wxALIGN_CENTER);
 	sizer_9->Add(m_center_y_spin, 0, wxALIGN_CENTER);
@@ -323,7 +339,8 @@ wxWindow* VMovieView::CreateCroppingPage(wxWindow *parent) {
 	m_width_text = new wxTextCtrl(page, ID_WidthText, "",
 		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
 	m_width_spin = new wxSpinButton(page, ID_WidthSpin,
-		wxDefaultPosition, wxSize(20, 20));
+		wxDefaultPosition, wxSize(spin_w, 20));
+	m_width_spin->SetRange(-INT_MAX, INT_MAX);
 	sizer_10->Add(5, 5, 0);
 	sizer_10->Add(st, 0, wxALIGN_CENTER);
 	sizer_10->Add(m_width_text, 0, wxALIGN_CENTER);
@@ -333,7 +350,8 @@ wxWindow* VMovieView::CreateCroppingPage(wxWindow *parent) {
 	m_height_text = new wxTextCtrl(page, ID_HeightText, "",
 		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
 	m_height_spin = new wxSpinButton(page, ID_HeightSpin,
-		wxDefaultPosition, wxSize(20, 20));
+		wxDefaultPosition, wxSize(spin_w, 20));
+	m_height_spin->SetRange(-INT_MAX, INT_MAX);
 	sizer_10->Add(st, 0, wxALIGN_CENTER);
 	sizer_10->Add(m_height_text, 0, wxALIGN_CENTER);
 	sizer_10->Add(m_height_spin, 0, wxALIGN_CENTER);
@@ -376,6 +394,16 @@ m_without_rendering(false)
 
 	LoadSettings();
 
+#if defined(__WXGTK__)
+	int fps_w = 45;
+	int views_comb_w = 160;
+	int save_button_w = 85;
+#else
+	int fps_w = 30;
+	int views_comb_w = 120;
+	int save_button_w = 80;
+#endif
+
 	//notebook
 	m_notebook = new wxNotebook(this, ID_PageChanged);
 	m_notebook->AddPage(CreateSimplePage(m_notebook), "Basic");
@@ -386,10 +414,10 @@ m_without_rendering(false)
 	wxBoxSizer* sizer_1 = new wxBoxSizer(wxHORIZONTAL);
 	//FPS
 	m_fps_text = new wxTextCtrl(this, ID_FPS_Text, "30",
-		wxDefaultPosition,wxSize(30, -1));
+		wxDefaultPosition,wxSize(fps_w, -1));
 	//other
 	m_views_cmb = new wxComboBox(this, ID_ViewsCombo, "",
-		wxDefaultPosition, wxSize(120, -1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(views_comb_w, -1), 0, NULL, wxCB_READONLY);
 	m_help_btn = new wxButton(this, ID_HelpBtn, "?",
 		wxDefaultPosition, wxSize(25, 25));
 	//sizer 1
@@ -431,7 +459,7 @@ m_without_rendering(false)
 	sizerH->Add(5, 5, 0);
 	sizerH->Add(st3, 0, wxALIGN_CENTER);
 	m_save_btn = new wxButton(this, ID_SaveMovie, "Save...",
-		wxDefaultPosition, wxSize(80, 30));
+		wxDefaultPosition, wxSize(save_button_w, 30));
 	m_save_btn->SetBitmap(wxGetBitmapFromMemory(listicon_save));
 	sizerH->Add(m_save_btn, 0, wxEXPAND);
 	//interface

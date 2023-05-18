@@ -1353,7 +1353,11 @@ private:
 	void OnDraw(wxPaintEvent& event);
 	void OnResize(wxSizeEvent& event);
 	void Resize(bool refresh=true);
+#if defined(__WXGTK__)
+	void OnIdle(wxIdleEvent& event);
+#else
 	void OnIdle(wxTimerEvent& event);
+#endif
 	void OnKeyDown(wxKeyEvent& event);
 	void OnContextMenu(wxContextMenuEvent& event);
 	

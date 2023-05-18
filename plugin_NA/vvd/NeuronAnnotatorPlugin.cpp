@@ -318,7 +318,7 @@ bool NAGuiPlugin::runNALoader(wxString id_path, wxString vol_path, wxString chsp
     wxProgressDialog* prg_diag = new wxProgressDialog(
                                                       "Neuron Annotator Plugin",
                                                       "Loading labels...",
-                                                      4, 0, wxPD_SMOOTH | wxPD_AUTO_HIDE);
+                                                      4, 0, wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_AUTO_HIDE);
 
 	prg_diag->Update(2, "Calculating bounding boxes...");
 
@@ -1668,7 +1668,7 @@ void NAGuiPlugin::LoadSettings()
     wxProgressDialog* prg_diag = new wxProgressDialog(
                                                       "Neuron Annotator Plugin",
                                                       "Loading labels...",
-                                                      4, 0, wxPD_SMOOTH | wxPD_AUTO_HIDE);
+                                                      4, 0, wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_AUTO_HIDE);
     
     prg_diag->Update(2, "Calculating bounding boxes...");
     

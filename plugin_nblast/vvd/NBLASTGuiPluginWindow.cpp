@@ -1229,7 +1229,7 @@ void NBLASTListCtrl::SaveResults(wxString txtpath, bool export_swc, bool export_
 			wxProgressDialog *prg_diag = new wxProgressDialog(
 				"NBLAST Plugin: Exporting search results...",
 				"Please wait.",
-			GetItemCount(), 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			GetItemCount(), 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 			int count = 0;
 			do
 			{
@@ -2403,6 +2403,8 @@ void NBLASTGuiPluginWindow::OnInteropMessageReceived(wxCommandEvent & event)
 
 void NBLASTGuiPluginWindow::OnIdle(wxTimerEvent& event)
 {
+	if (!IsShown())
+		return;
 	if (m_results)
 	{
 		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))

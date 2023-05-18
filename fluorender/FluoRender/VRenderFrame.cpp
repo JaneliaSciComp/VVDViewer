@@ -450,30 +450,45 @@ VRenderFrame::VRenderFrame(
 		MinSize(wxSize(-1, 49)).MaxSize(wxSize(-1, 50)).
 		Top().CloseButton(false).Layer(4));
 
+
+#if defined(__WXGTK__)
+	int prop_h = 200;
+	int left_w = 410;
+	int adjust_w = 140;
+	int clip_w = 220;
+	int movie_proportion = 15;
+#else
+	int prop_h = 150;
+	int left_w = 320;
+	int adjust_w = 110;
+	int clip_w = 160;
+	int movie_proportion = 10;
+#endif
+
 	m_aui_mgr.AddPane(m_tree_panel, wxAuiPaneInfo().
 		Name("m_tree_panel").Caption(UITEXT_TREEVIEW).
-		Left().CloseButton(true).BestSize(wxSize(320, 300)).
-		FloatingSize(wxSize(320, 300)).Layer(3));
+		Left().CloseButton(true).BestSize(wxSize(left_w, 300)).
+		FloatingSize(wxSize(left_w, 300)).Layer(3));
 	m_aui_mgr.AddPane(m_movie_view, wxAuiPaneInfo().
 		Name("m_movie_view").Caption(UITEXT_MAKEMOVIE).
-		Left().CloseButton(true).MinSize(wxSize(320, 330)).
-		FloatingSize(wxSize(320, 300)).Layer(3));
+		Left().CloseButton(true).MinSize(wxSize(left_w, 330)).
+		FloatingSize(wxSize(left_w, 300)).Layer(3));
     m_aui_mgr.AddPane(m_measure_dlg, wxAuiPaneInfo().
         Name("m_measure_dlg").Caption(UITEXT_MEASUREMENT).
         Left().CloseButton(true).BestSize(wxSize(320, 400)).
         FloatingSize(wxSize(650, 500)).Layer(3).Dockable(false));
 	m_aui_mgr.AddPane(m_prop_panel, wxAuiPaneInfo().
 		Name("m_prop_panel").Caption(UITEXT_PROPERTIES).
-		Bottom().CloseButton(true).MinSize(wxSize(300, 150)).
-		FloatingSize(wxSize(1100, 130)).Layer(2));
+		Bottom().CloseButton(true).MinSize(wxSize(300, prop_h)).
+		FloatingSize(wxSize(1100, 150)).Layer(2));
 	m_aui_mgr.AddPane(m_adjust_view, wxAuiPaneInfo().
 		Name("m_adjust_view").Caption(UITEXT_ADJUST).
-		Left().CloseButton(true).MinSize(wxSize(110, 700)).
-		FloatingSize(wxSize(110, 700)).Layer(1));
+		Left().CloseButton(true).MinSize(wxSize(adjust_w, 700)).
+		FloatingSize(wxSize(adjust_w, 700)).Layer(1));
 	m_aui_mgr.AddPane(m_clip_view, wxAuiPaneInfo().
 		Name("m_clip_view").Caption(UITEXT_CLIPPING).
-		Right().CloseButton(true).MinSize(wxSize(160, 700)).
-		FloatingSize(wxSize(160, 700)).Layer(1));
+		Right().CloseButton(true).MinSize(wxSize(clip_w, 700)).
+		FloatingSize(wxSize(clip_w, 700)).Layer(1));
 	m_aui_mgr.AddPane(vrv, wxAuiPaneInfo().
 		Name(vrv->GetName()).Caption(vrv->GetName()).
 		Dockable(true).CloseButton(false).
@@ -482,7 +497,7 @@ VRenderFrame::VRenderFrame(
 
 	m_aui_mgr.GetPane("m_tree_panel").dock_proportion  = 30;
 	m_aui_mgr.GetPane("m_measure_dlg").dock_proportion = 20;
-	m_aui_mgr.GetPane("m_movie_view").dock_proportion = 10;
+	m_aui_mgr.GetPane("m_movie_view").dock_proportion = movie_proportion;
 
 	m_aui_mgr.GetPane(m_measure_dlg).Float();
 	m_aui_mgr.GetPane(m_measure_dlg).Hide();
@@ -1269,7 +1284,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 		prg_diag = new wxProgressDialog(
 			"VVDViewer: Loading volume data...",
 			"Reading and processing selected volume data. Please wait.",
-			100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 		m_data_mgr.SetSliceSequence(m_sliceSequence);
 		m_data_mgr.SetTimeSequence(m_timeSequence);
@@ -1993,7 +2008,7 @@ void VRenderFrame::LoadMeshes(wxArrayString files, VRenderView* vrv, wxArrayStri
 	wxProgressDialog *prg_diag = new wxProgressDialog(
 		"VVDViewer: Loading mesh data...",
 		"Reading and processing selected mesh data. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	MeshGroup* group = 0;
     int count = 0;
@@ -2070,7 +2085,7 @@ void VRenderFrame::OnOpenMesh(wxCommandEvent& WXUNUSED(event))
 {
 	wxFileDialog *fopendlg = new wxFileDialog(
 		this, "Choose the volume data file", "", "",
-        "All Supported|*.obj;*.swc;*.ply;*.nml|OBJ files (*.obj)|*.obj|SWC files (*.swc)|*.swc|PLY files (*.ply)|*.ply||NML files (*.nml)|*.nml",
+        "All Supported|*.obj;*.swc;*.ply;*.nml|OBJ files (*.obj)|*.obj|SWC files (*.swc)|*.swc|PLY files (*.ply)|*.ply|NML files (*.nml)|*.nml",
 		wxFD_OPEN|wxFD_MULTIPLE);
 
 	int rval = fopendlg->ShowModal();
@@ -3436,7 +3451,7 @@ void VRenderFrame::SaveProject(wxString& filename)
 	prg_diag = new wxProgressDialog(
 		"VVDViewer: Saving project...",
 		"Saving project file. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	wxString str;
 
@@ -5487,7 +5502,7 @@ void VRenderFrame::OpenProject(wxString& filename)
 	prg_diag = new wxProgressDialog(
 		"VVDViewer: Loading project...",
 		"Reading project file. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	//read streaming mode
 	/*

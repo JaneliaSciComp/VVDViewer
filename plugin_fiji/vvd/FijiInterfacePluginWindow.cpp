@@ -322,7 +322,7 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 				m_prg_diag = new wxProgressDialog(
 					"Connecting to Fiji...",
 					"Please wait.",
-					100, 0, wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
+					100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
 				m_prg_diag->Pulse();
 				if (m_Plugin->GetVVDMainFrame())
 					m_Plugin->GetVVDMainFrame()->SetEvtHandlerEnabled(false);
@@ -353,7 +353,7 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 			m_prg_diag = new wxProgressDialog(
 				"Waiting for Fiji...",
 				"Please wait.",
-				100, m_Plugin->GetVVDMainFrame(), wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
+				100, m_Plugin->GetVVDMainFrame(), wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
 			m_prg_diag->Pulse();
 			m_wtimer->Start(50);
 			

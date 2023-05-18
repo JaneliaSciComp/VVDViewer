@@ -959,7 +959,7 @@ void RulerListCtrl::EndEdit()
 		}
 
 		//Update();
-		UpdateText();//Update‚É‚·‚é‚ÆƒfƒoƒbƒO‚ÅŽ~‚Ü‚é--Œ´ˆö•s–¾
+		UpdateText();//Updateï¿½É‚ï¿½ï¿½ï¿½Æƒfï¿½oï¿½bï¿½Oï¿½ÅŽ~ï¿½Ü‚ï¿½--ï¿½ï¿½ï¿½ï¿½ï¿½sï¿½ï¿½
 		if(m_dragging_to_item == -1)m_view->RefreshGL();
 		m_view->SetKeyLock(false);
 	}
@@ -1253,7 +1253,7 @@ wxPanel(parent, id, pos, size, style, name),
 	m_use_transfer_chk = new wxCheckBox(this, ID_UseTransferChk, "Use Volume Properties",
 		wxDefaultPosition, wxDefaultSize);
     m_warp_btn = new wxButton(this, ID_WarpBtn, "Apply Transform",
-        wxDefaultPosition, wxSize(110, 20));
+        wxDefaultPosition, wxSize(120, 20));
 	sizer_2->Add(10, 10);
 	sizer_2->Add(m_transient_chk, 0, wxALIGN_CENTER);
 	sizer_2->Add(10, 10);
