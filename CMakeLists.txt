@@ -775,6 +775,13 @@ else()
 	target_link_libraries(VVDViewer
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})
+	
+	set_target_properties(VVDViewer PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/lib/")
+	set_target_properties(VVDMainFrame PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
 endif()
 
 
@@ -809,6 +816,25 @@ file(GLOB na_hdr ${VVDViewer_SOURCE_DIR}/plugin_NA/vvd/*.h)
 set(na_ext ${PLUGIN_DIR}/stdwx.h ${PLUGIN_DIR}/stdwx.cpp)
 add_library(NeuronAnnotatorPlugin SHARED ${na_src} ${na_hdr} ${na_ext})
 target_link_libraries(NeuronAnnotatorPlugin VVDMainFrame wxGuiPluginBase ${wxWidgets_LIBRARIES})
+
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+#TODO
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+#TODO
+else()
+	set_target_properties(FijiInterfacePlugin PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+	set_target_properties(NBLASTGuiPlugin PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+	set_target_properties(NeuronAnnotatorPlugin PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+	set_target_properties(wxGuiPluginBase PROPERTIES
+        BUILD_WITH_INSTALL_RPATH FALSE
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+endif()
 
 #build OpenCL examples copies.
 
@@ -863,7 +889,27 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 			$<TARGET_FILE_DIR:VVDViewer>)
 	endforeach()
 endif()
-]]  
+]]
+
+#copy VVD DLLs
+Set(vvd_dlls)
+LIST(APPEND vvd_dlls "libVVDMainFrame.so")
+LIST(APPEND vvd_dlls "libwxGuiPluginBase.so")
+LIST(APPEND vvd_dlls "libFijiInterfacePlugin.so")
+LIST(APPEND vvd_dlls "libNBLASTGuiPlugin.so")
+LIST(APPEND vvd_dlls "libNeuronAnnotatorPlugin.so")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+#TODO
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+#TODO
+else()
+	foreach (f ${vvd_dlls})
+		add_custom_command(TARGET VVDViewer POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy  
+			"${CMAKE_BINARY_DIR}/${f}"
+			"$<TARGET_FILE_DIR:VVDViewer>/lib")
+	endforeach()
+endif()
 
 #post build setting files copy
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
