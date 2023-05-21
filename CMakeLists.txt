@@ -617,7 +617,9 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		add_executable(VVDViewer 
           			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
 					 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)
-	endif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		add_executable(VVDViewerLauncher 
+				     ${VVDViewer_SOURCE_DIR}/fluorender/Linux/launcher.cpp)
+	endif()
 endif()
 
 #architecture specific rules
@@ -625,7 +627,7 @@ if(${ARCHITECTURE} MATCHES 64)
    if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       set(ARCH_FLAGS "-m64 -arch x86_64")
    elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-      set(ARCH_FLAGS "-march=native -mtune=generic")
+      set(ARCH_FLAGS "-march=x86-64 -mtune=generic")
    endif()
    add_definitions(-DTEEM_32BIT=0)
    set(CMAKE_C_FLAGS "${ARCH_FLAGS} ${CFLAGS}")
@@ -635,7 +637,7 @@ else()
    if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       set(ARCH_FLAGS "-m32 -arch i386")
    elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-      set(ARCH_FLAGS "-march=native -mtune=generic")
+      set(ARCH_FLAGS "-march=i386 -mtune=generic")
    endif()
    add_definitions(-DTEEM_32BIT=1)
    set(CMAKE_C_FLAGS "${ARCH_FLAGS} ${CFLAGS}" )

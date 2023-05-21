@@ -39,6 +39,10 @@ DEALINGS IN THE SOFTWARE.
 #include "compatibility.h"
 // -- application --
 
+#ifdef __WXGTK__
+#include <libgen.h>
+#endif
+
 bool m_open_by_web_browser = false;
 
 IMPLEMENT_APP(VRenderApp)
@@ -52,9 +56,37 @@ static const wxCmdLineEntryDesc g_cmdLineDesc [] =
    { wxCMD_LINE_NONE }
 };
 
+#ifdef __WXGTK__
+int VRenderApp::FilterEvent(wxEvent& event)
+{
+    if (event.GetEventType() == wxEVT_KEY_DOWN || event.GetEventType() == wxEVT_KEY_UP)
+    {
+        //std::cerr << (event.GetEventType() == wxEVT_KEY_DOWN ? "KEY_DOWN" : "KEY_UP") << std::endl;
+        VRenderFrame::m_key_state[((wxKeyEvent&)event).GetKeyCode()] = (event.GetEventType() == wxEVT_KEY_DOWN ? true : false);
+    }
+
+    return -1;
+}
+#endif
+
+
 bool VRenderApp::OnInit()
 {
 	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|_CRTDBG_LEAK_CHECK_DF);
+
+#ifdef __WXGTK__
+	char exepath[PATH_MAX];
+	ssize_t count = readlink("/proc/self/exe", exepath, PATH_MAX);
+	const char *exedir;
+	if (count != -1) {
+    	exedir = dirname(exepath);
+	}
+	wxString wxs_exedir((const char*)exedir);
+	wxString cachepath = wxT("") + wxs_exedir + wxT("/loaders.cache");
+	wxString cachedirpath = wxT("") + wxs_exedir;
+	cerr << cachepath.ToStdString() << endl;
+	setenv("GDK_PIXBUF_MODULE_FILE", cachepath.ToStdString().c_str(), true);
+#endif
 
    char cpath[FILENAME_MAX];
    GETCURRENTDIR(cpath, sizeof(cpath));

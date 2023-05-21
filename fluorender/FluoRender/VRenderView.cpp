@@ -358,7 +358,7 @@ void LMSeacher::OnEnterInSearcher(wxCommandEvent &event)
 
 void LMSeacher::OnKeyDown(wxKeyEvent& event)
 {
-	if(wxGetKeyState(WXK_DOWN))
+	if(event.GetKeyCode() == WXK_DOWN)
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -375,7 +375,7 @@ void LMSeacher::OnKeyDown(wxKeyEvent& event)
 
 		return;
 	}
-	if(wxGetKeyState(WXK_UP))
+	if(event.GetKeyCode() == WXK_UP)
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -392,7 +392,7 @@ void LMSeacher::OnKeyDown(wxKeyEvent& event)
 
 void LMSeacher::OnIdle(wxIdleEvent &event)
 {
-	if(wxGetKeyState(WXK_DOWN) && m_list->IsShown())
+	if(VRenderFrame::GetKeyState(WXK_DOWN) && m_list->IsShown())
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -747,8 +747,8 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 
 	LoadDefaultBrushSettings();
 
-	m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
-	m_searcher->Hide();
+	//m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
+	//m_searcher->Hide();
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
@@ -1007,12 +1007,12 @@ void VRenderVulkanView::SetSearcherVisibility(bool visibility)
 	if(visibility)
 	{
 		m_draw_landmarks = true;
-		m_searcher->Show();
+		//m_searcher->Show();
 	}
 	else
 	{
 		m_draw_landmarks = false;
-		m_searcher->Hide();
+		//m_searcher->Hide();
 	}
 }
 
@@ -6147,7 +6147,7 @@ void VRenderVulkanView::UpdateBrushState()
 
 	if (m_int_mode!=2 && m_int_mode!=7)
 	{
-		if (wxGetKeyState(WXK_SHIFT))
+		if (VRenderFrame::GetKeyState(WXK_SHIFT))
 		{
 			SetBrush(2);
 			if (tree_panel)
@@ -6157,7 +6157,7 @@ void VRenderVulkanView::UpdateBrushState()
 			m_clear_paint = true;
 			RefreshGLOverlays();
 		}
-		else if (wxGetKeyState(wxKeyCode('Z')))
+		else if (VRenderFrame::GetKeyState(wxKeyCode('Z')))
 		{
 			SetBrush(4);
 			if (tree_panel)
@@ -6167,7 +6167,7 @@ void VRenderVulkanView::UpdateBrushState()
 			m_clear_paint = true;
 			RefreshGLOverlays();
 		}
-		else if (wxGetKeyState(wxKeyCode('X')))
+		else if (VRenderFrame::GetKeyState(wxKeyCode('X')))
 		{
 			SetBrush(3);
 			if (tree_panel)
@@ -6182,7 +6182,7 @@ void VRenderVulkanView::UpdateBrushState()
 	{
 		if (m_brush_state)
 		{
-			if (wxGetKeyState(WXK_SHIFT))
+			if (VRenderFrame::GetKeyState(WXK_SHIFT))
 			{
 				m_brush_state = 0;
 				SetBrush(2);
@@ -6193,7 +6193,7 @@ void VRenderVulkanView::UpdateBrushState()
 				m_clear_paint = true;
 				RefreshGLOverlays();
 			}
-			else if (wxGetKeyState(wxKeyCode('Z')))
+			else if (VRenderFrame::GetKeyState(wxKeyCode('Z')))
 			{
 				m_brush_state = 0;
 				SetBrush(4);
@@ -6204,7 +6204,7 @@ void VRenderVulkanView::UpdateBrushState()
 				m_clear_paint = true;
 				RefreshGLOverlays();
 			}
-			else if (wxGetKeyState(wxKeyCode('X')))
+			else if (VRenderFrame::GetKeyState(wxKeyCode('X')))
 			{
 				m_brush_state = 0;
 				SetBrush(3);
@@ -6221,9 +6221,9 @@ void VRenderVulkanView::UpdateBrushState()
 				RefreshGLOverlays();
 			}
 		}
-		else if (!wxGetKeyState(WXK_SHIFT) &&
-			!wxGetKeyState(wxKeyCode('Z')) &&
-			!wxGetKeyState(wxKeyCode('X')))
+		else if (!VRenderFrame::GetKeyState(WXK_SHIFT) &&
+			!VRenderFrame::GetKeyState(wxKeyCode('Z')) &&
+			!VRenderFrame::GetKeyState(wxKeyCode('X')))
 		{
 			m_clear_paint = true;
 
@@ -6722,8 +6722,8 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 		//move view
 		//left
 		if (!m_move_left &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_LEFT))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_LEFT))
 		{
 			m_move_left = true;
 
@@ -6738,13 +6738,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_left &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_LEFT)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_LEFT)))
 			m_move_left = false;
 		//right
 		if (!m_move_right &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_RIGHT))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_RIGHT))
 		{
 			m_move_right = true;
 
@@ -6759,13 +6759,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_right &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_RIGHT)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_RIGHT)))
 			m_move_right = false;
 		//up
 		if (!m_move_up &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_UP))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_UP))
 		{
 			m_move_up = true;
 
@@ -6779,13 +6779,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_up &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_UP)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_UP)))
 			m_move_up = false;
 		//down
 		if (!m_move_down &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_DOWN))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_DOWN))
 		{
 			m_move_down = true;
 
@@ -6799,15 +6799,15 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_down &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_DOWN)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_DOWN)))
 			m_move_down = false;
 
 		//move time sequence
 		//forward
 		if (!m_tseq_forward &&
-			wxGetKeyState(wxKeyCode('d')) ||
-			wxGetKeyState(WXK_SPACE))
+			VRenderFrame::GetKeyState(wxKeyCode('d')) ||
+			VRenderFrame::GetKeyState(WXK_SPACE))
 		{
 			m_tseq_forward = true;
 			if (frame && frame->GetMovieView())
@@ -6815,12 +6815,12 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_tseq_forward &&
-			!wxGetKeyState(wxKeyCode('d')) &&
-			!wxGetKeyState(WXK_SPACE))
+			!VRenderFrame::GetKeyState(wxKeyCode('d')) &&
+			!VRenderFrame::GetKeyState(WXK_SPACE))
 			m_tseq_forward = false;
 		//backforward
 		if (!m_tseq_backward &&
-			wxGetKeyState(wxKeyCode('a')))
+			VRenderFrame::GetKeyState(wxKeyCode('a')))
 		{
 			m_tseq_backward = true;
 			if (frame && frame->GetMovieView())
@@ -6828,13 +6828,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_tseq_backward &&
-			!wxGetKeyState(wxKeyCode('a')))
+			!VRenderFrame::GetKeyState(wxKeyCode('a')))
 			m_tseq_backward = false;
 
 		//move clip
 		//up
 		if (!m_clip_up &&
-			wxGetKeyState(wxKeyCode('s')))
+			VRenderFrame::GetKeyState(wxKeyCode('s')))
 		{
 			m_clip_up = true;
 			if (frame && frame->GetClippingView())
@@ -6842,11 +6842,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_clip_up &&
-			!wxGetKeyState(wxKeyCode('s')))
+			!VRenderFrame::GetKeyState(wxKeyCode('s')))
 			m_clip_up = false;
 		//down
 		if (!m_clip_down &&
-			wxGetKeyState(wxKeyCode('w')))
+			VRenderFrame::GetKeyState(wxKeyCode('w')))
 		{
 			m_clip_down = true;
 			if (frame && frame->GetClippingView())
@@ -6854,19 +6854,19 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_clip_down &&
-			!wxGetKeyState(wxKeyCode('w')))
+			!VRenderFrame::GetKeyState(wxKeyCode('w')))
 			m_clip_down = false;
 
 		//draw_mask
         if (!m_force_hide_mask)
         {
-            if (wxGetKeyState(wxKeyCode('V')) &&
+            if (VRenderFrame::GetKeyState(wxKeyCode('V')) &&
                 m_draw_mask)
             {
                 m_draw_mask = false;
                 refresh = true;
             }
-            if (!wxGetKeyState(wxKeyCode('V')) &&
+            if (!VRenderFrame::GetKeyState(wxKeyCode('V')) &&
                 !m_draw_mask)
             {
                 m_draw_mask = true;
@@ -6889,7 +6889,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 	{
 		//cell full
 		if (!m_cell_full &&
-			wxGetKeyState(wxKeyCode('f')))
+			VRenderFrame::GetKeyState(wxKeyCode('f')))
 		{
 			m_cell_full = true;
 			if (frame && frame->GetTraceDlg())
@@ -6897,11 +6897,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_full &&
-			!wxGetKeyState(wxKeyCode('f')))
+			!VRenderFrame::GetKeyState(wxKeyCode('f')))
 			m_cell_full = false;
 		//cell link
 		if (!m_cell_link &&
-			wxGetKeyState(wxKeyCode('l')))
+			VRenderFrame::GetKeyState(wxKeyCode('l')))
 		{
 			m_cell_link = true;
 			if (frame && frame->GetTraceDlg())
@@ -6909,11 +6909,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_link &&
-			!wxGetKeyState(wxKeyCode('l')))
+			!VRenderFrame::GetKeyState(wxKeyCode('l')))
 			m_cell_link = false;
 		//new cell id
 /*		if (!m_cell_new_id &&
-			wxGetKeyState(wxKeyCode('n')))
+			VRenderFrame::GetKeyState(wxKeyCode('n')))
 		{
 			m_cell_new_id = true;
 			if (frame && frame->GetTraceDlg())
@@ -6921,10 +6921,10 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_new_id &&
-			!wxGetKeyState(wxKeyCode('n')))
+			!VRenderFrame::GetKeyState(wxKeyCode('n')))
 			m_cell_new_id = false;
 */		//clear
-/*		if (wxGetKeyState(wxKeyCode('c')) &&
+/*		if (VRenderFrame::GetKeyState(wxKeyCode('c')) &&
 			!m_clear_mask)
 		{
 			if (frame && frame->GetTraceDlg())
@@ -6932,11 +6932,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			m_clear_mask = true;
 			refresh = true;
 		}
-		if (!wxGetKeyState(wxKeyCode('c')) &&
+		if (!VRenderFrame::GetKeyState(wxKeyCode('c')) &&
 			m_clear_mask)
 			m_clear_mask = false;
 */		//full screen
-		if (wxGetKeyState(WXK_ESCAPE))
+		if (VRenderFrame::GetKeyState(WXK_ESCAPE))
 		{
 			/*			if (GetParent() == m_vrv->m_full_frame)
 			{
@@ -6953,7 +6953,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			}
 			*/		}
 
-		if (wxGetKeyState(WXK_ALT) && wxGetKeyState(wxKeyCode('V')) && !m_key_lock)
+		if (VRenderFrame::GetKeyState(WXK_ALT) && VRenderFrame::GetKeyState(wxKeyCode('V')) && !m_key_lock)
 		{
 			if(m_cur_vol && m_cur_vol->isBrxml())
 			{
@@ -6962,14 +6962,14 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			}
 		}
         
-        if (wxGetKeyState(wxKeyCode('Z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_undo_keydown && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('Z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_undo_keydown && !m_key_lock)
         {
             VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
             if (frame && vr_frame->GetBrushToolDlg())
                 vr_frame->GetBrushToolDlg()->BrushUndo();
             m_undo_keydown = true;
         }
-        if (wxGetKeyState(wxKeyCode('Y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_redo_keydown && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('Y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_redo_keydown && !m_key_lock)
         {
             VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
             if (frame && vr_frame->GetBrushToolDlg())
@@ -6977,24 +6977,24 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
             m_redo_keydown = true;
         }
         
-        if (wxGetKeyState(wxKeyCode('B')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('B')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_key_lock)
         {
             WarpCurrentVolume();
         }
 	}
     
-    if (!(wxGetKeyState(wxKeyCode('Z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT)))
+    if (!(VRenderFrame::GetKeyState(wxKeyCode('Z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT)))
     {
         m_undo_keydown = false;
     }
-    if (!(wxGetKeyState(wxKeyCode('Y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT)))
+    if (!(VRenderFrame::GetKeyState(wxKeyCode('Y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT)))
     {
         m_redo_keydown = false;
     }
 
 	if (window && !editting && this == cur_glview && !m_key_lock && m_tile_rendering)
 	{
-		if (wxGetKeyState(WXK_ESCAPE))
+		if (VRenderFrame::GetKeyState(WXK_ESCAPE))
 		{
 			EndTileRendering();
 		}
@@ -17040,7 +17040,7 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	//mouse button down operations
 	if (event.LeftDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
 
 		if (m_int_mode == 6)
 			m_editing_ruler_point = GetEditingRulerPoint(event.GetX(), event.GetY());
@@ -17077,7 +17077,7 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	}
 	if (event.RightDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();
@@ -17085,7 +17085,7 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	}
 	if (event.MiddleDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();
@@ -21033,9 +21033,9 @@ void VRenderView::LoadSettings()
 	}
 	if (fconfig.Read("search_chk", &bVal))
 	{
-		m_search_chk->SetValue(bVal);
-		if (bVal) m_glview->m_searcher->Show();
-		else m_glview->m_searcher->Hide();
+		//m_search_chk->SetValue(bVal);
+		//if (bVal) m_glview->m_searcher->Show();
+		//else m_glview->m_searcher->Hide();
 	}
 	if (fconfig.Read("mouse_focus", &bVal))
 	{

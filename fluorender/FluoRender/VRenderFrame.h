@@ -444,6 +444,12 @@ public:
     }
     
     void SetTasks(wxString comma_separated_tasks);
+
+#ifdef __WXGTK__
+	static bool m_is_wayland;
+	static std::unordered_map<int, bool> m_key_state;
+#endif
+	static bool GetKeyState(wxKeyCode key);
 	
 public: //public so export window can see it and set it. 
 	RecorderDlg* m_recorder_dlg;

@@ -53,6 +53,10 @@ class VRenderApp : public wxApp
       virtual void MacOpenFiles(const wxArrayString& fileNames);
 #endif
 
+#ifdef __WXGTK__
+      virtual int FilterEvent(wxEvent& event);
+#endif
+
    private:
       wxArrayString m_files;
       wxArrayString m_descs;

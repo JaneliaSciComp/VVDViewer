@@ -50,6 +50,14 @@ DEALINGS IN THE SOFTWARE.
 //resources
 #include "img/icons.h"
 
+#if defined(__WXGTK__)
+  #include <gtk/gtk.h>
+  #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+    #include <gdk/gdkx.h>
+  #endif
+#endif
+
+
 BEGIN_EVENT_TABLE(VRenderFrame, wxFrame)
 	EVT_MENU(wxID_EXIT, VRenderFrame::OnExit)
 	EVT_MENU(ID_ViewNew, VRenderFrame::OnNewView)
@@ -109,6 +117,28 @@ bool VRenderFrame::m_save_compress = true;
 bool VRenderFrame::m_vrp_embed = false;
 bool VRenderFrame::m_save_project = false;
 
+#ifdef __WXGTK__
+bool VRenderFrame::m_is_wayland = false;
+std::unordered_map<int, bool> VRenderFrame::m_key_state;
+bool VRenderFrame::GetKeyState(wxKeyCode key)
+{
+	if (m_is_wayland && key != WXK_ALT && key != WXK_CONTROL && key != WXK_SHIFT && key != WXK_CAPITAL && key != WXK_NUMLOCK && key != WXK_SCROLL)
+	{
+		if (m_key_state.count(key) > 0)
+			return m_key_state[key];
+		else
+			return false;
+	}
+	else
+		return wxGetKeyState(key);
+}
+#else
+bool VRenderFrame::GetKeyState(wxKeyCode key)
+{
+	return wxGetKeyState(key);
+}
+#endif
+
 CURLM *_g_curlm;//add by takashi
 CURL *_g_curl;//add by takashi
 
@@ -138,6 +168,96 @@ VRenderFrame::VRenderFrame(
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
+
+#ifdef __WXGTK__
+	char exepath[PATH_MAX];
+	ssize_t count = readlink("/proc/self/exe", exepath, PATH_MAX);
+	const gchar *exedir;
+	if (count != -1) {
+    	exedir = g_path_get_dirname(exepath);
+	}
+	wxString wxs_exedir((const char*)exedir);
+	wxString cachepath = wxT("") + wxs_exedir + wxT("/loaders.cache");
+	wxString cachedirpath = wxT("") + wxs_exedir;
+	cerr << cachepath.ToStdString() << endl;
+	
+	wxTextFile loadercache(cachepath);
+    if (loadercache.Exists())
+    {
+        if (loadercache.Open())
+        	loadercache.Clear();
+    }
+    else
+        loadercache.Create();
+	wxString loaderdir_desc = wxT("# LoaderDir = ") + wxs_exedir + wxT("/lib");
+	wxString loaderlibpath = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-svg.so\"");
+	loadercache.AddLine("# GdkPixbuf Image Loader Modules file");
+	loadercache.AddLine("# Automatically generated file, do not edit");
+	loadercache.AddLine("# Created by gdk-pixbuf-query-loaders from gdk-pixbuf-2.42.8");
+	loadercache.AddLine("#");
+	loadercache.AddLine(loaderdir_desc);
+	loadercache.AddLine("#");
+	loadercache.AddLine(loaderlibpath);
+	loadercache.AddLine("\"svg\" 6 \"gdk-pixbuf\" \"Scalable Vector Graphics\" \"LGPL\"");
+	loadercache.AddLine("\"image/svg+xml\" \"image/svg\" \"image/svg-xml\" \"image/vnd.adobe.svg+xml\" \"text/xml-svg\" \"image/svg+xml-compressed\" \"\"");
+	loadercache.AddLine("\"svg\" \"svgz\" \"svg.gz\" \"\"");
+	loadercache.AddLine("\" <svg\" \"*    \" 100");
+	loadercache.AddLine("\" <!DOCTYPE svg\" \"*             \" 100\"");
+	loadercache.AddLine("");
+	loadercache.Write();
+    loadercache.Close();
+	
+	GError *err = NULL;
+	if (!gdk_pixbuf_init_modules(cachedirpath.ToStdString().c_str(), &err))
+		cerr << "unable to load pixbuf-loaders" << endl;
+	if (err != NULL)
+	{
+		fprintf (stderr, "unable to load pixbuf-loaders: %s\n", err->message);
+		g_error_free (err);
+	}
+
+	GdkWindow* gdkwindow = nullptr;
+	wxWindowList::const_iterator i = wxTopLevelWindows.begin();
+    for (; i != wxTopLevelWindows.end(); ++i)
+    {
+        const wxWindow* win = *i;
+        if (win->m_widget)
+        {
+            GdkWindow* gdkwin = gtk_widget_get_window(win->m_widget);
+            if (gdkwin)
+            {
+                gdkwindow = gdkwin;
+                break;
+            }
+        }
+    }
+    if (!gdkwindow)
+        gdkwindow = gdk_get_default_root_window();
+    const char* bname = g_type_name(G_TYPE_FROM_INSTANCE(gdkwindow));
+	std::cerr << "GTK_BACKEND: " << bname << std::endl;
+	if (strncmp(bname, "GdkWaylandWindow", strlen(bname)) == 0)
+	{
+		m_is_wayland = true;
+		std::cerr << "is wayland: " << (m_is_wayland ? "true" : "false") << std::endl;
+	}
+
+	char iconpath[PATH_MAX];
+    strcpy(iconpath, exedir);
+    strcat(iconpath, "/icons");
+	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
+	gchar **paths;
+	paths = g_new (gchar *, 2);
+	paths[0] = (gchar *)iconpath;
+	paths[1] = NULL;
+	gtk_icon_theme_set_search_path(icon_theme, (const gchar **)paths, 1);
+	g_free(paths);
+
+	char **icpath;
+	gint ele;
+	gtk_icon_theme_get_search_path (icon_theme, &icpath, &ele);
+	printf("number of paths: %d\n", ele);
+	for (int i=0; i< ele; i++) printf("path %d %s\n", i, icpath[i]);
+#endif
 
 	curl_global_init(CURL_GLOBAL_ALL);//add by takashi
 	_g_curlm = curl_multi_init();//add by takashi
@@ -732,6 +852,21 @@ VRenderFrame::VRenderFrame(
 
 	m_timer = new wxTimer(this, ID_Timer);
 	m_timer->Start(100);
+
+#ifdef __WXGTK__
+	GSList *formats;
+	formats = gdk_pixbuf_get_formats ();
+	for (GSList *l = formats; l; l = l->next)
+	{
+		GdkPixbufFormat *format = (GdkPixbufFormat *)l->data;
+		char *name;
+		name = gdk_pixbuf_format_get_name (format);	
+		cerr << name << endl;
+		g_free (name);
+	}
+	g_slist_free (formats);
+#endif
+
 }
 
 VRenderFrame::~VRenderFrame()

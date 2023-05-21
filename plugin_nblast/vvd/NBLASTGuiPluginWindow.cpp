@@ -1492,13 +1492,13 @@ void NBLASTListCtrl::OnKeyDown(wxKeyEvent& event)
 		event.GetKeyCode() == WXK_BACK)
 		DeleteSelection();
 
-	if (event.GetKeyCode() == wxKeyCode('Z') && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Z') && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Undo();
 	
-	if (event.GetKeyCode() == wxKeyCode('Y') && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Y') && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Redo();
 
-	if (event.GetKeyCode() == wxKeyCode('Z') && wxGetKeyState(WXK_CONTROL) && wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Z') && VRenderFrame::GetKeyState(WXK_CONTROL) && VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Redo();
 
 	event.Skip();
@@ -2407,13 +2407,13 @@ void NBLASTGuiPluginWindow::OnIdle(wxTimerEvent& event)
 		return;
 	if (m_results)
 	{
-		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Undo();
 
-		if (wxGetKeyState(wxKeyCode('y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Redo();
 
-		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Redo();
 	}
 }
