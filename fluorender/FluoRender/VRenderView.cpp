@@ -750,6 +750,8 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	//m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
 	//m_searcher->Hide();
 
+	m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxDefaultPosition, wxSize(1,1));
+
 	Thaw();
 	SetEvtHandlerEnabled(true);
 	
@@ -17041,6 +17043,8 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	if (event.LeftDown())
 	{
 		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		if (m_int_mode == 6)
 			m_editing_ruler_point = GetEditingRulerPoint(event.GetX(), event.GetY());
@@ -17078,6 +17082,8 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	if (event.RightDown())
 	{
 		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();
@@ -17086,6 +17092,8 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	if (event.MiddleDown())
 	{
 		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();

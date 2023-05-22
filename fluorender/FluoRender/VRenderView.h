@@ -1218,6 +1218,8 @@ private:
     
     bool m_use_fog_mesh;
 
+	wxButton *m_dummy;
+
 private:
 #ifdef _WIN32
 	//wacom tablet

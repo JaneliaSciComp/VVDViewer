@@ -241,22 +241,24 @@ VRenderFrame::VRenderFrame(
 		std::cerr << "is wayland: " << (m_is_wayland ? "true" : "false") << std::endl;
 	}
 
-	char iconpath[PATH_MAX];
-    strcpy(iconpath, exedir);
-    strcat(iconpath, "/icons");
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
-	gchar **paths;
-	paths = g_new (gchar *, 2);
-	paths[0] = (gchar *)iconpath;
-	paths[1] = NULL;
-	gtk_icon_theme_set_search_path(icon_theme, (const gchar **)paths, 1);
-	g_free(paths);
-
 	char **icpath;
 	gint ele;
 	gtk_icon_theme_get_search_path (icon_theme, &icpath, &ele);
 	printf("number of paths: %d\n", ele);
 	for (int i=0; i< ele; i++) printf("path %d %s\n", i, icpath[i]);
+
+	char iconpath[PATH_MAX];
+    strcpy(iconpath, exedir);
+    strcat(iconpath, "/icons");
+	gchar **paths;
+	paths = g_new (gchar *, ele + 2);
+	for (int i=0; i< ele; i++) paths[i] = icpath[i];
+	paths[ele] = (gchar *)iconpath;
+	paths[ele+1] = NULL;
+	gtk_icon_theme_set_search_path(icon_theme, (const gchar **)paths, ele+1);
+	g_free(paths);
+	
 #endif
 
 	curl_global_init(CURL_GLOBAL_ALL);//add by takashi
