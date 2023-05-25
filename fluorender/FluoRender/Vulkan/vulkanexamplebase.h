@@ -181,7 +181,7 @@ public:
 
 	std::string title = "Vulkan Example";
 	std::string name = "vulkanExample";
-	uint32_t apiVersion = VK_API_VERSION_1_1;
+	uint32_t apiVersion = VK_MAKE_VERSION(1, 0, 0);
 	/*
 	struct 
 	{
