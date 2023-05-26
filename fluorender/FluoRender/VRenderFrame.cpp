@@ -190,14 +190,21 @@ VRenderFrame::VRenderFrame(
     else
         loadercache.Create();
 	wxString loaderdir_desc = wxT("# LoaderDir = ") + wxs_exedir + wxT("/lib");
-	wxString loaderlibpath = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-svg.so\"");
+	wxString loaderlibpath_png = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-png.so\"");
+	wxString loaderlibpath_svg = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-svg.so\"");
 	loadercache.AddLine("# GdkPixbuf Image Loader Modules file");
 	loadercache.AddLine("# Automatically generated file, do not edit");
 	loadercache.AddLine("# Created by gdk-pixbuf-query-loaders from gdk-pixbuf-2.42.8");
 	loadercache.AddLine("#");
 	loadercache.AddLine(loaderdir_desc);
 	loadercache.AddLine("#");
-	loadercache.AddLine(loaderlibpath);
+	loadercache.AddLine(loaderlibpath_png);
+	loadercache.AddLine("\"png\" 5 \"gdk-pixbuf\" \"PNG\" \"LGPL\"");
+	loadercache.AddLine("\"image/png\" \"\"");
+	loadercache.AddLine("\"png\" \"\"");
+	loadercache.AddLine("\"\\211PNG\\r\\n\\032\\n\" \"\" 100");
+	loadercache.AddLine("");
+	loadercache.AddLine(loaderlibpath_svg);
 	loadercache.AddLine("\"svg\" 6 \"gdk-pixbuf\" \"Scalable Vector Graphics\" \"LGPL\"");
 	loadercache.AddLine("\"image/svg+xml\" \"image/svg\" \"image/svg-xml\" \"image/vnd.adobe.svg+xml\" \"text/xml-svg\" \"image/svg+xml-compressed\" \"\"");
 	loadercache.AddLine("\"svg\" \"svgz\" \"svg.gz\" \"\"");

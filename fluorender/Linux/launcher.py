@@ -12,6 +12,6 @@ dir = os.path.dirname(sys.executable)
 
 command = "export GDK_PIXBUF_MODULE_FILE=" + dir + "/data/loaders.cache" + " && "
 command += "export XDG_DATA_DIRS=\"" + dir + "/data:" + dir + "/data/schemas:" + "/usr/shre/gnome:/usr/local/share:/usr/share\"" + " && "
-command += dir + "/data/lib/ld-linux-x86-64.so.2" + " " + dir + "/data/VVDViewer"
+command += dir + "/data/VVDViewer"
 
 os.system(command)

@@ -292,7 +292,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 else()
   find_package(HDF5 REQUIRED)
   include_directories(${HDF5_INCLUDE_DIRS})
-  file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
+  #file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
 endif()
 
 #libCZI
@@ -617,8 +617,8 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		add_executable(VVDViewer 
           			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
 					 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)
-		add_executable(VVDViewerLauncher 
-				     ${VVDViewer_SOURCE_DIR}/fluorender/Linux/launcher.cpp)
+		#add_executable(VVDViewerLauncher 
+		#		     ${VVDViewer_SOURCE_DIR}/fluorender/Linux/launcher.cpp)
 	endif()
 endif()
 
@@ -734,19 +734,25 @@ else()
 	set(LINK_LIBRARIES_LINUX_FINAL)
 	foreach(lib ${LINK_LIBRARIES_LINUX})
 		if( lib MATCHES "libmcheck.a$" OR 
+			lib MATCHES "libm-2.31.a$" OR 
 			lib MATCHES "libm-2.35.a$" OR 
+			lib MATCHES "dl$" OR 
 			lib MATCHES "libc_nonshared.a$")
 			message(lib="${lib}")
 		elseif( lib MATCHES "libpixman-1.a$" OR
+				lib MATCHES "libdl.so$" OR 
 				lib MATCHES "libselinux.a$" OR
 				lib MATCHES "libuuid.a$" OR
 				lib MATCHES "libX11.a$" OR 
 				lib MATCHES "libc.a$" OR
 				lib MATCHES "libm.a$" OR
+				lib MATCHES "libbz2.a$" OR
+				lib MATCHES "libmount.a$" OR
 				lib MATCHES "libmvec.a$" OR
 				lib MATCHES "libboost_chrono.a$" OR
 				lib MATCHES "libboost_filesystem.a$" OR
 				lib MATCHES "libfontconfig.a$" OR
+				lib MATCHES "libhdf5_cpp.a$" OR
 				lib MATCHES "libhdf5_serial.a$" OR
 				lib MATCHES "libhdf5_serial_cpp.a$" OR
 				lib MATCHES "libXrender.a$" OR
@@ -757,6 +763,8 @@ else()
 				lib MATCHES "libXext.a$" OR
 				lib MATCHES "libSM.a$" OR
 				lib MATCHES "libcairo.a$" OR
+				lib MATCHES "libresolv.a$" OR
+				lib MATCHES "libnuma.a$" OR
 				lib MATCHES "libpng.a$" OR
 				lib MATCHES "libpng16.a$" )
 			message(lib="${lib}")
