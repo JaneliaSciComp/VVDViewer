@@ -5695,7 +5695,11 @@ void VRenderFrame::OpenProject(wxString& filename)
             while(m_project_data_loader.IsRunning())
             {
                 wxMilliSleep(100);
-                prg_diag->Update(90 * (cur + m_project_data_loader.GetProgress()) / ticks);
+				double pg = ((double)cur + m_project_data_loader.GetProgress()) / (double)ticks;
+				if (pg >= 0.0 && pg <= 1.0)
+					prg_diag->Update((int)(90 * pg));
+				else
+					cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
             }
             
             tick_cnt += m_project_data_loader.GetProgress();
@@ -5718,7 +5722,13 @@ void VRenderFrame::OpenProject(wxString& filename)
                 }
                 tick_cnt++;
                 if (ticks && prg_diag)
-                    prg_diag->Update(90*tick_cnt/ticks);
+				{
+					double pg = (double)tick_cnt/ticks;
+                    if (pg >= 0.0 && pg <= 1.0)
+						prg_diag->Update((int)(90 * pg));
+					else
+						cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
+				}
             }
         }
 	}
@@ -5742,7 +5752,13 @@ void VRenderFrame::OpenProject(wxString& filename)
 			}
 			tick_cnt++;
             if (ticks && prg_diag)
-                prg_diag->Update(90*tick_cnt/ticks);
+			{
+				double pg = (double)tick_cnt/ticks;
+                if (pg >= 0.0 && pg <= 1.0)
+					prg_diag->Update((int)(90 * pg));
+				else
+					cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
+			}
 		}
 	}
 
