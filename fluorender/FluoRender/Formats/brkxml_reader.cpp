@@ -557,6 +557,7 @@ void BRKXMLReader::ReadFilenames(tinyxml2::XMLElement* fileRootNode, vector<vect
 #else
 					if (m_ex_metadata_path[0] != L'/')
 						rel = true;
+                    std::replace( str.begin(), str.end(), '\\', '/');
 #endif
 				}
 
