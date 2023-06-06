@@ -263,10 +263,11 @@ AVFrame *QVideoEncoder::alloc_frame()
 
 void QVideoEncoder::close() {
 	if (!valid_) return;
-	//flush the remaining (delayed) frames.
-    int encode_video = 0;
-    while (encode_video) {
-        encode_video = !write_video_frame(format_context_, &output_stream_);
+	//flush
+    bool res = true;
+    while(res)
+    {
+        res = !write_frame(format_context_, output_stream_.enc, output_stream_.st, NULL, output_stream_.tmp_pkt);
     }
 
     av_write_trailer(format_context_);
@@ -349,7 +350,7 @@ AVFrame *QVideoEncoder::get_video_frame(OutputStream *ost)
         //fill_yuv_image(ost->frame, ost->next_pts, c->width, c->height);
     }
 
-    ost->frame->pts = ost->next_pts++;
+    //ost->frame->pts = ost->next_pts++;
 
     return ost->frame;
 }
@@ -368,16 +369,20 @@ bool QVideoEncoder::write_frame(AVFormatContext *fmt_ctx, AVCodecContext *c, AVS
     if (ret < 0) {
         fprintf(stderr, "Error sending a frame to the encoder: %s\n",
                 av_err2str(ret));
-        return false;
+        return 1;
     }
 
     while (ret >= 0) {
         ret = avcodec_receive_packet(c, pkt);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+        {
+            if (ret == AVERROR_EOF)
+                std::cout << "write_frame: EOF" << std::endl;
             break;
+        }
         else if (ret < 0) {
             fprintf(stderr, "Error encoding a frame: %s\n", av_err2str(ret));
-            return false;
+            return 1;
         }
 
         /* rescale output packet timestamp values from codec to stream timebase */
@@ -392,7 +397,7 @@ bool QVideoEncoder::write_frame(AVFormatContext *fmt_ctx, AVCodecContext *c, AVS
          * This would be different if one used av_write_frame(). */
         if (ret < 0) {
             fprintf(stderr, "Error while writing output packet: %s\n", av_err2str(ret));
-            return false;
+            return 1;
         }
     }
 
