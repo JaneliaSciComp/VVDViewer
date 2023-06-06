@@ -906,6 +906,7 @@ void VRenderFrame::OnTimer(wxTimerEvent& event)
     {
         if (m_tasks.Count() > 0)
         {
+		   cout << m_tasks[0] << endl;
            if (m_tasks[0] == "hideui")
            {
                if (m_ui_state)
@@ -962,7 +963,9 @@ void VRenderFrame::OnTimer(wxTimerEvent& event)
                    {
                        if (!m_waiting_for_task)
                        {
-                           m_movie_view->SaveMovie(m_tasks[1]);
+						   wxFileName fn(m_tasks[1]);
+						   fn.ReplaceHomeDir();
+                           m_movie_view->SaveMovie(fn.GetAbsolutePath());
                            m_waiting_for_task = true;
                        }
                        else if (!m_movie_view->IsRecording())

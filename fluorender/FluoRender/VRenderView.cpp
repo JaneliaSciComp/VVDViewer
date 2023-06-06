@@ -14902,6 +14902,12 @@ void VRenderVulkanView::RefreshGL(bool erase, bool start_loop)
 		StartLoopUpdate();
 	SetSortBricks();
 	Refresh(erase);
+
+	if (m_vulkan && (m_vulkan->width != m_vulkan->destWidth || m_vulkan->height != m_vulkan->destHeight))
+	{
+		m_vulkan->setSize(GetSize().GetWidth(), GetSize().GetHeight());
+		m_refresh = true;
+	}
 }
 
 //new function to refresh
@@ -14913,7 +14919,12 @@ void VRenderVulkanView::RefreshGLOverlays(bool erase)
 	m_draw_overlays_only = true;
 	SetSortBricks();
 	Refresh(erase);
-
+	
+	if (m_vulkan && (m_vulkan->width != m_vulkan->destWidth || m_vulkan->height != m_vulkan->destHeight))
+	{
+		m_vulkan->setSize(GetSize().GetWidth(), GetSize().GetHeight());
+		m_refresh = true;
+	}
 }
 
 //#ifdef __WXMAC__

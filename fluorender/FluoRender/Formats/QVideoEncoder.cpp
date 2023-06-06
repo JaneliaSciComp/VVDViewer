@@ -321,10 +321,6 @@ AVFrame *QVideoEncoder::get_video_frame(OutputStream *ost)
 {
     AVCodecContext *c = ost->enc;
 
-    /* check if we want to generate more frames */
-    if (av_compare_ts(ost->next_pts, c->time_base, 10, (AVRational){ 1, 1 }) > 0)
-        return NULL;
-
     /* when we pass a frame to the encoder, it may keep a reference to it
      * internally; make sure we do not overwrite it here */
     if (av_frame_make_writable(ost->frame) < 0)

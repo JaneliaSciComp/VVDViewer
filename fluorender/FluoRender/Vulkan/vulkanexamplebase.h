@@ -58,9 +58,6 @@ class VulkanExampleBase
 private:	
 	/** brief Indicates that the view (position, rotation) has changed and buffers containing camera matrices need to be updated */
 	bool viewUpdated = false;
-	// Destination dimensions for resizing the window
-	uint32_t destWidth;
-	uint32_t destHeight;
 	bool resizing = false;
 protected:
 	// Frame counter to display fps
@@ -112,6 +109,10 @@ protected:
 	VulkanSwapChain swapChain;
 	
 public: 
+	// Destination dimensions for resizing the window
+	uint32_t destWidth;
+	uint32_t destHeight;
+
 	bool prepared = false;
 	uint32_t width = 1280;
 	uint32_t height = 720;

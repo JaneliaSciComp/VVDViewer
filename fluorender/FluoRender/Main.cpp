@@ -168,6 +168,9 @@ bool VRenderApp::OnInit()
 #endif
 #endif
    
+   m_files.Add("/home/kawaset@hhmi.org/test/aws-test-14.vrp");
+   m_tasks = "hideui,advanced,record,~/output.mov";
+
    SetTopWindow(m_frame);
    m_frame->Show();
 

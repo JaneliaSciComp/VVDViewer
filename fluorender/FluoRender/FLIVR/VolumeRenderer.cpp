@@ -2619,8 +2619,8 @@ namespace FLIVR
 
 		// Set sampling rate based on interaction
 		double rate = imode_ ? irate_ * 2.0 : sampling_rate_ * 2.0;
-		uint32_t w = m_vulkan->width;
-		uint32_t h = m_vulkan->height;
+		uint32_t w = m_vulkan->destWidth;
+		uint32_t h = m_vulkan->destHeight;
 		uint32_t minwh = min(w, h);
 		uint32_t w2 = w;
 		uint32_t h2 = h;
@@ -2685,6 +2685,8 @@ namespace FLIVR
             blend_framebuffer_->addAttachment(blend_tex_id_);
             
             blend_framebuffer_->setup(pipeline.renderpass);
+
+			//std::cout << "3d (resize) w: " << blend_framebuffer_->w << " h: " << blend_framebuffer_->h << std::endl;
         }
         
         if (!label_ && m_na_mode && lbl_exists)
@@ -2698,6 +2700,8 @@ namespace FLIVR
 			if (palette.count(prim_dev) > 0)
 				descriptorWritesBase.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 7, &palette[prim_dev]->descriptor));
 		}
+		//std::cout << "vu w: " << m_vulkan->destWidth << " h: " << m_vulkan->destHeight << std::endl;
+		//std::cout << "3d w: " << blend_framebuffer_->w << " h: " << blend_framebuffer_->h << std::endl;
 
 		VRayShaderFactory::VRayVertShaderUBO vert_ubo;
 		VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo;

@@ -675,6 +675,8 @@ void VulkanExampleBase::windowResize()
 	// Recreate swap chain
 	width = destWidth;
 	height = destHeight;
+
+	//std::cout << "vu (resize) w: " << width << " h: " << height << std::endl;
     
     if (width <= 0 || height <= 0)
     {
@@ -714,6 +716,8 @@ void VulkanExampleBase::windowResize()
 	viewChanged();
 
 	prepared = true;
+
+	//std::cout << "vu (resized) w: " << width << " h: " << height << std::endl;
 }
 
 void VulkanExampleBase::windowResized()
