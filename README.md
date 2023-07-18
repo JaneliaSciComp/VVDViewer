@@ -29,6 +29,10 @@ Joshua L Lillvis, Hideo Otsuna, Xiaoyu Ding, Igor Pisarev, Takashi Kawase, Jenni
 If you use VVDViewer in work that leads to published research, we humbly ask that you add the following to the 'Acknowledgments' section of your paper: 
 "This work was made possible in part by software funded by the NIH: Fluorender: An Imaging Tool for Visualization and Analysis of Confocal Data as Applied to Zebrafish Research, R01-GM098151-01."
 
+## Licenses
+
+VVDViewer is open source software licensed under the [BSD 3-Clause License](LICENSE). You can also view the [licenses for our dependencies](LICENSE_DEPENDENCIES.md).
+
 
 ## Building VVDViewer
 
