@@ -341,6 +341,9 @@ void DataTreeCtrl::DeleteSelection()
 						vrv->RemoveVolumeData(name_data);
 					if (!next_item.IsOk())
 					{
+						if (!vr_frame->GetDataManager()->GetVolumeData(clvdname) || !vr_frame->GetDataManager()->GetMeshData(clmdname))
+							vr_frame->GetClippingView()->ClearData();
+
 						vr_frame->UpdateTree();
 						vr_frame->RefreshVRenderViews();
 						vr_frame->OnSelection(1);
@@ -368,6 +371,9 @@ void DataTreeCtrl::DeleteSelection()
 						vrv->RemoveMeshData(name_data);
 					if (!next_item.IsOk())
 					{
+						if (!vr_frame->GetDataManager()->GetVolumeData(clvdname) || !vr_frame->GetDataManager()->GetMeshData(clmdname))
+							vr_frame->GetClippingView()->ClearData();
+
 						vr_frame->UpdateTree();
 						vr_frame->RefreshVRenderViews();
 						vr_frame->OnSelection(1);

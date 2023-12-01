@@ -4952,8 +4952,8 @@ void VRenderVulkanView::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffe
 			vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
 		}
 		//turn off alpha
-		if (color_mode == 1)
-			vd->SetEnableAlpha(false);
+		//if (color_mode == 1)
+		//	vd->SetEnableAlpha(false);
 
 		VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
 		Texture* ext_lbl = NULL;
@@ -15766,6 +15766,7 @@ Point* VRenderVulkanView::GetEditingRulerPoint(int mx, int my)
 		{
 			point = ruler->GetPoint(j);
 			if (!point) continue;
+			if (!m_cur_vol->InsideClippingPlanes(*point)) continue;
 			ptemp = *point;
 			ptemp = mv.transform(ptemp);
 			ptemp = p.transform(ptemp);
