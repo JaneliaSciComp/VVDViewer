@@ -1,10 +1,11 @@
-For more information, please see: http://software.sci.utah.edu
+# Licenses for software dependencies
 
-The MIT License
+## FlouRender
+
+The [Flourender codebase](https://github.com/SCIInstitute/fluorender) from which VVDViewer was derived is licensed according to the MIT License as follows:
 
 Copyright (c) 2014 Scientific Computing and Imaging Institute,
 University of Utah.
-
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
