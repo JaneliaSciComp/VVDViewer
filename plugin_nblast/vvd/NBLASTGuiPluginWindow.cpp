@@ -619,12 +619,12 @@ void wxDBListDialog::LoadList()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-	wxString listpath = expath + "\\NBLAST_database_list.txt";
-	if (!wxFileExists(listpath))
-		listpath = wxStandardPaths::Get().GetUserConfigDir() + "\\NBLAST_database_list.txt";
-#else
+#ifdef _DARWIN
 	wxString listpath = expath + "/../Resources/NBLAST_database_list.txt";
+#else
+	wxString listpath = expath + GETSLASHS() + "NBLAST_database_list.txt";
+	if (!wxFileExists(listpath))
+		listpath = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_database_list.txt";
 #endif
 	if (wxFileExists(listpath))
 	{
@@ -659,14 +659,15 @@ void wxDBListDialog::SaveList()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString listpath = expath + "\\NBLAST_database_list.txt";
-	wxString listpath2 = wxStandardPaths::Get().GetUserConfigDir() + "\\NBLAST_database_list.txt";
+#ifdef _DARWIN
+	wxString listpath = expath + "/../Resources/NBLAST_database_list.txt";
+#else
+	wxString listpath = expath + GETSLASHS() + "NBLAST_database_list.txt";
+	wxString listpath2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_database_list.txt";
 	if (!wxFileExists(listpath) && wxFileExists(listpath2))
 		listpath = listpath2;
-#else
-	wxString listpath = expath + "/../Resources/NBLAST_database_list.txt";
 #endif
+
 	wxFileOutputStream os(listpath);
 	wxTextOutputStream tos(os);
 	vector<NBLASTDBListItemData> list = m_list->getList();
@@ -1228,7 +1229,7 @@ void NBLASTListCtrl::SaveResults(wxString txtpath, bool export_swc, bool export_
 			wxProgressDialog *prg_diag = new wxProgressDialog(
 				"NBLAST Plugin: Exporting search results...",
 				"Please wait.",
-			GetItemCount(), 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			GetItemCount(), 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 			int count = 0;
 			do
 			{
@@ -1491,13 +1492,13 @@ void NBLASTListCtrl::OnKeyDown(wxKeyEvent& event)
 		event.GetKeyCode() == WXK_BACK)
 		DeleteSelection();
 
-	if (event.GetKeyCode() == wxKeyCode('Z') && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Z') && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Undo();
 	
-	if (event.GetKeyCode() == wxKeyCode('Y') && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Y') && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Redo();
 
-	if (event.GetKeyCode() == wxKeyCode('Z') && wxGetKeyState(WXK_CONTROL) && wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+	if (event.GetKeyCode() == wxKeyCode('Z') && VRenderFrame::GetKeyState(WXK_CONTROL) && VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 		Redo();
 
 	event.Skip();
@@ -2402,15 +2403,17 @@ void NBLASTGuiPluginWindow::OnInteropMessageReceived(wxCommandEvent & event)
 
 void NBLASTGuiPluginWindow::OnIdle(wxTimerEvent& event)
 {
+	if (!IsShown())
+		return;
 	if (m_results)
 	{
-		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Undo();
 
-		if (wxGetKeyState(wxKeyCode('y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Redo();
 
-		if (wxGetKeyState(wxKeyCode('z')) && wxGetKeyState(WXK_CONTROL) && wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT))
+		if (VRenderFrame::GetKeyState(wxKeyCode('z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT))
 			m_results->Redo();
 	}
 }

@@ -55,7 +55,7 @@ DEALINGS IN THE SOFTWARE.
 #include <stdarg.h>
 #include <unordered_map>
 #include <memory>
-#include "nv/timer.h"
+#include "NV/Timer.h"
 
 #include <glm/glm.hpp>
 
@@ -237,6 +237,8 @@ public:
 
 	//initialization
 	void Init();
+
+	void InitVulkan();
 
 	//Clear all layers
 	void Clear();
@@ -835,6 +837,17 @@ public:
 	shared_ptr<VVulkan> m_vulkan;
 	std::shared_ptr<Vulkan2dRender> m_v2drender;
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	bool m_readyToDraw;
+	wl_compositor *m_wlCompositor;
+    wl_subcompositor *m_wlSubcompositor;
+	wl_surface *m_wlSurface;
+    wl_region *m_wlRegion;
+    wl_subsurface *m_wlSubsurface;
+	wl_callback *m_wlFrameCallbackHandler;
+	friend void VVVUpdatePosition(VRenderVulkanView* win);
+#endif
+
 private:
 	wxWindow* m_frame;
 	VRenderView* m_vrv;
@@ -1205,6 +1218,8 @@ private:
     
     bool m_use_fog_mesh;
 
+	wxButton *m_dummy;
+
 private:
 #ifdef _WIN32
 	//wacom tablet
@@ -1340,7 +1355,11 @@ private:
 	void OnDraw(wxPaintEvent& event);
 	void OnResize(wxSizeEvent& event);
 	void Resize(bool refresh=true);
+#if defined(__WXGTK__)
+	void OnIdle(wxIdleEvent& event);
+#else
 	void OnIdle(wxTimerEvent& event);
+#endif
 	void OnKeyDown(wxKeyEvent& event);
 	void OnContextMenu(wxContextMenuEvent& event);
 	

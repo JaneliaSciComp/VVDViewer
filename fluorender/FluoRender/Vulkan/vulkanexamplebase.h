@@ -20,13 +20,12 @@
 #include <android_native_app_glue.h>
 #include <sys/system_properties.h>
 #include "VulkanAndroid.h"
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
+#include <xcb/xcb.h>
 #elif defined(_DIRECT2DISPLAY)
 //
-#elif defined(VK_USE_PLATFORM_XCB_KHR)
-#include <xcb/xcb.h>
 #endif
 
 #include <iostream>
@@ -59,9 +58,6 @@ class VulkanExampleBase
 private:	
 	/** brief Indicates that the view (position, rotation) has changed and buffers containing camera matrices need to be updated */
 	bool viewUpdated = false;
-	// Destination dimensions for resizing the window
-	uint32_t destWidth;
-	uint32_t destHeight;
 	bool resizing = false;
 protected:
 	// Frame counter to display fps
@@ -113,6 +109,10 @@ protected:
 	VulkanSwapChain swapChain;
 	
 public: 
+	// Destination dimensions for resizing the window
+	uint32_t destWidth;
+	uint32_t destHeight;
+
 	bool prepared = false;
 	uint32_t width = 1280;
 	uint32_t height = 720;
@@ -182,7 +182,7 @@ public:
 
 	std::string title = "Vulkan Example";
 	std::string name = "vulkanExample";
-	uint32_t apiVersion = VK_API_VERSION_1_1;
+	uint32_t apiVersion = VK_MAKE_VERSION(1, 0, 0);
 	/*
 	struct 
 	{
@@ -211,7 +211,14 @@ public:
 	virtual ~VulkanExampleBase();
 
 	// Setup the vulkan instance, enable required extensions and connect to the physical device (GPU)
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	static constexpr int PLATFORM_WAYLAND = 0;
+	static constexpr int PLATFORM_X11 = 1;
+	int m_platform;
+	bool initVulkan(int platform = PLATFORM_WAYLAND);
+#else
 	bool initVulkan();
+#endif
 
 #if defined(_WIN32)
 	HWND window;
@@ -220,6 +227,13 @@ public:
 #elif (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
 	void* view;
 	void setWindow(void *pView) { view = pView;}
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	wl_display *display = nullptr;
+	wl_surface *surface = nullptr;
+	void setWindow(wl_display *p_disp, wl_surface *p_surf) { display = p_disp; surface = p_surf; }
+	xcb_connection_t *connection;
+	xcb_window_t window;
+	void setWindow(xcb_window_t p_win, xcb_connection_t *p_connection) { window = p_win; connection = p_connection; }
 #endif
 	void setSize(int width, int height);
 

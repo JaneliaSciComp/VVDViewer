@@ -318,7 +318,7 @@ bool NAGuiPlugin::runNALoader(wxString id_path, wxString vol_path, wxString chsp
     wxProgressDialog* prg_diag = new wxProgressDialog(
                                                       "Neuron Annotator Plugin",
                                                       "Loading labels...",
-                                                      4, 0, wxPD_SMOOTH | wxPD_AUTO_HIDE);
+                                                      4, 0, wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_AUTO_HIDE);
 
 	prg_diag->Update(2, "Calculating bounding boxes...");
 
@@ -1500,12 +1500,12 @@ void NAGuiPlugin::LoadConfigFile()
 {
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
     expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\NA_plugin_settings.dft";
-    if (!wxFileExists(dft))
-        dft = wxStandardPaths::Get().GetUserConfigDir() + "\\NA_plugin_settings.dft";
-#else
+#ifdef _DARWIN
     wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
+#else
+   wxString dft = expath + GETSLASHS() + "NA_plugin_settings.dft";
+    if (!wxFileExists(dft))
+        dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NA_plugin_settings.dft";
 #endif
     LoadProjectSettingFile(dft);
 }
@@ -1668,7 +1668,7 @@ void NAGuiPlugin::LoadSettings()
     wxProgressDialog* prg_diag = new wxProgressDialog(
                                                       "Neuron Annotator Plugin",
                                                       "Loading labels...",
-                                                      4, 0, wxPD_SMOOTH | wxPD_AUTO_HIDE);
+                                                      4, 0, wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_AUTO_HIDE);
     
     prg_diag->Update(2, "Calculating bounding boxes...");
     
@@ -1848,13 +1848,13 @@ void NAGuiPlugin::SaveConfigFile()
 {
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
     expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\NA_plugin_settings.dft";
-    wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\NA_plugin_settings.dft";
+#ifdef _DARWIN
+    wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
+#else
+    wxString dft = expath + GETSLASHS() + "NA_plugin_settings.dft";
+    wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NA_plugin_settings.dft";
     if (!wxFileExists(dft) && wxFileExists(dft2))
         dft = dft2;
-#else
-    wxString dft = expath + "/../Resources/NA_plugin_settings.dft";
 #endif
     
     SaveProjectSettingFile(dft);

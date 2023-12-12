@@ -63,6 +63,12 @@ m_dragging_to_item(-1)
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+#if defined(__WXGTK__)
+	int size_fix_w = 20;
+#else
+	int size_fix_w = 0;
+#endif
+
 	//validator: integer
 	wxIntegerValidator<unsigned int> vald_int;
 
@@ -75,13 +81,13 @@ m_dragging_to_item(-1)
     SetColumnWidth(1, 60);
 	itemCol.SetText("Inbetweens");
 	this->InsertColumn(2, itemCol);
-    SetColumnWidth(2, 80);
+    SetColumnWidth(2, 80+size_fix_w);
 	itemCol.SetText("Interpolation");
 	this->InsertColumn(3, itemCol);
-    SetColumnWidth(3, 80);
+    SetColumnWidth(3, 80+size_fix_w);
 	itemCol.SetText("Description");
 	this->InsertColumn(4, itemCol);
-    SetColumnWidth(4, 80);
+    SetColumnWidth(4, 80+size_fix_w);
 
 	m_images = new wxImageList(16, 16, true);
 	wxIcon icon = wxIcon(key_xpm);
@@ -578,6 +584,14 @@ m_view(0)
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+#if defined(__WXGTK__)
+	int duration_w = 38;
+	int interp_w = 100;
+#else
+	int duration_w = 30;
+	int interp_w = 65;
+#endif
+
 	//validator: integer
 	wxIntegerValidator<unsigned int> vald_int;
 	wxStaticText* st = 0;
@@ -609,9 +623,9 @@ m_view(0)
 	wxBoxSizer *group3 = new wxBoxSizer(wxHORIZONTAL);
 	st = new wxStaticText(this, wxID_ANY, "Default:",wxDefaultPosition,wxSize(50,-1));
 	m_duration_text = new wxTextCtrl(this, ID_DurationText, "30",
-		wxDefaultPosition, wxSize(30, 23), 0, vald_int);
+		wxDefaultPosition, wxSize(duration_w, 23), 0, vald_int);
 	m_interpolation_cmb = new wxComboBox(this, ID_InterpolationCmb, "",
-		wxDefaultPosition, wxSize(65,-1), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(interp_w,-1), 0, NULL, wxCB_READONLY);
 	m_interpolation_cmb->Append("Linear");
 	m_interpolation_cmb->Append("Smooth");
 	m_interpolation_cmb->Select(0);
@@ -873,7 +887,7 @@ void RecorderDlg::InsertKey(int index, double duration, int interpolation)
 	Interpolator *interpolator = vr_frame->GetInterpolator();
 	if (!interpolator)
 		return;
-	KeyCode keycode;
+	FLKeyCode keycode;
 	FlKeyDouble* flkey = 0;
 	FlKeyQuaternion* flkeyQ = 0;
 	FlKeyBoolean* flkeyB = 0;
@@ -1218,7 +1232,7 @@ void RecorderDlg::AutoKeyChanComb(int comb)
 	double duration;
 	str.ToDouble(&duration);
 
-	KeyCode keycode;
+	FLKeyCode keycode;
 	FlKeyBoolean* flkeyB = 0;
 
 	double t = interpolator->GetLastT();

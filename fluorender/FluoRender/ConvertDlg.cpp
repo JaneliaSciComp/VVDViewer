@@ -224,7 +224,7 @@ void ConvertDlg::OnCnvVolMeshConvert(wxCommandEvent& event)
 		"VVDViewer: Convert volume to polygon data",
 		"Converting... Please wait.",
 		100, 0,
-		wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 	int progress = 0;
 
 	progress = 50;

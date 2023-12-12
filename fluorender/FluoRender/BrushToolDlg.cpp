@@ -178,7 +178,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_brush_scl_translate_sldr = new wxSlider(page, ID_BrushSclTranslateSldr, 0, 0, 2550,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_brush_scl_translate_text = new wxTextCtrl(page, ID_BrushSclTranslateText, "0.0",
-		wxDefaultPosition, wxSize(50, 20), wxTE_PROCESS_ENTER, vald_fp1);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), wxTE_PROCESS_ENTER, vald_fp1);
 	sizer1_2->Add(5, 5);
 	sizer1_2->Add(st, 0, wxALIGN_CENTER);
 	sizer1_2->Add(m_brush_scl_translate_sldr, 1, wxEXPAND);
@@ -191,7 +191,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_brush_2dinfl_sldr = new wxSlider(page, ID_Brush2dinflSldr, 100, 0, 200,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL|wxSL_INVERSE);
 	m_brush_2dinfl_text = new wxTextCtrl(page, ID_Brush2dinflText, "1.00",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_fp2);
+		wxDefaultPosition, wxSize(40+size_fix_w, 20), 0, vald_fp2);
 	sizer1_4->Add(5, 5);
 	sizer1_4->Add(st, 0, wxALIGN_CENTER);
 	sizer1_4->Add(m_brush_2dinfl_sldr, 1, wxEXPAND);
@@ -219,7 +219,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_brush_size1_sldr = new wxSlider(page, ID_BrushSize1Sldr, 10, 1, 300,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_brush_size1_text = new wxTextCtrl(page, ID_BrushSize1Text, "10",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), 0, vald_int);
 	sizer2_2->Add(5, 5);
 	sizer2_2->Add(st, 0, wxALIGN_CENTER);
 	sizer2_2->Add(m_brush_size1_sldr, 1, wxEXPAND);
@@ -237,7 +237,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_brush_size2_sldr = new wxSlider(page, ID_BrushSize2Sldr, 30, 1, 300,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_brush_size2_text = new wxTextCtrl(page, ID_BrushSize2Text, "30",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), 0, vald_int);
 	m_brush_size2_chk->SetValue(true);
 	m_brush_size2_sldr->Enable();
 	m_brush_size2_text->Enable();
@@ -289,7 +289,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_dslt_r_sldr = new wxSlider(page, ID_DSLTBrushRadSldr, 10, 1, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_dslt_r_text = new wxTextCtrl(page, ID_DSLTBrushRadText, "10",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), 0, vald_int);
 	wxBoxSizer *sizer2_5 = new wxBoxSizer(wxHORIZONTAL);
 	sizer2_5->Add(5, 5);
 	sizer2_5->Add(st_dslt_r, 0, wxALIGN_CENTER);
@@ -300,7 +300,7 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	m_dslt_q_sldr = new wxSlider(page, ID_DSLTBrushQualitySldr, 3, 1, 10,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_dslt_q_text = new wxTextCtrl(page, ID_DSLTBrushQualityText, "3",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), 0, vald_int);
 	wxBoxSizer *sizer2_6 = new wxBoxSizer(wxHORIZONTAL);
 	sizer2_6->Add(5, 5);
 	sizer2_6->Add(st_dslt_q, 0, wxALIGN_CENTER);
@@ -457,7 +457,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
 	m_ca_thresh_sldr = new wxSlider(page, ID_CAThreshSldr, 0, 0, 2550,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_ca_thresh_text = new wxTextCtrl(page, ID_CAThreshText, "0.0",
-		wxDefaultPosition, wxSize(50, 20), 0, vald_fp1);
+		wxDefaultPosition, wxSize(50+size_fix_w, 20), 0, vald_fp1);
 	sizer1_1->Add(st, 0, wxALIGN_CENTER);
 	sizer1_1->Add(m_ca_thresh_sldr, 1, wxEXPAND);
 	sizer1_1->Add(m_ca_thresh_text, 0, wxALIGN_CENTER);
@@ -475,7 +475,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
 		wxDefaultPosition, wxSize(40, 15));
 	sizer1_2->Add(st, 0, wxALIGN_CENTER);
 	m_ca_min_text = new wxTextCtrl(page, ID_CAMinText, "0",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(40+size_fix_w, 20), 0, vald_int);
 	sizer1_2->Add(m_ca_min_text, 0, wxALIGN_CENTER);
 	st = new wxStaticText(page, 0, "vx",
 		wxDefaultPosition, wxSize(15, 15));
@@ -485,7 +485,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
 		wxDefaultPosition, wxSize(40, 15));
 	sizer1_2->Add(st, 0, wxALIGN_CENTER);
 	m_ca_max_text = new wxTextCtrl(page, ID_CAMaxText, "1000",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(40+size_fix_w, 20), 0, vald_int);
 	sizer1_2->Add(m_ca_max_text, 0, wxALIGN_CENTER);
 	st = new wxStaticText(page, 0, "vx",
 		wxDefaultPosition, wxSize(15, 15));
@@ -500,13 +500,13 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
 	sizer1_3->Add(5, 5);
 	sizer1_3->Add(st, 0, wxALIGN_CENTER);
 	m_ca_comps_text = new wxTextCtrl(page, ID_CACompsText, "0",
-		wxDefaultPosition, wxSize(70, 20), wxTE_READONLY);
+		wxDefaultPosition, wxSize(70+size_fix_w, 20), wxTE_READONLY);
 	sizer1_3->Add(m_ca_comps_text, 0, wxALIGN_CENTER);
 	sizer1_3->AddStretchSpacer();
 	st = new wxStaticText(page, 0, "Total Volume:");
 	sizer1_3->Add(st, 0, wxALIGN_CENTER);
 	m_ca_volume_text = new wxTextCtrl(page, ID_CAVolumeText, "0",
-		wxDefaultPosition, wxSize(70, 20), wxTE_READONLY);
+		wxDefaultPosition, wxSize(70+size_fix_w, 20), wxTE_READONLY);
 	sizer1_3->Add(m_ca_volume_text, 0, wxALIGN_CENTER);
 	//export
 	wxBoxSizer *sizer1_4 = new wxBoxSizer(wxHORIZONTAL);
@@ -543,7 +543,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
 	m_nr_size_sldr = new wxSlider(page, ID_NRSizeSldr, 10, 1, 100,
 		wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
 	m_nr_size_text = new wxTextCtrl(page, ID_NRSizeText, "10",
-		wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+		wxDefaultPosition, wxSize(40+size_fix_w, -1), 0, vald_int);
 	sizer2_1->Add(5, 5);
 	sizer2_1->Add(st, 0, wxALIGN_CENTER);
 	sizer2_1->Add(m_nr_size_sldr, 1, wxEXPAND);
@@ -578,7 +578,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
     m_eve_min_radius_sldr = new wxSlider(page, ID_EVEMinRadiusSldr, 5, 1, 50,
         wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
     m_eve_min_radius_text = new wxTextCtrl(page, ID_EVEMinRadiusText, "5",
-        wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+        wxDefaultPosition, wxSize(40+size_fix_w, -1), 0, vald_int);
     sizer3_1->Add(5, 5);
     sizer3_1->Add(st, 0, wxALIGN_CENTER);
     sizer3_1->Add(m_eve_min_radius_sldr, 1, wxEXPAND);
@@ -593,7 +593,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
     m_eve_max_radius_sldr = new wxSlider(page, ID_EVEMaxRadiusSldr, 5, 1, 50,
         wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
     m_eve_max_radius_text = new wxTextCtrl(page, ID_EVEMaxRadiusText, "5",
-        wxDefaultPosition, wxSize(40, -1), 0, vald_int);
+        wxDefaultPosition, wxSize(40+size_fix_w, -1), 0, vald_int);
     sizer3_2->Add(5, 5);
     sizer3_2->Add(st, 0, wxALIGN_CENTER);
     sizer3_2->Add(m_eve_max_radius_sldr, 1, wxEXPAND);
@@ -608,7 +608,7 @@ wxWindow* BrushToolDlg::CreateAnalysisPage(wxWindow *parent)
     m_eve_threshold_sldr = new wxSlider(page, ID_EVEThresholdSldr, 0, 0, 65535,
         wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
     m_eve_threshold_text = new wxTextCtrl(page, ID_EVEThresholdText, "0",
-        wxDefaultPosition, wxSize(60, -1), 0, vald_int);
+        wxDefaultPosition, wxSize(60+size_fix_w, -1), 0, vald_int);
     sizer3_3->Add(5, 5);
     sizer3_3->Add(st, 0, wxALIGN_CENTER);
     sizer3_3->Add(m_eve_threshold_sldr, 1, wxEXPAND);
@@ -1655,13 +1655,13 @@ void BrushToolDlg::SaveDefault()
    fconfig.Write("eve_max_radius", m_dft_eve_max_radius);
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_brush_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\default_brush_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/default_brush_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
 #endif
    wxFileOutputStream os(dft);
    fconfig.Save(os);
@@ -1672,12 +1672,12 @@ void BrushToolDlg::LoadDefault()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_brush_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_brush_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
 #endif
    wxFileInputStream is(dft);
    if (!is.IsOk())
@@ -2099,6 +2099,9 @@ void BrushToolDlg::OnCalcFill(wxCommandEvent &event)
 
 void BrushToolDlg::OnIdle(wxTimerEvent &event)
 {
+   if (!IsShownOnScreen())
+      return;
+
     VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
     if (!vr_frame) return;
 

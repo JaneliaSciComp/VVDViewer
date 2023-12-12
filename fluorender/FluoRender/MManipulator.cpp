@@ -47,6 +47,12 @@ m_md(0)
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+#if defined(__WXGTK__)
+	int spin_w = 70;
+#else
+	int spin_w = 20;
+#endif
+
 	wxBoxSizer* sizer_v = new wxBoxSizer(wxVERTICAL);
 	wxBoxSizer* sizer_1 = new wxBoxSizer(wxHORIZONTAL);
 	wxBoxSizer* sizer_2 = new wxBoxSizer(wxHORIZONTAL);
@@ -57,15 +63,15 @@ m_md(0)
 	m_x_trans_st = new wxStaticText(this, 0, "X:");
 	m_x_trans_text = new wxTextCtrl(this, ID_XTransText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_x_trans_spin = new wxSpinButton(this, ID_XTransSpin);
+	m_x_trans_spin = new wxSpinButton(this, ID_XTransSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_y_trans_st = new wxStaticText(this, 0, "Y:");
 	m_y_trans_text = new wxTextCtrl(this, ID_YTransText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_y_trans_spin = new wxSpinButton(this, ID_YTransSpin);
+	m_y_trans_spin = new wxSpinButton(this, ID_YTransSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_z_trans_st = new wxStaticText(this, 0, "Z:");
 	m_z_trans_text = new wxTextCtrl(this, ID_ZTransText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_z_trans_spin = new wxSpinButton(this, ID_ZTransSpin);
+	m_z_trans_spin = new wxSpinButton(this, ID_ZTransSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	sizer_1->Add(m_x_trans_st, 0, wxALIGN_CENTER);
 	sizer_1->Add(m_x_trans_text, 0, wxALIGN_CENTER);
 	sizer_1->Add(m_x_trans_spin, 0, wxALIGN_CENTER);
@@ -81,15 +87,15 @@ m_md(0)
 	m_x_rot_st = new wxStaticText(this, 0, "X:");
 	m_x_rot_text = new wxTextCtrl(this, ID_XRotText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_x_rot_spin = new wxSpinButton(this, ID_XRotSpin);
+	m_x_rot_spin = new wxSpinButton(this, ID_XRotSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_y_rot_st = new wxStaticText(this, 0, "Y:");
 	m_y_rot_text = new wxTextCtrl(this, ID_YRotText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_y_rot_spin = new wxSpinButton(this, ID_YRotSpin);
+	m_y_rot_spin = new wxSpinButton(this, ID_YRotSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_z_rot_st = new wxStaticText(this, 0, "Z:");
 	m_z_rot_text = new wxTextCtrl(this, ID_ZRotText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_z_rot_spin = new wxSpinButton(this, ID_ZRotSpin);
+	m_z_rot_spin = new wxSpinButton(this, ID_ZRotSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	sizer_2->Add(m_x_rot_st, 0, wxALIGN_CENTER);
 	sizer_2->Add(m_x_rot_text, 0, wxALIGN_CENTER);
 	sizer_2->Add(m_x_rot_spin, 0, wxALIGN_CENTER);
@@ -105,15 +111,15 @@ m_md(0)
 	m_x_scl_st = new wxStaticText(this, 0, "X:");
 	m_x_scl_text = new wxTextCtrl(this, ID_XScalText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_x_scl_spin = new wxSpinButton(this, ID_XScalSpin);
+	m_x_scl_spin = new wxSpinButton(this, ID_XScalSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_y_scl_st = new wxStaticText(this, 0, "Y:");
 	m_y_scl_text = new wxTextCtrl(this, ID_YScalText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_y_scl_spin = new wxSpinButton(this, ID_YScalSpin);
+	m_y_scl_spin = new wxSpinButton(this, ID_YScalSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	m_z_scl_st = new wxStaticText(this, 0, "Z:");
 	m_z_scl_text = new wxTextCtrl(this, ID_ZScalText, "",
 		wxDefaultPosition, wxSize(60, 20), wxTE_PROCESS_ENTER);
-	m_z_scl_spin = new wxSpinButton(this, ID_ZScalSpin);
+	m_z_scl_spin = new wxSpinButton(this, ID_ZScalSpin, wxDefaultPosition, wxSize(spin_w, 20), wxSP_VERTICAL);
 	sizer_3->Add(m_x_scl_st, 0, wxALIGN_CENTER);
 	sizer_3->Add(m_x_scl_text, 0, wxALIGN_CENTER);
 	sizer_3->Add(m_x_scl_spin, 0, wxALIGN_CENTER);

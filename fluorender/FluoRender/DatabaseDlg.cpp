@@ -73,7 +73,7 @@ bool DBTreeCtrl::LoadDatabase(wxString path)
 		curl_easy_setopt(_g_curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 		curl_easy_setopt(_g_curl, CURLOPT_WRITEFUNCTION, callbackWrite);
 		curl_easy_setopt(_g_curl, CURLOPT_WRITEDATA, &catalogdata);
-		//ƒsƒAØ–¾‘ŒŸØ‚È‚µ
+		//ï¿½sï¿½Aï¿½Ø–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø‚È‚ï¿½
 		curl_easy_setopt(_g_curl, CURLOPT_SSL_VERIFYPEER, 0);
 		ret = curl_easy_perform(_g_curl);
 		if (ret != CURLE_OK) {
@@ -206,7 +206,7 @@ void DBTreeCtrl::ReadAnnotations(wxString url, vector<AnnotationDB> &annotations
 		curl_easy_setopt(_g_curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 		curl_easy_setopt(_g_curl, CURLOPT_WRITEFUNCTION, callbackWrite);
 		curl_easy_setopt(_g_curl, CURLOPT_WRITEDATA, &anndata);
-		//ƒsƒAØ–¾‘ŒŸØ‚È‚µ
+		//ï¿½sï¿½Aï¿½Ø–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø‚È‚ï¿½
 		curl_easy_setopt(_g_curl, CURLOPT_SSL_VERIFYPEER, 0);
 		ret = curl_easy_perform(_g_curl);
 		if (ret != CURLE_OK) {
@@ -399,7 +399,7 @@ DBListCtrl::DBListCtrl(
 	curl_easy_setopt(_g_curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	curl_easy_setopt(_g_curl, CURLOPT_WRITEFUNCTION, callbackWrite);
 	curl_easy_setopt(_g_curl, CURLOPT_WRITEDATA, &chunk);
-	//ƒsƒAØ–¾‘ŒŸØ‚È‚µ
+	//ï¿½sï¿½Aï¿½Ø–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø‚È‚ï¿½
 	curl_easy_setopt(_g_curl, CURLOPT_SSL_VERIFYPEER, 0);
 	ret = curl_easy_perform(_g_curl);
 	if (ret != CURLE_OK) {
@@ -692,12 +692,12 @@ m_view(0)
 
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
     expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-    wxString dft = expath + "\\catalog_list.set";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\catalog_list.set";
-#else
+#ifdef _DARWIN
     wxString dft = expath + "/../Resources/" + "catalog_list.set";
+#else
+    wxString dft = expath + GETSLASHS() + "catalog_list.set";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "catalog_list.set";
 #endif
     wxFileInputStream is(dft);
 	if (is.IsOk())
@@ -770,13 +770,13 @@ void DatabaseDlg::SaveDefault()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\catalog_list.set";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\catalog_list.set";
+#ifdef _DARWIN
+    wxString dft = expath + "/../Resources/" + "catalog_list.set";
+#else
+	wxString dft = expath + GETSLASHS() + "catalog_list.set";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "catalog_list.set";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-    wxString dft = expath + "/../Resources/" + "catalog_list.set";
 #endif
 	wxFileOutputStream os(dft);
 	if (os.IsOk())

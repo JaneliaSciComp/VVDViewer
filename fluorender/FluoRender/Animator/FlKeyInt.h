@@ -44,7 +44,7 @@ public:
 		m_code.l2_name = "";
 		m_ival = 0;
 	}
-	FlKeyInt(KeyCode keycode, int ival)
+	FlKeyInt(FLKeyCode keycode, int ival)
 	{
 		m_code = keycode;
 		m_ival = ival;

@@ -61,13 +61,13 @@ private:
 	static bool m_init;
 
 	bool m_valid;
-	std::shared_ptr<Font> m_cur_font;
+	std::shared_ptr<FLFont> m_cur_font;
 	std::string m_cur_libname;
 
 	unsigned int m_size;
 
 	std::shared_ptr<TextureAtlas> m_textureAtlas;
-	std::map<std::string, std::shared_ptr<Font>> m_fonts;
+	std::map<std::string, std::shared_ptr<FLFont>> m_fonts;
 	std::shared_ptr<Vulkan2dRender> m_v2drender;
 };
 

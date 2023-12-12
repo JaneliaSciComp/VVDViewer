@@ -251,7 +251,10 @@ void SampleGuiPluginWindow1::doAction(ActionInfo *info)
 			EnableControls(true);
 			m_waitingforfiji = false;
 			m_wtimer->Stop();
-#ifdef _WIN32
+#if defined(_DARWIN)
+            wxString act = "osascript -e 'tell application \"System Events\" to set frontmost of the first process whose unix id is "+wxString::Format("%lu",wxGetProcessId())+" to true'";
+            wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_SYNC);
+#elif defined(_WIN32)
             wchar_t slash = L'\\';
             wxString expath = wxStandardPaths::Get().GetExecutablePath();
             expath = expath.BeforeLast(slash, NULL);
@@ -260,10 +263,9 @@ void SampleGuiPluginWindow1::doAction(ActionInfo *info)
             {
                 act = _("cscript //nologo ")+act+" "+wxString::Format("%lu",wxGetProcessId());
                 wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_SYNC);
-            }
+			}
 #else
-            wxString act = "osascript -e 'tell application \"System Events\" to set frontmost of the first process whose unix id is "+wxString::Format("%lu",wxGetProcessId())+" to true'";
-            wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_SYNC);
+
 #endif
 		}
 		break;
@@ -320,7 +322,7 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 				m_prg_diag = new wxProgressDialog(
 					"Connecting to Fiji...",
 					"Please wait.",
-					100, 0, wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
+					100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
 				m_prg_diag->Pulse();
 				if (m_Plugin->GetVVDMainFrame())
 					m_Plugin->GetVVDMainFrame()->SetEvtHandlerEnabled(false);
@@ -328,7 +330,7 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 		}
 		else
 		{
-#ifdef _WIN32
+#if defined(_WIN32)
 			wchar_t slash = L'\\';
 			wxString expath = wxStandardPaths::Get().GetExecutablePath();
 			expath = expath.BeforeLast(slash, NULL);
@@ -338,9 +340,11 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 				act = _("cscript //nologo ")+act+" "+plugin->GetPID();
 				wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_ASYNC);
 			}
-#else
+#elif defined(_DARWIN)
 			wxString act = "osascript -e 'tell application \"System Events\" to set frontmost of the first process whose unix id is "+plugin->GetPID()+" to true'";
             wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_SYNC);
+#else
+
 #endif
 			plugin->SendCommand(com, send_mask);
 			m_waitingforfiji = true;
@@ -349,7 +353,7 @@ void SampleGuiPluginWindow1::SendCommand(wxString com, bool send_mask)
 			m_prg_diag = new wxProgressDialog(
 				"Waiting for Fiji...",
 				"Please wait.",
-				100, m_Plugin->GetVVDMainFrame(), wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
+				100, m_Plugin->GetVVDMainFrame(), wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_AUTO_HIDE|wxPD_CAN_ABORT);
 			m_prg_diag->Pulse();
 			m_wtimer->Start(50);
 			

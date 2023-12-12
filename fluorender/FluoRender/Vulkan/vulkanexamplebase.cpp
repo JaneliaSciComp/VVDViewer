@@ -19,11 +19,15 @@ VkResult VulkanExampleBase::createInstance(bool enableValidation)
 	this->settings.validation = true;
 #endif	
 
-	VkApplicationInfo appInfo = {};
-	appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-	appInfo.pApplicationName = name.c_str();
-	appInfo.pEngineName = name.c_str();
-	appInfo.apiVersion = apiVersion;
+	const VkApplicationInfo appInfo = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pNext = NULL,
+        .pApplicationName = name.c_str(),
+        .applicationVersion = 0,
+        .pEngineName = name.c_str(),
+        .engineVersion = 0,
+        .apiVersion = VK_API_VERSION_1_0,
+    };
 
 	std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME };
 
@@ -34,10 +38,11 @@ VkResult VulkanExampleBase::createInstance(bool enableValidation)
 	instanceExtensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
 #elif defined(_DIRECT2DISPLAY)
 	instanceExtensions.push_back(VK_KHR_DISPLAY_EXTENSION_NAME);
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-	instanceExtensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
-#elif defined(VK_USE_PLATFORM_XCB_KHR)
-	instanceExtensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (m_platform == PLATFORM_WAYLAND)
+		instanceExtensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+	else
+		instanceExtensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(VK_USE_PLATFORM_IOS_MVK)
 	instanceExtensions.push_back(VK_MVK_IOS_SURFACE_EXTENSION_NAME);
 #elif defined(VK_USE_PLATFORM_MACOS_MVK)
@@ -217,6 +222,10 @@ void VulkanExampleBase::submitFrame()
 
 VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 {
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	m_platform = PLATFORM_WAYLAND;
+#endif
+
 	settings.validation = enableValidation;
 
 	char* numConvPtr;
@@ -328,8 +337,16 @@ VulkanExampleBase::~VulkanExampleBase()
 	vkDestroyInstance(instance, nullptr);
 }
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+bool VulkanExampleBase::initVulkan(int platform)
+#else
 bool VulkanExampleBase::initVulkan()
+#endif
 {
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	m_platform = platform;
+#endif
+
 	VkResult err;
 
 	// Vulkan instance
@@ -363,15 +380,43 @@ bool VulkanExampleBase::initVulkan()
 	}
 
 	// GPU selection
+	/* Try to auto select most suitable device */
+	int gpu_number = -1;
 
-	// Select physical device to be used for the Vulkan example
-	// Defaults to the first device unless specified by command line
-	uint32_t selectedDevice = 0;
+    constexpr uint32_t device_type_count = static_cast<uint32_t>(VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU) + 1;
+    std::array<uint32_t, device_type_count> count_device_type{};
 
-	physicalDevice = physicalDevices[selectedDevice];
+    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+        assert(deviceProperties.deviceType <= VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU);
+        count_device_type[static_cast<int>(deviceProperties.deviceType)]++;
+    }
+
+    std::array<VkPhysicalDeviceType, device_type_count> const device_type_preference = {
+        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU,
+        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_OTHER};
+
+    VkPhysicalDeviceType search_for_device_type = VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    for (uint32_t i = 0; i < sizeof(device_type_preference) / sizeof(VkPhysicalDeviceType); i++) {
+        if (count_device_type[static_cast<int>(device_type_preference[i])]) {
+            search_for_device_type = device_type_preference[i];
+            break;
+        }
+    }
+
+    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+        if (deviceProperties.deviceType == search_for_device_type) {
+            gpu_number = i;
+            break;
+        }
+    }
+    assert(gpu_number >= 0);
+    physicalDevice = physicalDevices[gpu_number];
 
 	// Store properties (including limits), features and memory properties of the phyiscal device (so that examples can check against them)
 	vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+	fprintf(stderr, "Selected GPU %d: %s, type: %s\n", gpu_number, deviceProperties.deviceName, std::to_string(deviceProperties.deviceType).c_str());
 	vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
 
@@ -630,6 +675,8 @@ void VulkanExampleBase::windowResize()
 	// Recreate swap chain
 	width = destWidth;
 	height = destHeight;
+
+	//std::cout << "vu (resize) w: " << width << " h: " << height << std::endl;
     
     if (width <= 0 || height <= 0)
     {
@@ -669,6 +716,8 @@ void VulkanExampleBase::windowResize()
 	viewChanged();
 
 	prepared = true;
+
+	//std::cout << "vu (resized) w: " << width << " h: " << height << std::endl;
 }
 
 void VulkanExampleBase::windowResized()
@@ -686,10 +735,11 @@ void VulkanExampleBase::initSwapchain()
 	swapChain.initSurface(view);
 #elif defined(_DIRECT2DISPLAY)
 	swapChain.initSurface(width, height);
-#elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-	swapChain.initSurface(display, surface);
-#elif defined(VK_USE_PLATFORM_XCB_KHR)
-	swapChain.initSurface(connection, window);
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (m_platform == PLATFORM_WAYLAND)
+		swapChain.initSurface(display, surface);
+	else
+		swapChain.initSurface(connection, window);
 #endif
 }
 

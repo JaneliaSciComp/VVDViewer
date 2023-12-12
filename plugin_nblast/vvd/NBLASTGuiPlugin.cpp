@@ -94,7 +94,7 @@ bool NBLASTGuiPlugin::runNBLAST(wxString rpath, wxString nlibpath, wxString outd
 	m_scmtd = scmethod;
 
 	wxString rscript;
-#ifdef _WIN32
+#if defined(_WIN32)
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
 	rscript = expath + "\\nblast_search.R";
@@ -116,7 +116,7 @@ bool NBLASTGuiPlugin::runNBLAST(wxString rpath, wxString nlibpath, wxString outd
     env.env["PATH"] = envpath;
     //wxExecute(com, wxEXEC_SYNC, NULL, &env);
 	wxShell(com);
-#else
+#elif defined(_DARWIN)
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
 	rscript = expath + "/../Resources/nblast_search.R";
@@ -132,6 +132,8 @@ bool NBLASTGuiPlugin::runNBLAST(wxString rpath, wxString nlibpath, wxString outd
     wxExecute(com, wxEXEC_SYNC);
     wxString act = "osascript -e 'tell application \"System Events\" to set frontmost of the first process whose unix id is "+wxString::Format("%lu", wxGetProcessId())+" to true'";
     wxExecute(act, wxEXEC_HIDE_CONSOLE|wxEXEC_ASYNC);
+#else
+
 #endif
 
 	return true;
@@ -397,12 +399,12 @@ void NBLASTGuiPlugin::LoadConfigFile()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\NBLAST_plugin_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\NBLAST_plugin_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/NBLAST_plugin_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "NBLAST_plugin_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_plugin_settings.dft";
 #endif
 	if (wxFileExists(dft))
 	{
@@ -461,13 +463,13 @@ void NBLASTGuiPlugin::SaveConfigFile()
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\NBLAST_plugin_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\NBLAST_plugin_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/NBLAST_plugin_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "NBLAST_plugin_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_plugin_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/NBLAST_plugin_settings.dft";
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);

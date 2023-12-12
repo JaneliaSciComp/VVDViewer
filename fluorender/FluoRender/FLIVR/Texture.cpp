@@ -418,7 +418,7 @@ namespace FLIVR
 		return &quota_bricks_;
 	}
 
-	//brxml‚Ì‚Æ‚«‚ÍÅ‰º‘w‚Ìspacing‚ğİ’è‚·‚éi‘¼‚ÌŠK‘w‚Í©“®“I‚ÉŒvZj
+	//brxmlï¿½Ì‚Æ‚ï¿½ï¿½ÍÅ‰ï¿½ï¿½wï¿½ï¿½spacingï¿½ï¿½İ’è‚·ï¿½ï¿½iï¿½ï¿½ï¿½ÌŠKï¿½wï¿½Íï¿½ï¿½ï¿½ï¿½Iï¿½ÉŒvï¿½Zï¿½j
 	void Texture::set_spacings(double x, double y, double z)
 	{
 		if (!brkxml_)
@@ -1172,7 +1172,7 @@ namespace FLIVR
 			"VVDViewer: Load Volume Data...",
 			"Loading... Please wait.",
 			100, 0,
-			wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 		int progress = 0;
 
 		for(int i = 0; i < bnum; i++)

@@ -23,13 +23,30 @@ THIS SOFTWARE IS PROVIDED BY COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS OR IMPL
 
 extern "C" {
 
+#include <libavutil/avassert.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/timestamp.h>
+#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 
 }
+
+#ifdef LINUX
+#ifdef av_err2str
+#undef av_err2str
+#include <string>
+av_always_inline std::string av_err2string(int errnum) {
+    char str[AV_ERROR_MAX_STRING_SIZE];
+    return av_make_error_string(str, AV_ERROR_MAX_STRING_SIZE, errnum);
+}
+#define av_err2str(err) av_err2string(err).c_str()
+#endif  // av_err2str
+#endif
+
 #define STREAM_PIX_FMT    AV_PIX_FMT_YUV420P /* default pix_fmt */
 #define SCALE_FLAGS SWS_BICUBIC
 
@@ -47,36 +64,40 @@ protected:
 	// a wrapper around a single output AVStream
 	typedef struct OutputStream {
 		AVStream *st;
-		/* pts of the next frame that will be generated */
-		int64_t next_pts;
-		int samples_count;
-		AVFrame *frame;
-		AVFrame *tmp_frame;
-		float t, tincr, tincr2;
-		struct SwsContext *sws_ctx;
-		struct SwrContext *swr_ctx;
+    	AVCodecContext *enc;
+    	/* pts of the next frame that will be generated */
+    	int64_t next_pts;
+    	int samples_count;
+    	AVFrame *frame;
+    	AVFrame *tmp_frame;
+    	AVPacket *tmp_pkt;
+    	float t, tincr, tincr2;
+    	struct SwsContext *sws_ctx;
+    	struct SwrContext *swr_ctx;
 	} OutputStream;
 
 	//codec and format details.
 	OutputStream output_stream_;
-	AVOutputFormat *format_;
+	const AVOutputFormat *format_;
 	AVFormatContext *format_context_;
-	AVCodec *video_codec_;
+	const AVCodec *video_codec_;
 
 	//interior functions
 	bool add_stream();
 	bool open_video();
-	AVFrame * alloc_picture();
+	AVFrame * alloc_frame();
 	AVFrame * get_video_frame();
-	int write_frame(const AVRational *time_base, AVPacket *pkt);
+	AVFrame * get_video_frame(OutputStream *ost);
+	bool write_frame(AVFormatContext *fmt_ctx, AVCodecContext *c, AVStream *st, AVFrame *frame, AVPacket *pkt);
 	void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt);
 public:
     QVideoEncoder();
     virtual ~QVideoEncoder();
 	bool open(std::string, size_t w, size_t h, size_t fps, size_t bitrate);
 	void close();
-	void fill_yuv_image(int64_t frame_index);
+	void fill_yuv_image(AVFrame *pict, int frame_index, int width, int height);
 	bool write_video_frame(size_t frame_num);
+	bool write_video_frame(AVFormatContext *oc, OutputStream *ost);
 	bool set_frame_rgb_data(unsigned char * data);
 };
 

@@ -51,8 +51,7 @@ DEALINGS IN THE SOFTWARE.
 
 #include <assert.h>
 
-#ifdef _WIN32
-#else
+#ifdef _DARWIN
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #endif
@@ -86,10 +85,12 @@ Timer::Timer(unsigned int nBoxFilterSize) :
   _nStartCount(gcLargeIntZero)
 , _nStopCount(gcLargeIntZero)
 , _nFrequency(gcLargeIntZero) ,
-#elif _DARWIN
+#else
+#ifdef _DARWIN
   _nStartCount(0)
-, _nStopCount(0)
-, _nFrequency(0) ,
+, _nStopCount(0) ,
+#endif
+  _nFrequency(0) ,
 #endif
   _nLastPeriod(0.0)
 , _nSum(0.0)
@@ -100,6 +101,12 @@ Timer::Timer(unsigned int nBoxFilterSize) :
 {
 #ifdef _WIN32
 	QueryPerformanceFrequency(&_nFrequency);
+#endif
+#if !defined(_WIN32) && !defined(_DARWIN)
+	_nStartCount.tv_nsec = 0;
+	_nStartCount.tv_sec = 0;
+	_nStopCount.tv_nsec = 0;
+	_nStopCount.tv_sec = 0;
 #endif
 	// create array to store timing results
 	_aIntervals = new double[_nBoxFilterSize];
@@ -127,10 +134,12 @@ Timer::start()
 {
 	if (_bClockRuns) return;
 
-#ifdef _WIN32
+#if defined(_WIN32)
 	QueryPerformanceCounter(&_nStartCount);
-#elif _DARWIN
+#elif defined(_DARWIN)
     _nStartCount = monotonicTimeNanos();
+#else
+	clock_gettime(CLOCK_MONOTONIC, &_nStartCount);
 #endif
 	_bClockRuns = true;
 }
@@ -142,13 +151,16 @@ Timer::stop()
 {
 	if (!_bClockRuns) return;
 
-#ifdef _WIN32
+#if defined(_WIN32)
 	QueryPerformanceCounter(&_nStopCount);
 	_nLastPeriod = static_cast<double>(_nStopCount.QuadPart - _nStartCount.QuadPart) 
 		/ static_cast<double>(_nFrequency.QuadPart);
-#elif _DARWIN
+#elif defined(_DARWIN)
     _nStopCount = monotonicTimeNanos();
     _nLastPeriod = (double)(_nStopCount - _nStartCount) / 1.0e9;
+#else
+	clock_gettime(CLOCK_MONOTONIC, &_nStopCount);
+	_nLastPeriod = (double)(1000000000L * (_nStopCount.tv_sec - _nStartCount.tv_sec) + _nStopCount.tv_nsec - _nStartCount.tv_nsec) / 1.0e9;
 #endif
 	_nSum -= _aIntervals[_iFilterPosition];
 	_nSum += _nLastPeriod;
@@ -164,16 +176,21 @@ Timer::sample()
 {
 	if (!_bClockRuns) return;
 
-#ifdef _WIN32
+#if defined(WIN32)
 	LARGE_INTEGER nCurrentCount;
 	QueryPerformanceCounter(&nCurrentCount);
 	_nLastPeriod = static_cast<double>(nCurrentCount.QuadPart - _nStartCount.QuadPart) 
 		/ static_cast<double>(_nFrequency.QuadPart);
 	_nStartCount = nCurrentCount;
-#elif _DARWIN
+#elif defined(_DARWIN)
     uint64_t nCurrentCount = monotonicTimeNanos();
     _nLastPeriod = (double)(nCurrentCount - _nStartCount) / 1.0e9;
     _nStartCount = nCurrentCount;
+#else
+	timespec nCurrentCount;
+	clock_gettime(CLOCK_MONOTONIC, &nCurrentCount);
+	_nLastPeriod = (double)(1000000000L * (nCurrentCount.tv_sec - _nStartCount.tv_sec) + nCurrentCount.tv_nsec - _nStartCount.tv_nsec) / 1.0e9;
+	_nStartCount = nCurrentCount;
 #endif
 	_nSum -= _aIntervals[_iFilterPosition];
 	_nSum += _nLastPeriod;

@@ -44,11 +44,19 @@ DEALINGS IN THE SOFTWARE.
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 //#include <boost/process.hpp>
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-#ifdef __WXMAC__
-#include "MetalCompatibility.h"
+#if defined(_WIN32)
+  #include <Windows.h>
+#elif defined(__WXMAC__)
+  #include "MetalCompatibility.h"
+#elif defined(__WXGTK__)
+  #include <gtk/gtk.h>
+  #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+    #include <wayland-client.h>
+    #include "xdg-shell-client-protocol.h"
+	#include <gdk/gdkwayland.h>
+    #include <gdk/gdkx.h>
+    #include <X11/Xlib-xcb.h>
+  #endif
 #endif
 
 int VRenderView::m_id = 1;
@@ -350,7 +358,7 @@ void LMSeacher::OnEnterInSearcher(wxCommandEvent &event)
 
 void LMSeacher::OnKeyDown(wxKeyEvent& event)
 {
-	if(wxGetKeyState(WXK_DOWN))
+	if(event.GetKeyCode() == WXK_DOWN)
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -367,7 +375,7 @@ void LMSeacher::OnKeyDown(wxKeyEvent& event)
 
 		return;
 	}
-	if(wxGetKeyState(WXK_UP))
+	if(event.GetKeyCode() == WXK_UP)
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -384,7 +392,7 @@ void LMSeacher::OnKeyDown(wxKeyEvent& event)
 
 void LMSeacher::OnIdle(wxIdleEvent &event)
 {
-	if(wxGetKeyState(WXK_DOWN) && m_list->IsShown())
+	if(VRenderFrame::GetKeyState(WXK_DOWN) && m_list->IsShown())
 	{
 		wxTreeItemId sel_item = m_list->GetSelection();
 		if(sel_item.IsOk())
@@ -431,7 +439,11 @@ BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
 	EVT_PAINT(VRenderVulkanView::OnDraw)
 	EVT_SIZE(VRenderVulkanView::OnResize)
 	EVT_ERASE_BACKGROUND(VRenderVulkanView::OnErase)
+#if defined(__WXGTK__)
+	EVT_IDLE(VRenderVulkanView::OnIdle)
+#else
 	EVT_TIMER(ID_Timer ,VRenderVulkanView::OnIdle)
+#endif
 	EVT_MOUSE_EVENTS(VRenderVulkanView::OnMouse)
 	EVT_KEY_DOWN(VRenderVulkanView::OnKeyDown)
 END_EVENT_TABLE()
@@ -711,13 +723,181 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+#if defined(_WIN32) || defined(__WXMAC__)
+	InitVulkan();
+#endif
+
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (vr_frame)
+	{
+        m_selector.SetDataManager(vr_frame->GetDataManager());
+	}
+
+	goTimer = new nv::Timer(10);
+	m_sb_num = "50";
+
+#ifdef _WIN32
+	//tablet initialization
+	if (m_use_pres && LoadWintab())
+	{
+		gpWTInfoA(0, 0, NULL);
+		m_hTab = TabletInit((HWND)GetHWND());
+	}
+#endif
+
+	LoadDefaultBrushSettings();
+
+	//m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
+	//m_searcher->Hide();
+
+	m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxDefaultPosition, wxSize(1,1));
+
+	Thaw();
+	SetEvtHandlerEnabled(true);
+	
+	m_idleTimer = new wxTimer(this, ID_Timer);
+	m_idleTimer->Start(50);
+}
+
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+
+void VVVUpdatePosition(VRenderVulkanView* win)
+{
+    int x, y;
+    gdk_window_get_origin(win->GTKGetDrawingWindow(), &x, &y);
+    wl_subsurface_set_position(win->m_wlSubsurface, x, y);
+}
+
+extern "C"
+{
+
+	static void wl_global(void *data,
+						  struct wl_registry *wl_registry,
+						  uint32_t name,
+						  const char *interface,
+						  uint32_t)
+	{
+		VRenderVulkanView *vvv = static_cast<VRenderVulkanView *>(data);
+
+		if (!strcmp(interface, "wl_compositor"))
+			vvv->m_wlCompositor = (struct wl_compositor *)wl_registry_bind(wl_registry, name, &wl_compositor_interface, 3);
+		else if (!strcmp(interface, "wl_subcompositor"))
+			vvv->m_wlSubcompositor = (struct wl_subcompositor *)wl_registry_bind(wl_registry, name, &wl_subcompositor_interface, 1);
+	}
+
+	static void wl_global_remove(void *,
+								 struct wl_registry *,
+								 uint32_t)
+	{
+	}
+
+	static const struct wl_registry_listener wl_registry_listener = {
+		wl_global,
+		wl_global_remove};
+
+	static void wl_frame_callback_handler(void *data,
+										  struct wl_callback *,
+										  uint32_t)
+	{
+		VRenderVulkanView *vvv = static_cast<VRenderVulkanView *>(data);
+		vvv->m_readyToDraw = true;
+		g_clear_pointer(&vvv->m_wlFrameCallbackHandler, wl_callback_destroy);
+		vvv->SendSizeEvent();
+		gtk_widget_queue_draw(vvv->m_wxwindow);
+	}
+
+	static const struct wl_callback_listener wl_frame_listener = {
+		wl_frame_callback_handler};
+
+	static void gtk_vvv_size_callback(GtkWidget *widget,
+										   GtkAllocation *,
+										   VRenderVulkanView *win)
+	{
+		int scale = gtk_widget_get_scale_factor(widget);
+		//wl_egl_window_resize(win->m_wlEGLWindow, win->m_width * scale, win->m_height * scale, 0, 0);
+
+		VVVUpdatePosition(win);
+	}
+}
+#endif
+
+void VRenderVulkanView::InitVulkan()
+{
+	if (m_vulkan)
+		return;
+
+	SetEvtHandlerEnabled(false);
+	Freeze();
+
+#if defined(_WIN32)
 	m_vulkan = make_shared<VVulkan>();
 	m_vulkan->initVulkan();
-#if defined(_WIN32)
 	m_vulkan->setWindow((HWND)GetHWND(), GetModuleHandle(NULL));
-#elif (defined(__WXMAC__))
+#elif defined(__WXMAC__)
+	m_vulkan = make_shared<VVulkan>();
+	m_vulkan->initVulkan();
     makeViewMetalCompatible(GetHandle());
 	m_vulkan->setWindow(GetHandle());
+#elif defined(__WXGTK__)
+	GtkWidget* gtk_widget = GetHandle();
+	GdkWindow *gtk_window = gtk_widget_get_window(gtk_widget);
+	if (!gtk_window)
+	{
+		Thaw();
+		SetEvtHandlerEnabled(true);
+		return;
+	}
+	GdkDisplay *gtk_display = gdk_window_get_display(gtk_window);
+	m_vulkan = make_shared<VVulkan>();
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+	if (GDK_IS_WAYLAND_DISPLAY(gtk_display))
+	{
+		//m_readyToDraw = false;
+		m_vulkan->initVulkan(VVulkan::PLATFORM_WAYLAND);
+		wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
+		wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
+		m_vulkan->setWindow(wdisp, wsurf);
+
+		int w = gdk_window_get_width(gtk_window);
+        int h = gdk_window_get_height(gtk_window);
+        struct wl_display *display = gdk_wayland_display_get_wl_display(gdk_window_get_display(gtk_window));
+        struct wl_surface *surface = gdk_wayland_window_get_wl_surface(gtk_window);
+        struct wl_registry *registry = wl_display_get_registry(display);
+        wl_registry_add_listener(registry, &wl_registry_listener, this);
+        wl_display_roundtrip(display);
+        if ( !m_wlCompositor || !m_wlSubcompositor )
+        {
+            wxFAIL_MSG("Invalid Wayland compositor or subcompositor");
+            return;
+        }
+        m_wlSurface = wl_compositor_create_surface(m_wlCompositor);
+        m_wlRegion = wl_compositor_create_region(m_wlCompositor);
+        m_wlSubsurface = wl_subcompositor_get_subsurface(m_wlSubcompositor,
+                                                         m_wlSurface,
+                                                         surface);
+        wl_surface_set_input_region(m_wlSurface, m_wlRegion);
+        wl_subsurface_set_desync(m_wlSubsurface);
+        VVVUpdatePosition(this);
+		m_vulkan->setWindow(display, m_wlSurface);
+
+		m_wlFrameCallbackHandler = wl_surface_frame(surface);
+        wl_callback_add_listener(m_wlFrameCallbackHandler, &wl_frame_listener, this);
+        g_signal_connect(m_widget, "size-allocate", G_CALLBACK(gtk_vvv_size_callback), this);
+	}
+	else
+	{
+		m_vulkan->initVulkan(VVulkan::PLATFORM_X11);
+		Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
+    	xcb_window_t win = GDK_WINDOW_XID(gtk_window);
+		xcb_connection_t *c = xcb_connect(NULL, NULL);
+    	if (xcb_connection_has_error(c) > 0) {
+    	    printf("Cannot connect to XCB.\nExiting ...\n");
+    	    fflush(stdout);
+    	    return;
+    	}
+		m_vulkan->setWindow(win, c);
+	}
+#endif
 #endif
 	m_vulkan->prepare();
 
@@ -748,32 +928,10 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 		m_text_renderer = new TextRenderer(font_file.ToStdString(), m_v2drender);
 		if (setting_dlg)
 			m_text_renderer->SetSize(setting_dlg->GetTextSize());
-        
-        m_selector.SetDataManager(vr_frame->GetDataManager());
 	}
-
-	goTimer = new nv::Timer(10);
-	m_sb_num = "50";
-
-#ifdef _WIN32
-	//tablet initialization
-	if (m_use_pres && LoadWintab())
-	{
-		gpWTInfoA(0, 0, NULL);
-		m_hTab = TabletInit((HWND)GetHWND());
-	}
-#endif
-
-	LoadDefaultBrushSettings();
-
-	m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
-	m_searcher->Hide();
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
-	
-	m_idleTimer = new wxTimer(this, ID_Timer);
-	m_idleTimer->Start(50);
 }
 
 VRenderVulkanView::~VRenderVulkanView()
@@ -851,12 +1009,12 @@ void VRenderVulkanView::SetSearcherVisibility(bool visibility)
 	if(visibility)
 	{
 		m_draw_landmarks = true;
-		m_searcher->Show();
+		//m_searcher->Show();
 	}
 	else
 	{
 		m_draw_landmarks = false;
-		m_searcher->Hide();
+		//m_searcher->Hide();
 	}
 }
 
@@ -922,7 +1080,8 @@ void VRenderVulkanView::Resize(bool refresh)
 
 	if (refresh)
 	{
-		m_vulkan->setSize(size.GetWidth(), size.GetHeight());
+		if (m_vulkan)
+			m_vulkan->setSize(size.GetWidth(), size.GetHeight());
 		wxRect refreshRect(size);
 		RefreshRect(refreshRect, false);
 		RefreshGL();
@@ -951,7 +1110,8 @@ void VRenderVulkanView::Init()
 void VRenderVulkanView::Clear()
 {
 	m_loader.RemoveAllLoadedData();
-	m_vulkan->clearTexPools();
+	if (m_vulkan)
+		m_vulkan->clearTexPools();
 
 	//delete groups
 	for (int i=0; i<(int)m_layer_list.size(); i++)
@@ -1606,7 +1766,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		params2.loc[1] = glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f );
 		params2.loc[2] = glm::vec4( 0.0f, 0.0f, 0.0f, 0.0f );
 		params2.clear = m_frame_clear;
-		params2.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+		params2.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 		m_frame_clear = false;
 		
 		if (!current_fbo->renderPass)
@@ -1631,7 +1791,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		params.loc[1] = glm::vec4( 1.0f, 1.0f, 1.0f, 1.0f );
 		params.loc[2] = glm::vec4( 0.0f, 0.0f, 0.0f, 0.0f );
 		params.clear = m_frame_clear;
-		params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+		params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 		m_frame_clear = false;
 		
 		if (!current_fbo->renderPass)
@@ -2650,7 +2810,8 @@ void VRenderVulkanView::RandomizeColor()
 void VRenderVulkanView::ClearVolList()
 {
 	m_loader.RemoveAllLoadedData();
-	m_vulkan->clearTexPools();
+	if (m_vulkan)
+		m_vulkan->clearTexPools();
 	m_vd_pop_list.clear();
 }
 
@@ -3406,12 +3567,12 @@ void VRenderVulkanView::LoadDefaultBrushSettings()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_brush_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_brush_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
 #endif
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
@@ -4224,7 +4385,7 @@ void VRenderVulkanView::DrawFinalBuffer(bool clear)
 	params.loc[2] = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
 	params.clear = clear;
-	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 0.0f };
+	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 	m_frame_clear = false;
 	
 	if (!current_fbo->renderPass)
@@ -5988,7 +6149,7 @@ void VRenderVulkanView::UpdateBrushState()
 
 	if (m_int_mode!=2 && m_int_mode!=7)
 	{
-		if (wxGetKeyState(WXK_SHIFT))
+		if (VRenderFrame::GetKeyState(WXK_SHIFT))
 		{
 			SetBrush(2);
 			if (tree_panel)
@@ -5998,7 +6159,7 @@ void VRenderVulkanView::UpdateBrushState()
 			m_clear_paint = true;
 			RefreshGLOverlays();
 		}
-		else if (wxGetKeyState(wxKeyCode('Z')))
+		else if (VRenderFrame::GetKeyState(wxKeyCode('Z')))
 		{
 			SetBrush(4);
 			if (tree_panel)
@@ -6008,7 +6169,7 @@ void VRenderVulkanView::UpdateBrushState()
 			m_clear_paint = true;
 			RefreshGLOverlays();
 		}
-		else if (wxGetKeyState(wxKeyCode('X')))
+		else if (VRenderFrame::GetKeyState(wxKeyCode('X')))
 		{
 			SetBrush(3);
 			if (tree_panel)
@@ -6023,7 +6184,7 @@ void VRenderVulkanView::UpdateBrushState()
 	{
 		if (m_brush_state)
 		{
-			if (wxGetKeyState(WXK_SHIFT))
+			if (VRenderFrame::GetKeyState(WXK_SHIFT))
 			{
 				m_brush_state = 0;
 				SetBrush(2);
@@ -6034,7 +6195,7 @@ void VRenderVulkanView::UpdateBrushState()
 				m_clear_paint = true;
 				RefreshGLOverlays();
 			}
-			else if (wxGetKeyState(wxKeyCode('Z')))
+			else if (VRenderFrame::GetKeyState(wxKeyCode('Z')))
 			{
 				m_brush_state = 0;
 				SetBrush(4);
@@ -6045,7 +6206,7 @@ void VRenderVulkanView::UpdateBrushState()
 				m_clear_paint = true;
 				RefreshGLOverlays();
 			}
-			else if (wxGetKeyState(wxKeyCode('X')))
+			else if (VRenderFrame::GetKeyState(wxKeyCode('X')))
 			{
 				m_brush_state = 0;
 				SetBrush(3);
@@ -6062,9 +6223,9 @@ void VRenderVulkanView::UpdateBrushState()
 				RefreshGLOverlays();
 			}
 		}
-		else if (!wxGetKeyState(WXK_SHIFT) &&
-			!wxGetKeyState(wxKeyCode('Z')) &&
-			!wxGetKeyState(wxKeyCode('X')))
+		else if (!VRenderFrame::GetKeyState(WXK_SHIFT) &&
+			!VRenderFrame::GetKeyState(wxKeyCode('Z')) &&
+			!VRenderFrame::GetKeyState(wxKeyCode('X')))
 		{
 			m_clear_paint = true;
 
@@ -6500,7 +6661,11 @@ bool VRenderVulkanView::SelLabelSegVolumeMax(int mode, vector<VolumeData*> ref)
 	return rval;
 }
 
+#if defined(__WXGTK__)
+void VRenderVulkanView::OnIdle(wxIdleEvent& event)
+#else
 void VRenderVulkanView::OnIdle(wxTimerEvent& event)
+#endif
 {
 	bool refresh = m_refresh | m_refresh_start_loop;
 	bool ref_stat = false;
@@ -6559,8 +6724,8 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 		//move view
 		//left
 		if (!m_move_left &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_LEFT))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_LEFT))
 		{
 			m_move_left = true;
 
@@ -6575,13 +6740,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_left &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_LEFT)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_LEFT)))
 			m_move_left = false;
 		//right
 		if (!m_move_right &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_RIGHT))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_RIGHT))
 		{
 			m_move_right = true;
 
@@ -6596,13 +6761,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_right &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_RIGHT)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_RIGHT)))
 			m_move_right = false;
 		//up
 		if (!m_move_up &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_UP))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_UP))
 		{
 			m_move_up = true;
 
@@ -6616,13 +6781,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_up &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_UP)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_UP)))
 			m_move_up = false;
 		//down
 		if (!m_move_down &&
-			wxGetKeyState(WXK_CONTROL) &&
-			wxGetKeyState(WXK_DOWN))
+			VRenderFrame::GetKeyState(WXK_CONTROL) &&
+			VRenderFrame::GetKeyState(WXK_DOWN))
 		{
 			m_move_down = true;
 
@@ -6636,15 +6801,15 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_move_down &&
-			(!wxGetKeyState(WXK_CONTROL) ||
-			!wxGetKeyState(WXK_DOWN)))
+			(!VRenderFrame::GetKeyState(WXK_CONTROL) ||
+			!VRenderFrame::GetKeyState(WXK_DOWN)))
 			m_move_down = false;
 
 		//move time sequence
 		//forward
 		if (!m_tseq_forward &&
-			wxGetKeyState(wxKeyCode('d')) ||
-			wxGetKeyState(WXK_SPACE))
+			VRenderFrame::GetKeyState(wxKeyCode('d')) ||
+			VRenderFrame::GetKeyState(WXK_SPACE))
 		{
 			m_tseq_forward = true;
 			if (frame && frame->GetMovieView())
@@ -6652,12 +6817,12 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_tseq_forward &&
-			!wxGetKeyState(wxKeyCode('d')) &&
-			!wxGetKeyState(WXK_SPACE))
+			!VRenderFrame::GetKeyState(wxKeyCode('d')) &&
+			!VRenderFrame::GetKeyState(WXK_SPACE))
 			m_tseq_forward = false;
 		//backforward
 		if (!m_tseq_backward &&
-			wxGetKeyState(wxKeyCode('a')))
+			VRenderFrame::GetKeyState(wxKeyCode('a')))
 		{
 			m_tseq_backward = true;
 			if (frame && frame->GetMovieView())
@@ -6665,13 +6830,13 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_tseq_backward &&
-			!wxGetKeyState(wxKeyCode('a')))
+			!VRenderFrame::GetKeyState(wxKeyCode('a')))
 			m_tseq_backward = false;
 
 		//move clip
 		//up
 		if (!m_clip_up &&
-			wxGetKeyState(wxKeyCode('s')))
+			VRenderFrame::GetKeyState(wxKeyCode('s')))
 		{
 			m_clip_up = true;
 			if (frame && frame->GetClippingView())
@@ -6679,11 +6844,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_clip_up &&
-			!wxGetKeyState(wxKeyCode('s')))
+			!VRenderFrame::GetKeyState(wxKeyCode('s')))
 			m_clip_up = false;
 		//down
 		if (!m_clip_down &&
-			wxGetKeyState(wxKeyCode('w')))
+			VRenderFrame::GetKeyState(wxKeyCode('w')))
 		{
 			m_clip_down = true;
 			if (frame && frame->GetClippingView())
@@ -6691,19 +6856,19 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_clip_down &&
-			!wxGetKeyState(wxKeyCode('w')))
+			!VRenderFrame::GetKeyState(wxKeyCode('w')))
 			m_clip_down = false;
 
 		//draw_mask
         if (!m_force_hide_mask)
         {
-            if (wxGetKeyState(wxKeyCode('V')) &&
+            if (VRenderFrame::GetKeyState(wxKeyCode('V')) &&
                 m_draw_mask)
             {
                 m_draw_mask = false;
                 refresh = true;
             }
-            if (!wxGetKeyState(wxKeyCode('V')) &&
+            if (!VRenderFrame::GetKeyState(wxKeyCode('V')) &&
                 !m_draw_mask)
             {
                 m_draw_mask = true;
@@ -6726,7 +6891,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 	{
 		//cell full
 		if (!m_cell_full &&
-			wxGetKeyState(wxKeyCode('f')))
+			VRenderFrame::GetKeyState(wxKeyCode('f')))
 		{
 			m_cell_full = true;
 			if (frame && frame->GetTraceDlg())
@@ -6734,11 +6899,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_full &&
-			!wxGetKeyState(wxKeyCode('f')))
+			!VRenderFrame::GetKeyState(wxKeyCode('f')))
 			m_cell_full = false;
 		//cell link
 		if (!m_cell_link &&
-			wxGetKeyState(wxKeyCode('l')))
+			VRenderFrame::GetKeyState(wxKeyCode('l')))
 		{
 			m_cell_link = true;
 			if (frame && frame->GetTraceDlg())
@@ -6746,11 +6911,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_link &&
-			!wxGetKeyState(wxKeyCode('l')))
+			!VRenderFrame::GetKeyState(wxKeyCode('l')))
 			m_cell_link = false;
 		//new cell id
 /*		if (!m_cell_new_id &&
-			wxGetKeyState(wxKeyCode('n')))
+			VRenderFrame::GetKeyState(wxKeyCode('n')))
 		{
 			m_cell_new_id = true;
 			if (frame && frame->GetTraceDlg())
@@ -6758,10 +6923,10 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			refresh = true;
 		}
 		if (m_cell_new_id &&
-			!wxGetKeyState(wxKeyCode('n')))
+			!VRenderFrame::GetKeyState(wxKeyCode('n')))
 			m_cell_new_id = false;
 */		//clear
-/*		if (wxGetKeyState(wxKeyCode('c')) &&
+/*		if (VRenderFrame::GetKeyState(wxKeyCode('c')) &&
 			!m_clear_mask)
 		{
 			if (frame && frame->GetTraceDlg())
@@ -6769,11 +6934,11 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			m_clear_mask = true;
 			refresh = true;
 		}
-		if (!wxGetKeyState(wxKeyCode('c')) &&
+		if (!VRenderFrame::GetKeyState(wxKeyCode('c')) &&
 			m_clear_mask)
 			m_clear_mask = false;
 */		//full screen
-		if (wxGetKeyState(WXK_ESCAPE))
+		if (VRenderFrame::GetKeyState(WXK_ESCAPE))
 		{
 			/*			if (GetParent() == m_vrv->m_full_frame)
 			{
@@ -6790,7 +6955,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			}
 			*/		}
 
-		if (wxGetKeyState(WXK_ALT) && wxGetKeyState(wxKeyCode('V')) && !m_key_lock)
+		if (VRenderFrame::GetKeyState(WXK_ALT) && VRenderFrame::GetKeyState(wxKeyCode('V')) && !m_key_lock)
 		{
 			if(m_cur_vol && m_cur_vol->isBrxml())
 			{
@@ -6799,14 +6964,14 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			}
 		}
         
-        if (wxGetKeyState(wxKeyCode('Z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_undo_keydown && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('Z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_undo_keydown && !m_key_lock)
         {
             VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
             if (frame && vr_frame->GetBrushToolDlg())
                 vr_frame->GetBrushToolDlg()->BrushUndo();
             m_undo_keydown = true;
         }
-        if (wxGetKeyState(wxKeyCode('Y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_redo_keydown && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('Y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_redo_keydown && !m_key_lock)
         {
             VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
             if (frame && vr_frame->GetBrushToolDlg())
@@ -6814,24 +6979,24 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
             m_redo_keydown = true;
         }
         
-        if (wxGetKeyState(wxKeyCode('B')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT) && !m_key_lock)
+        if (VRenderFrame::GetKeyState(wxKeyCode('B')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT) && !m_key_lock)
         {
             WarpCurrentVolume();
         }
 	}
     
-    if (!(wxGetKeyState(wxKeyCode('Z')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT)))
+    if (!(VRenderFrame::GetKeyState(wxKeyCode('Z')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT)))
     {
         m_undo_keydown = false;
     }
-    if (!(wxGetKeyState(wxKeyCode('Y')) && wxGetKeyState(WXK_CONTROL) && !wxGetKeyState(WXK_SHIFT) && !wxGetKeyState(WXK_ALT)))
+    if (!(VRenderFrame::GetKeyState(wxKeyCode('Y')) && VRenderFrame::GetKeyState(WXK_CONTROL) && !VRenderFrame::GetKeyState(WXK_SHIFT) && !VRenderFrame::GetKeyState(WXK_ALT)))
     {
         m_redo_keydown = false;
     }
 
 	if (window && !editting && this == cur_glview && !m_key_lock && m_tile_rendering)
 	{
-		if (wxGetKeyState(WXK_ESCAPE))
+		if (VRenderFrame::GetKeyState(WXK_ESCAPE))
 		{
 			EndTileRendering();
 		}
@@ -7361,7 +7526,7 @@ void VRenderVulkanView::SetParams(double t)
 	Interpolator *interpolator = vr_frame->GetInterpolator();
 	if(!interpolator)
 		return;
-	KeyCode keycode;
+	FLKeyCode keycode;
 	keycode.l0 = 1;
 	keycode.l0_name = m_vrv->GetName();
     
@@ -8561,15 +8726,6 @@ void VRenderVulkanView::OnDraw(wxPaintEvent& event)
 
 void VRenderVulkanView::UpdateScreen()
 {
-	if (m_abort)
-	{
-		m_abort = false;
-		return;
-	}
-
-	Init();
-	//wxPaintDC dc(this);
-
 	m_nx = GetSize().x;
 	m_ny = GetSize().y;
 	if (m_tile_rendering) {
@@ -8584,6 +8740,21 @@ void VRenderVulkanView::UpdateScreen()
 	{
 		return;
 	}
+	
+	if(!m_vulkan)
+	{
+		InitVulkan();
+		return;
+	}
+
+	if (m_abort)
+	{
+		m_abort = false;
+		return;
+	}
+
+	Init();
+	//wxPaintDC dc(this);
     
     SetEvtHandlerEnabled(false);
 
@@ -11317,7 +11488,7 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 			Vulkan2dRender::V2DRenderParams params;
 			params.matrix[0] = matrix;
 			params.clear = m_frame_clear;
-			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 			m_frame_clear = false;
 			params.obj = &m_clip_vobj;
 
@@ -11709,7 +11880,7 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 			Vulkan2dRender::V2DRenderParams params;
 			params.matrix[0] = matrix;
 			params.clear = m_frame_clear;
-			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+			params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 			m_frame_clear = false;
 			params.obj = &m_clip_vobj;
 
@@ -12775,7 +12946,7 @@ void VRenderVulkanView::DrawGradBg()
 		);
 	params.matrix[0] = proj_mat;
 	params.clear = m_frame_clear;
-	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b() };
+	params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 	m_frame_clear = false;
 
 	params.obj = &m_grad_vobj;
@@ -14731,6 +14902,12 @@ void VRenderVulkanView::RefreshGL(bool erase, bool start_loop)
 		StartLoopUpdate();
 	SetSortBricks();
 	Refresh(erase);
+
+	if (m_vulkan && (m_vulkan->width != m_vulkan->destWidth || m_vulkan->height != m_vulkan->destHeight))
+	{
+		m_vulkan->setSize(GetSize().GetWidth(), GetSize().GetHeight());
+		m_refresh = true;
+	}
 }
 
 //new function to refresh
@@ -14742,7 +14919,12 @@ void VRenderVulkanView::RefreshGLOverlays(bool erase)
 	m_draw_overlays_only = true;
 	SetSortBricks();
 	Refresh(erase);
-
+	
+	if (m_vulkan && (m_vulkan->width != m_vulkan->destWidth || m_vulkan->height != m_vulkan->destHeight))
+	{
+		m_vulkan->setSize(GetSize().GetWidth(), GetSize().GetHeight());
+		m_refresh = true;
+	}
 }
 
 //#ifdef __WXMAC__
@@ -16814,6 +16996,10 @@ return wxWindow::MSWWindowProc(message, wParam, lParam);
 
 void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 {
+#ifdef _DEBUG
+	cout << "OnMouse" << endl;
+#endif
+
 	wxWindow *window = wxWindow::FindFocus();
 	//	if (window &&
 	//		window->GetClassInfo()->IsKindOf(CLASSINFO(wxTextCtrl)))
@@ -16868,7 +17054,9 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	//mouse button down operations
 	if (event.LeftDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		if (m_int_mode == 6)
 			m_editing_ruler_point = GetEditingRulerPoint(event.GetX(), event.GetY());
@@ -16905,7 +17093,9 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	}
 	if (event.RightDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();
@@ -16913,7 +17103,9 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 	}
 	if (event.MiddleDown())
 	{
-		m_searcher->KillFocus();
+		//m_searcher->KillFocus();
+		SetKeyLock(false);
+		m_dummy->SetFocus();
 
 		old_mouse_X = event.GetX();
 		old_mouse_Y = event.GetY();
@@ -17623,7 +17815,7 @@ void VRenderVulkanView::SetManipKey(double t, int interpolation, const Point *vi
 
 	ClippingView* clip_view = vr_frame->GetClippingView();
 
-	KeyCode keycode;
+	FLKeyCode keycode;
 	FlKeyDouble* flkey = 0;
 	FlKeyQuaternion* flkeyQ = 0;
 	FlKeyBoolean* flkeyB = 0;
@@ -17784,7 +17976,7 @@ void VRenderVulkanView::SetManipParams(double t)
 	if (!vr_frame)
 		return;
 	ClippingView* clip_view = vr_frame->GetClippingView();
-	KeyCode keycode;
+	FLKeyCode keycode;
 	keycode.l0 = 1;
 	keycode.l0_name = m_vrv->GetName();
     
@@ -18701,8 +18893,13 @@ BEGIN_EVENT_TABLE(VRenderView, wxPanel)
 	EVT_COMMAND_SCROLL(ID_ScaleFactorSldr, VRenderView::OnScaleFactorChange)
 	EVT_TEXT(ID_ScaleFactorText, VRenderView::OnScaleFactorEdit)
 	EVT_BUTTON(ID_ScaleResetBtn, VRenderView::OnScaleReset)
+#if defined(__WXGTK__)
+	EVT_SPIN_UP(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinUp)
+	EVT_SPIN_DOWN(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinDown)
+#else
 	EVT_SPIN_UP(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinDown)
 	EVT_SPIN_DOWN(ID_ScaleFactorSpin, VRenderView::OnScaleFactorSpinUp)
+#endif
 	//bar bottom
 	EVT_CHECKBOX(ID_RotLinkChk, VRenderView::OnRotLink)
 	EVT_BUTTON(ID_RotResetBtn, VRenderView::OnRotReset)
@@ -18714,12 +18911,21 @@ BEGIN_EVENT_TABLE(VRenderView, wxPanel)
 	EVT_COMMAND_SCROLL(ID_ZRotSldr, VRenderView::OnZRotScroll)
 	EVT_CHECKBOX(ID_RotLockChk, VRenderView::OnRotLockCheck)
 	//spin buttons
+#if defined(__WXGTK__)
+	EVT_SPIN_UP(ID_XRotSpin, VRenderView::OnXRotSpinDown)
+	EVT_SPIN_DOWN(ID_XRotSpin, VRenderView::OnXRotSpinUp)
+	EVT_SPIN_UP(ID_YRotSpin, VRenderView::OnYRotSpinDown)
+	EVT_SPIN_DOWN(ID_YRotSpin, VRenderView::OnYRotSpinUp)
+	EVT_SPIN_UP(ID_ZRotSpin, VRenderView::OnZRotSpinDown)
+	EVT_SPIN_DOWN(ID_ZRotSpin, VRenderView::OnZRotSpinUp)
+#else
 	EVT_SPIN_UP(ID_XRotSpin, VRenderView::OnXRotSpinUp)
 	EVT_SPIN_DOWN(ID_XRotSpin, VRenderView::OnXRotSpinDown)
 	EVT_SPIN_UP(ID_YRotSpin, VRenderView::OnYRotSpinUp)
 	EVT_SPIN_DOWN(ID_YRotSpin, VRenderView::OnYRotSpinDown)
 	EVT_SPIN_UP(ID_ZRotSpin, VRenderView::OnZRotSpinUp)
 	EVT_SPIN_DOWN(ID_ZRotSpin, VRenderView::OnZRotSpinDown)
+#endif
 	//reset
 	EVT_BUTTON(ID_DefaultBtn, VRenderView::OnSaveDefault)
 	EVT_TIMER(ID_Timer, VRenderView::OnAovSldrIdle)
@@ -18805,6 +19011,18 @@ void VRenderView::CreateBar()
 	wxBoxSizer* sizer_m = new wxBoxSizer(wxHORIZONTAL);
 	wxStaticText *st1, *st2, *st3, *st4;
 
+#if defined(__WXGTK__)
+	int top_h = 32;
+	int spin_right_w = 70;
+	int spin_w = 70;
+	int combo_w = 140;
+#else
+	int top_h = 24;
+	int spin_right_w = 40;
+	int spin_w = 20;
+	int combo_w = 100;
+#endif
+
 	//bar top///////////////////////////////////////////////////
 	wxBoxSizer* sizer_h_1 = new wxBoxSizer(wxHORIZONTAL);
 	m_volume_seq_rd = new wxRadioButton(this, ID_VolumeSeqRd, "Layered",
@@ -18829,28 +19047,28 @@ void VRenderView::CreateBar()
 		break;
 	}
 	m_capture_btn = new wxButton(this, ID_CaptureBtn, "Capture",
-		wxDefaultPosition, wxSize(80, 20));
+		wxDefaultPosition, wxSize(80, top_h));
 	st1 = new wxStaticText(this, 0, "Background:");
 	m_bg_color_picker = new wxColourPickerCtrl(this, ID_BgColorPicker, *wxBLACK,
 		wxDefaultPosition, wxDefaultSize/*wxSize(40, 20)*/);
 	m_cam_ctr_chk = new wxCheckBox(this, ID_CamCtrChk, "Center",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_cam_ctr_chk->SetValue(false);
 	m_fps_chk = new wxCheckBox(this, ID_FpsChk, "Info.",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_fps_chk->SetValue(false);
     m_legend_chk = new wxCheckBox(this, ID_LegendChk, "",
-                                  wxDefaultPosition, wxSize(-1, 20));
+                                  wxDefaultPosition, wxSize(-1, top_h));
     m_legend_chk->SetValue(true);
     m_legend_chk->Hide();
     m_legend_btn = new wxButton(this, ID_LegendBtn, "Legend",
-                                 wxDefaultPosition, wxSize(60, 20));
+                                 wxDefaultPosition, wxSize(60, top_h));
     m_legend_list = NULL;
 	m_intp_chk = new wxCheckBox(this, ID_IntpChk, "Intrp.",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_intp_chk->SetValue(true);
 	m_search_chk = new wxCheckBox(this, ID_SearchChk, "Search",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	m_search_chk->SetValue(false);
 	m_search_chk->Hide();
 #ifndef WITH_DATABASE
@@ -18859,28 +19077,28 @@ void VRenderView::CreateBar()
 	//angle of view
 	st2 = new wxStaticText(this, 0, "V. AOV:");
 	m_aov_sldr = new wxSlider(this, ID_AovSldr, 45, 10, 100,
-		wxDefaultPosition, wxSize(120, 20), wxSL_HORIZONTAL);
+		wxDefaultPosition, wxSize(120, top_h), wxSL_HORIZONTAL);
 	m_aov_sldr->SetValue(GetPersp()?GetAov():10);
 	m_aov_text = new wxTextCtrl(this, ID_AovText, "",
-		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(60, top_h), 0, vald_int);
 	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):"Ortho");
 	m_free_chk = new wxCheckBox(this, ID_FreeChk, "FreeFly",
-		wxDefaultPosition, wxSize(-1, 20));
+		wxDefaultPosition, wxSize(-1, top_h));
 	if (GetFree())
 		m_free_chk->SetValue(true);
 	else
 		m_free_chk->SetValue(false);
 
 	m_ppi_sldr = new wxSlider(this, ID_PPISldr, 20, 5, 100,
-		wxDefaultPosition, wxSize(120, 20), wxSL_HORIZONTAL);
+		wxDefaultPosition, wxSize(120, top_h), wxSL_HORIZONTAL);
 	m_ppi_sldr->Hide();
 	m_ppi_text = new wxTextCtrl(this, ID_PPIText, "20",
-		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
+		wxDefaultPosition, wxSize(40, top_h), 0, vald_int);
 	m_ppi_text->Hide();
 
     m_res_mode_text = new wxStaticText(this, 0, "Quality:");
 	m_res_mode_combo = new wxComboBox(this, ID_ResCombo, "",
-		wxDefaultPosition, wxSize(100, 24), 0, NULL, wxCB_READONLY);
+		wxDefaultPosition, wxSize(combo_w, top_h), 0, NULL, wxCB_READONLY);
 	vector<string>mode_list;
 	mode_list.push_back("Max");
 	mode_list.push_back("Best(x1)");
@@ -18943,7 +19161,7 @@ void VRenderView::CreateBar()
 	sizer_v_3->Add(m_depth_atten_chk, 0, wxALIGN_CENTER);
 	sizer_v_3->Add(m_depth_atten_factor_sldr, 1, wxALIGN_CENTER);
 	sizer_v_3->Add(m_depth_atten_reset_btn, 0, wxALIGN_CENTER);
-	sizer_v_3->Add(m_depth_atten_factor_text, 0, wxALIGN_CENTER);
+	sizer_v_3->Add(m_depth_atten_factor_text, 0, wxEXPAND);
 
 	//bar right///////////////////////////////////////////////////
 	wxBoxSizer* sizer_v_4 = new wxBoxSizer(wxVERTICAL);
@@ -18957,8 +19175,8 @@ void VRenderView::CreateBar()
 	m_scale_factor_text = new wxTextCtrl(this, ID_ScaleFactorText, "100",
 		wxDefaultPosition, wxSize(40, 20), 0, vald_int);
 	m_scale_factor_spin = new wxSpinButton(this, ID_ScaleFactorSpin,
-		wxDefaultPosition, wxSize(40, 20));
-    m_scale_factor_spin->SetRange(0, 1000);
+		wxDefaultPosition, wxSize(spin_right_w, 25), wxSP_VERTICAL|wxSP_ARROW_KEYS);
+    m_scale_factor_spin->SetRange(-INT_MAX, INT_MAX);
     m_scale_factor_spin->SetValue(100);
 	sizer_v_4->Add(5, 10, 0);
 	sizer_v_4->Add(st1, 0, wxALIGN_CENTER);
@@ -18966,7 +19184,7 @@ void VRenderView::CreateBar()
 	sizer_v_4->Add(m_scale_factor_sldr, 1, wxALIGN_CENTER);
 	sizer_v_4->Add(m_scale_factor_spin, 0, wxALIGN_CENTER);
 	sizer_v_4->Add(m_scale_reset_btn, 0, wxALIGN_CENTER);
-	sizer_v_4->Add(m_scale_factor_text, 0, wxALIGN_CENTER);
+	sizer_v_4->Add(m_scale_factor_text, 0, wxEXPAND);
 
 	//middle sizer
 	sizer_m->Add(sizer_v_3, 0, wxEXPAND);
@@ -18984,8 +19202,8 @@ void VRenderView::CreateBar()
 	m_x_rot_text = new wxTextCtrl(this, ID_XRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_x_rot_spin = new wxSpinButton(this, ID_XRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_x_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_x_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_x_rot_spin->SetValue(180);
 	st2 = new wxStaticText(this, 0, "Y:");
 	m_y_rot_sldr = new wxSlider(this, ID_YRotSldr, 0, 0, 360,
@@ -18993,8 +19211,8 @@ void VRenderView::CreateBar()
 	m_y_rot_text = new wxTextCtrl(this, ID_YRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_y_rot_spin = new wxSpinButton(this, ID_YRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_y_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_y_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_y_rot_spin->SetValue(180);
 	st3 = new wxStaticText(this, 0, "Z:");
 	m_z_rot_sldr = new wxSlider(this, ID_ZRotSldr, 0, 0, 360,
@@ -19002,8 +19220,8 @@ void VRenderView::CreateBar()
 	m_z_rot_text = new wxTextCtrl(this, ID_ZRotText, "0.0",
 		wxDefaultPosition, wxSize(60,20), 0, vald_fp1);
 	m_z_rot_spin = new wxSpinButton(this, ID_ZRotSpin,
-		wxDefaultPosition, wxSize(20, 20), wxSP_HORIZONTAL);
-    m_z_rot_spin->SetRange(0, 360);
+		wxDefaultPosition, wxSize(spin_w, 20), wxSP_HORIZONTAL);
+    m_z_rot_spin->SetRange(-INT_MAX, INT_MAX);
     m_z_rot_spin->SetValue(180);
 	m_rot_lock_chk = new wxCheckBox(this, ID_RotLockChk, "45 Increments");
     m_center_btn = new wxButton(this, ID_CenterBtn, "Reset Transl.",
@@ -20208,7 +20426,7 @@ void VRenderView::OnScaleFactorSpinUp(wxSpinEvent& event)
 	val++;
 	str_val = wxString::Format("%ld", val);
 	m_scale_factor_text->SetValue(str_val);
-    m_scale_factor_spin->SetValue(100);
+    //m_scale_factor_spin->SetValue(100);
 }
 
 void VRenderView::OnScaleFactorSpinDown(wxSpinEvent& event)
@@ -20216,10 +20434,11 @@ void VRenderView::OnScaleFactorSpinDown(wxSpinEvent& event)
 	wxString str_val = m_scale_factor_text->GetValue();
 	long val;
 	str_val.ToLong(&val);
-	val--;
+	if (val > 1) val--;
+	
 	str_val = wxString::Format("%ld", val);
 	m_scale_factor_text->SetValue(str_val);
-    m_scale_factor_spin->SetValue(100);
+    //m_scale_factor_spin->SetValue(100);
 }
 
 void VRenderView::OnScaleReset(wxCommandEvent &event)
@@ -20378,7 +20597,7 @@ void VRenderView::OnXRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_x_rot_text->SetValue(str);
-    m_x_rot_spin->SetValue(180);
+    //m_x_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnXRotSpinUp(wxSpinEvent& event)
@@ -20388,7 +20607,7 @@ void VRenderView::OnXRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_x_rot_text->SetValue(str);
-    m_x_rot_spin->SetValue(180);
+    //m_x_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnYRotSpinDown(wxSpinEvent& event)
@@ -20398,7 +20617,7 @@ void VRenderView::OnYRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_y_rot_text->SetValue(str);
-    m_y_rot_spin->SetValue(180);
+    //m_y_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnYRotSpinUp(wxSpinEvent& event)
@@ -20408,7 +20627,7 @@ void VRenderView::OnYRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_y_rot_text->SetValue(str);
-    m_y_rot_spin->SetValue(180);
+    //m_y_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnZRotSpinDown(wxSpinEvent& event)
@@ -20418,7 +20637,7 @@ void VRenderView::OnZRotSpinDown(wxSpinEvent& event)
 	value = value>360?value-360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_z_rot_text->SetValue(str);
-    m_z_rot_spin->SetValue(180);
+    //m_z_rot_spin->SetValue(180);
 }
 
 void VRenderView::OnZRotSpinUp(wxSpinEvent& event)
@@ -20428,7 +20647,7 @@ void VRenderView::OnZRotSpinUp(wxSpinEvent& event)
 	value = value<0?value+360:value;
 	wxString str = wxString::Format("%.1f", double(value));
 	m_z_rot_text->SetValue(str);
-    m_z_rot_spin->SetValue(180);
+    //m_z_rot_spin->SetValue(180);
 }
 
 //top
@@ -20736,13 +20955,13 @@ void VRenderView::SaveDefault(unsigned int mask)
 
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_view_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + "\\default_view_settings.dft";
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/default_view_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
+	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
 	if (!wxFileExists(dft) && wxFileExists(dft2))
 		dft = dft2;
-#else
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
 #endif
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
@@ -20759,12 +20978,12 @@ void VRenderView::LoadSettings()
 {
 	wxString expath = wxStandardPaths::Get().GetExecutablePath();
 	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-	wxString dft = expath + "\\default_view_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + "\\default_view_settings.dft";
-#else
+#ifdef _DARWIN
 	wxString dft = expath + "/../Resources/default_view_settings.dft";
+#else
+	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
 #endif
 
 	wxFileInputStream is(dft);
@@ -20834,9 +21053,9 @@ void VRenderView::LoadSettings()
 	}
 	if (fconfig.Read("search_chk", &bVal))
 	{
-		m_search_chk->SetValue(bVal);
-		if (bVal) m_glview->m_searcher->Show();
-		else m_glview->m_searcher->Hide();
+		//m_search_chk->SetValue(bVal);
+		//if (bVal) m_glview->m_searcher->Show();
+		//else m_glview->m_searcher->Hide();
 	}
 	if (fconfig.Read("mouse_focus", &bVal))
 	{

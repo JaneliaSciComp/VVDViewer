@@ -303,6 +303,18 @@ private:
     
     double m_linked_plane_params[6];
 
+#if defined(__WXGTK__)
+	static constexpr int spin_w = 70;
+	static constexpr int disp_comb_w = 150;
+	static constexpr int reset_button_w = 170;
+	static constexpr int sldr_w = 33;
+#else
+	static constexpr int spin_w = 30;
+	static constexpr int disp_comb_w = 115;
+	static constexpr int reset_button_w = 150;
+	static constexpr int sldr_w = 20;
+#endif
+
 private:
 	void GetSettings();
 	

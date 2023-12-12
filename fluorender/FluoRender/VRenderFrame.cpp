@@ -50,6 +50,14 @@ DEALINGS IN THE SOFTWARE.
 //resources
 #include "img/icons.h"
 
+#if defined(__WXGTK__)
+  #include <gtk/gtk.h>
+  #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+    #include <gdk/gdkx.h>
+  #endif
+#endif
+
+
 BEGIN_EVENT_TABLE(VRenderFrame, wxFrame)
 	EVT_MENU(wxID_EXIT, VRenderFrame::OnExit)
 	EVT_MENU(ID_ViewNew, VRenderFrame::OnNewView)
@@ -109,6 +117,28 @@ bool VRenderFrame::m_save_compress = true;
 bool VRenderFrame::m_vrp_embed = false;
 bool VRenderFrame::m_save_project = false;
 
+#ifdef __WXGTK__
+bool VRenderFrame::m_is_wayland = false;
+std::unordered_map<int, bool> VRenderFrame::m_key_state;
+bool VRenderFrame::GetKeyState(wxKeyCode key)
+{
+	if (m_is_wayland && key != WXK_ALT && key != WXK_CONTROL && key != WXK_SHIFT && key != WXK_CAPITAL && key != WXK_NUMLOCK && key != WXK_SCROLL)
+	{
+		if (m_key_state.count(key) > 0)
+			return m_key_state[key];
+		else
+			return false;
+	}
+	else
+		return wxGetKeyState(key);
+}
+#else
+bool VRenderFrame::GetKeyState(wxKeyCode key)
+{
+	return wxGetKeyState(key);
+}
+#endif
+
 CURLM *_g_curlm;//add by takashi
 CURL *_g_curl;//add by takashi
 
@@ -138,6 +168,105 @@ VRenderFrame::VRenderFrame(
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
+
+#ifdef __WXGTK__
+	char exepath[PATH_MAX];
+	ssize_t count = readlink("/proc/self/exe", exepath, PATH_MAX);
+	const gchar *exedir;
+	if (count != -1) {
+    	exedir = g_path_get_dirname(exepath);
+	}
+	wxString wxs_exedir((const char*)exedir);
+	wxString cachepath = wxT("") + wxs_exedir + wxT("/loaders.cache");
+	wxString cachedirpath = wxT("") + wxs_exedir;
+	cerr << cachepath.ToStdString() << endl;
+	
+	wxTextFile loadercache(cachepath);
+    if (loadercache.Exists())
+    {
+        if (loadercache.Open())
+        	loadercache.Clear();
+    }
+    else
+        loadercache.Create();
+	wxString loaderdir_desc = wxT("# LoaderDir = ") + wxs_exedir + wxT("/lib");
+	wxString loaderlibpath_png = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-png.so\"");
+	wxString loaderlibpath_svg = wxT("\"") + wxs_exedir + wxT("/lib/libpixbufloader-svg.so\"");
+	loadercache.AddLine("# GdkPixbuf Image Loader Modules file");
+	loadercache.AddLine("# Automatically generated file, do not edit");
+	loadercache.AddLine("# Created by gdk-pixbuf-query-loaders from gdk-pixbuf-2.42.8");
+	loadercache.AddLine("#");
+	loadercache.AddLine(loaderdir_desc);
+	loadercache.AddLine("#");
+	loadercache.AddLine(loaderlibpath_png);
+	loadercache.AddLine("\"png\" 5 \"gdk-pixbuf\" \"PNG\" \"LGPL\"");
+	loadercache.AddLine("\"image/png\" \"\"");
+	loadercache.AddLine("\"png\" \"\"");
+	loadercache.AddLine("\"\\211PNG\\r\\n\\032\\n\" \"\" 100");
+	loadercache.AddLine("");
+	loadercache.AddLine(loaderlibpath_svg);
+	loadercache.AddLine("\"svg\" 6 \"gdk-pixbuf\" \"Scalable Vector Graphics\" \"LGPL\"");
+	loadercache.AddLine("\"image/svg+xml\" \"image/svg\" \"image/svg-xml\" \"image/vnd.adobe.svg+xml\" \"text/xml-svg\" \"image/svg+xml-compressed\" \"\"");
+	loadercache.AddLine("\"svg\" \"svgz\" \"svg.gz\" \"\"");
+	loadercache.AddLine("\" <svg\" \"*    \" 100");
+	loadercache.AddLine("\" <!DOCTYPE svg\" \"*             \" 100\"");
+	loadercache.AddLine("");
+	loadercache.Write();
+    loadercache.Close();
+	
+	GError *err = NULL;
+	if (!gdk_pixbuf_init_modules(cachedirpath.ToStdString().c_str(), &err))
+		cerr << "unable to load pixbuf-loaders" << endl;
+	if (err != NULL)
+	{
+		fprintf (stderr, "unable to load pixbuf-loaders: %s\n", err->message);
+		g_error_free (err);
+	}
+
+	GdkWindow* gdkwindow = nullptr;
+	wxWindowList::const_iterator i = wxTopLevelWindows.begin();
+    for (; i != wxTopLevelWindows.end(); ++i)
+    {
+        const wxWindow* win = *i;
+        if (win->m_widget)
+        {
+            GdkWindow* gdkwin = gtk_widget_get_window(win->m_widget);
+            if (gdkwin)
+            {
+                gdkwindow = gdkwin;
+                break;
+            }
+        }
+    }
+    if (!gdkwindow)
+        gdkwindow = gdk_get_default_root_window();
+    const char* bname = g_type_name(G_TYPE_FROM_INSTANCE(gdkwindow));
+	std::cerr << "GTK_BACKEND: " << bname << std::endl;
+	if (strncmp(bname, "GdkWaylandWindow", strlen(bname)) == 0)
+	{
+		m_is_wayland = true;
+		std::cerr << "is wayland: " << (m_is_wayland ? "true" : "false") << std::endl;
+	}
+
+	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
+	char **icpath;
+	gint ele;
+	gtk_icon_theme_get_search_path (icon_theme, &icpath, &ele);
+	printf("number of paths: %d\n", ele);
+	for (int i=0; i< ele; i++) printf("path %d %s\n", i, icpath[i]);
+
+	char iconpath[PATH_MAX];
+    strcpy(iconpath, exedir);
+    strcat(iconpath, "/icons");
+	gchar **paths;
+	paths = g_new (gchar *, ele + 2);
+	for (int i=0; i< ele; i++) paths[i] = icpath[i];
+	paths[ele] = (gchar *)iconpath;
+	paths[ele+1] = NULL;
+	gtk_icon_theme_set_search_path(icon_theme, (const gchar **)paths, ele+1);
+	g_free(paths);
+	
+#endif
 
 	curl_global_init(CURL_GLOBAL_ALL);//add by takashi
 	_g_curlm = curl_multi_init();//add by takashi
@@ -450,30 +579,45 @@ VRenderFrame::VRenderFrame(
 		MinSize(wxSize(-1, 49)).MaxSize(wxSize(-1, 50)).
 		Top().CloseButton(false).Layer(4));
 
+
+#if defined(__WXGTK__)
+	int prop_h = 200;
+	int left_w = 410;
+	int adjust_w = 140;
+	int clip_w = 220;
+	int movie_proportion = 15;
+#else
+	int prop_h = 150;
+	int left_w = 320;
+	int adjust_w = 110;
+	int clip_w = 160;
+	int movie_proportion = 10;
+#endif
+
 	m_aui_mgr.AddPane(m_tree_panel, wxAuiPaneInfo().
 		Name("m_tree_panel").Caption(UITEXT_TREEVIEW).
-		Left().CloseButton(true).BestSize(wxSize(320, 300)).
-		FloatingSize(wxSize(320, 300)).Layer(3));
+		Left().CloseButton(true).BestSize(wxSize(left_w, 300)).
+		FloatingSize(wxSize(left_w, 300)).Layer(3));
 	m_aui_mgr.AddPane(m_movie_view, wxAuiPaneInfo().
 		Name("m_movie_view").Caption(UITEXT_MAKEMOVIE).
-		Left().CloseButton(true).MinSize(wxSize(320, 330)).
-		FloatingSize(wxSize(320, 300)).Layer(3));
+		Left().CloseButton(true).MinSize(wxSize(left_w, 330)).
+		FloatingSize(wxSize(left_w, 300)).Layer(3));
     m_aui_mgr.AddPane(m_measure_dlg, wxAuiPaneInfo().
         Name("m_measure_dlg").Caption(UITEXT_MEASUREMENT).
         Left().CloseButton(true).BestSize(wxSize(320, 400)).
         FloatingSize(wxSize(650, 500)).Layer(3).Dockable(false));
 	m_aui_mgr.AddPane(m_prop_panel, wxAuiPaneInfo().
 		Name("m_prop_panel").Caption(UITEXT_PROPERTIES).
-		Bottom().CloseButton(true).MinSize(wxSize(300, 150)).
-		FloatingSize(wxSize(1100, 130)).Layer(2));
+		Bottom().CloseButton(true).MinSize(wxSize(300, prop_h)).
+		FloatingSize(wxSize(1100, 150)).Layer(2));
 	m_aui_mgr.AddPane(m_adjust_view, wxAuiPaneInfo().
 		Name("m_adjust_view").Caption(UITEXT_ADJUST).
-		Left().CloseButton(true).MinSize(wxSize(110, 700)).
-		FloatingSize(wxSize(110, 700)).Layer(1));
+		Left().CloseButton(true).MinSize(wxSize(adjust_w, 700)).
+		FloatingSize(wxSize(adjust_w, 700)).Layer(1));
 	m_aui_mgr.AddPane(m_clip_view, wxAuiPaneInfo().
 		Name("m_clip_view").Caption(UITEXT_CLIPPING).
-		Right().CloseButton(true).MinSize(wxSize(160, 700)).
-		FloatingSize(wxSize(160, 700)).Layer(1));
+		Right().CloseButton(true).MinSize(wxSize(clip_w, 700)).
+		FloatingSize(wxSize(clip_w, 700)).Layer(1));
 	m_aui_mgr.AddPane(vrv, wxAuiPaneInfo().
 		Name(vrv->GetName()).Caption(vrv->GetName()).
 		Dockable(true).CloseButton(false).
@@ -482,7 +626,7 @@ VRenderFrame::VRenderFrame(
 
 	m_aui_mgr.GetPane("m_tree_panel").dock_proportion  = 30;
 	m_aui_mgr.GetPane("m_measure_dlg").dock_proportion = 20;
-	m_aui_mgr.GetPane("m_movie_view").dock_proportion = 10;
+	m_aui_mgr.GetPane("m_movie_view").dock_proportion = movie_proportion;
 
 	m_aui_mgr.GetPane(m_measure_dlg).Float();
 	m_aui_mgr.GetPane(m_measure_dlg).Hide();
@@ -717,6 +861,21 @@ VRenderFrame::VRenderFrame(
 
 	m_timer = new wxTimer(this, ID_Timer);
 	m_timer->Start(100);
+
+#ifdef __WXGTK__
+	GSList *formats;
+	formats = gdk_pixbuf_get_formats ();
+	for (GSList *l = formats; l; l = l->next)
+	{
+		GdkPixbufFormat *format = (GdkPixbufFormat *)l->data;
+		char *name;
+		name = gdk_pixbuf_format_get_name (format);	
+		cerr << name << endl;
+		g_free (name);
+	}
+	g_slist_free (formats);
+#endif
+
 }
 
 VRenderFrame::~VRenderFrame()
@@ -747,6 +906,7 @@ void VRenderFrame::OnTimer(wxTimerEvent& event)
     {
         if (m_tasks.Count() > 0)
         {
+		   cout << m_tasks[0] << endl;
            if (m_tasks[0] == "hideui")
            {
                if (m_ui_state)
@@ -803,7 +963,9 @@ void VRenderFrame::OnTimer(wxTimerEvent& event)
                    {
                        if (!m_waiting_for_task)
                        {
-                           m_movie_view->SaveMovie(m_tasks[1]);
+						   wxFileName fn(m_tasks[1]);
+						   fn.ReplaceHomeDir();
+                           m_movie_view->SaveMovie(fn.GetAbsolutePath());
                            m_waiting_for_task = true;
                        }
                        else if (!m_movie_view->IsRecording())
@@ -969,12 +1131,14 @@ void VRenderFrame::OnNewView(wxCommandEvent& WXUNUSED(event))
 {
 	//wxString str = CreateView();
     wxString expath = wxStandardPaths::Get().GetExecutablePath();
-#ifdef _DARWIN
+#if defined(_DARWIN)
     expath = expath.BeforeLast(wxFILE_SEP_PATH, NULL);
     expath = "open -n " + expath + "/../../";
     std::system(expath.ToStdString().c_str());
-#elif _WIN32
+#elif defined(_WIN32)
     ShellExecute(NULL, _T("open"), expath.ToStdWstring().c_str(), NULL, NULL, SW_SHOW);
+#else
+	system(expath.ToStdString().c_str());
 #endif
 
 }
@@ -1267,7 +1431,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 		prg_diag = new wxProgressDialog(
 			"VVDViewer: Loading volume data...",
 			"Reading and processing selected volume data. Please wait.",
-			100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+			100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 		m_data_mgr.SetSliceSequence(m_sliceSequence);
 		m_data_mgr.SetTimeSequence(m_timeSequence);
@@ -1991,7 +2155,7 @@ void VRenderFrame::LoadMeshes(wxArrayString files, VRenderView* vrv, wxArrayStri
 	wxProgressDialog *prg_diag = new wxProgressDialog(
 		"VVDViewer: Loading mesh data...",
 		"Reading and processing selected mesh data. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	MeshGroup* group = 0;
     int count = 0;
@@ -2068,7 +2232,7 @@ void VRenderFrame::OnOpenMesh(wxCommandEvent& WXUNUSED(event))
 {
 	wxFileDialog *fopendlg = new wxFileDialog(
 		this, "Choose the volume data file", "", "",
-        "All Supported|*.obj;*.swc;*.ply;*.nml|OBJ files (*.obj)|*.obj|SWC files (*.swc)|*.swc|PLY files (*.ply)|*.ply||NML files (*.nml)|*.nml",
+        "All Supported|*.obj;*.swc;*.ply;*.nml|OBJ files (*.obj)|*.obj|SWC files (*.swc)|*.swc|PLY files (*.ply)|*.ply|NML files (*.nml)|*.nml",
 		wxFD_OPEN|wxFD_MULTIPLE);
 
 	int rval = fopendlg->ShowModal();
@@ -2610,7 +2774,8 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
 
 	m_tree_panel->SaveExpState();
 	int scroll_pos;
-	scroll_pos = m_tree_panel->GetScrollPos(wxVERTICAL);
+	if (HasScrollbar(wxVERTICAL))
+		scroll_pos = m_tree_panel->GetScrollPos(wxVERTICAL);
 
 	m_tree_panel->SetEvtHandlerEnabled(false);
 	m_tree_panel->Freeze();
@@ -2830,7 +2995,8 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
     m_clip_view->SyncClippingPlanes();
     
     m_tree_panel->LoadExpState(expand_newitem);
-	m_tree_panel->SetScrollPos(wxVERTICAL, scroll_pos);
+	if (HasScrollbar(wxVERTICAL))
+		m_tree_panel->SetScrollPos(wxVERTICAL, scroll_pos);
 
 	if (sel_item.IsOk())
 		m_tree_panel->SelectItem(sel_item);
@@ -3432,7 +3598,7 @@ void VRenderFrame::SaveProject(wxString& filename)
 	prg_diag = new wxProgressDialog(
 		"VVDViewer: Saving project...",
 		"Saving project file. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	wxString str;
 
@@ -4209,7 +4375,7 @@ void VRenderFrame::SaveProject(wxString& filename)
 					fconfig.SetPath(str);
 					int key_type = key->GetType();
 					fconfig.Write("type", key_type);
-					KeyCode code = key->GetKeyCode();
+					FLKeyCode code = key->GetKeyCode();
 					fconfig.Write("l0", code.l0);
 					str = code.l0_name;
 					fconfig.Write("l0_name", str);
@@ -5483,7 +5649,7 @@ void VRenderFrame::OpenProject(wxString& filename)
 	prg_diag = new wxProgressDialog(
 		"VVDViewer: Loading project...",
 		"Reading project file. Please wait.",
-		100, 0, wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 	//read streaming mode
 	/*
@@ -5532,7 +5698,11 @@ void VRenderFrame::OpenProject(wxString& filename)
             while(m_project_data_loader.IsRunning())
             {
                 wxMilliSleep(100);
-                prg_diag->Update(90 * (cur + m_project_data_loader.GetProgress()) / ticks);
+				double pg = ((double)cur + m_project_data_loader.GetProgress()) / (double)ticks;
+				if (pg >= 0.0 && pg <= 1.0)
+					prg_diag->Update((int)(90 * pg));
+				else
+					cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
             }
             
             tick_cnt += m_project_data_loader.GetProgress();
@@ -5555,7 +5725,13 @@ void VRenderFrame::OpenProject(wxString& filename)
                 }
                 tick_cnt++;
                 if (ticks && prg_diag)
-                    prg_diag->Update(90*tick_cnt/ticks);
+				{
+					double pg = (double)tick_cnt/ticks;
+                    if (pg >= 0.0 && pg <= 1.0)
+						prg_diag->Update((int)(90 * pg));
+					else
+						cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
+				}
             }
         }
 	}
@@ -5579,7 +5755,13 @@ void VRenderFrame::OpenProject(wxString& filename)
 			}
 			tick_cnt++;
             if (ticks && prg_diag)
-                prg_diag->Update(90*tick_cnt/ticks);
+			{
+				double pg = (double)tick_cnt/ticks;
+                if (pg >= 0.0 && pg <= 1.0)
+					prg_diag->Update((int)(90 * pg));
+				else
+					cerr << "progress value " << pg << " is incorrect. ticks=" << ticks << " in the project file may be wrong." << endl;
+			}
 		}
 	}
 
@@ -6660,7 +6842,7 @@ void VRenderFrame::OpenProject(wxString& filename)
 							int key_type;
 							if (fconfig.Read("type", &key_type))
 							{
-								KeyCode code;
+								FLKeyCode code;
 								if (fconfig.Read("l0", &iVal))
 									code.l0 = iVal;
 								if (fconfig.Read("l0_name", &sVal))

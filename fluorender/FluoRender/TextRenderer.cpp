@@ -61,7 +61,7 @@ TextRenderer::TextRenderer(const string &lib_name, std::shared_ptr<Vulkan2dRende
 	{
 		err = FT_Select_Charmap(face, FT_ENCODING_UNICODE);
 		err = FT_Set_Pixel_Sizes(face, 0, m_size);
-		m_cur_font = std::make_shared<Font>(face, m_textureAtlas);
+		m_cur_font = std::make_shared<FLFont>(face, m_textureAtlas);
 		std::stringstream ss;
 		ss << lib_name.c_str() << "?" << m_size;
 		m_fonts[ss.str()] = m_cur_font;
@@ -108,7 +108,7 @@ void TextRenderer::LoadNewFace(const string &lib_name, int size)
 	{
 		err = FT_Select_Charmap(face, FT_ENCODING_UNICODE); 
 		err = FT_Set_Pixel_Sizes(face, 0, m_size);
-		m_cur_font = std::make_shared<Font>(face, m_textureAtlas);
+		m_cur_font = std::make_shared<FLFont>(face, m_textureAtlas);
 		m_fonts[ss.str()] = m_cur_font;
 		m_cur_libname = lib_name.c_str();
 	}

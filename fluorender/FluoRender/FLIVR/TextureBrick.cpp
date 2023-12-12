@@ -417,7 +417,7 @@ z
          degree = 0;
 		 FLIVR::Vector vec = -view.direction();
          FLIVR::Point pnt = view.parameter(t);
-		 //’f–Ê‚Ì’¸“_‚ªbbox‚Ì’¸“_‚Æd‚È‚Á‚½‚Æ‚«d•¡‚ð–h‚®
+		 //ï¿½fï¿½Ê‚Ì’ï¿½ï¿½_ï¿½ï¿½bboxï¿½Ì’ï¿½ï¿½_ï¿½Ædï¿½È‚ï¿½ï¿½ï¿½ï¿½Æ‚ï¿½ï¿½dï¿½ï¿½ï¿½ï¿½hï¿½ï¿½
          for (size_t j=0; j<=3; j++)
          {
             double u;
@@ -593,7 +593,7 @@ z
 
 		  FLIVR::Vector vec = -view.direction();
 		  FLIVR::Point pnt = view.parameter(t);
-		  //’f–Ê‚Ì’¸“_‚ªbbox‚Ì’¸“_‚Æd‚È‚Á‚½‚Æ‚«d•¡‚ð–h‚®
+		  //ï¿½fï¿½Ê‚Ì’ï¿½ï¿½_ï¿½ï¿½bboxï¿½Ì’ï¿½ï¿½_ï¿½Ædï¿½È‚ï¿½ï¿½ï¿½ï¿½Æ‚ï¿½ï¿½dï¿½ï¿½ï¿½ï¿½hï¿½ï¿½
 		  for (size_t j=0; j<=3; j++)
 		  {
 			  double u;
@@ -769,7 +769,7 @@ z
          degree = 0;
          FLIVR::Vector vec = -vray_.direction();
          FLIVR::Point pnt = vray_.parameter(t*dt_);
-		 //’f–Ê‚Ì’¸“_‚ªbbox‚Ì’¸“_‚Æd‚È‚Á‚½‚Æ‚«d•¡‚ð–h‚®
+		 //ï¿½fï¿½Ê‚Ì’ï¿½ï¿½_ï¿½ï¿½bboxï¿½Ì’ï¿½ï¿½_ï¿½Ædï¿½È‚ï¿½ï¿½ï¿½ï¿½Æ‚ï¿½ï¿½dï¿½ï¿½ï¿½ï¿½hï¿½ï¿½
          for (size_t j=0; j<=3; j++)
          {
             double u;
@@ -1251,19 +1251,19 @@ z
 
 			   wxString expath = wxStandardPaths::Get().GetExecutablePath();
 			   expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _WIN32
-			   wxString dft = expath + "\\vvd_cache";
-			   wxString dft2 = wxStandardPaths::Get().GetUserDataDir() + "\\vvd_cache";
-			   if (!wxDirExists(dft) && wxDirExists(dft2))
-				   dft = dft2;
-			   else if (!wxDirExists(dft))
-				   wxMkdir(dft);
-			   dft += L"\\";
-#else
+#ifdef _DARWIN
 			   wxString dft = expath + "/../Resources/vvd_cache";
 			   if (!wxDirExists(dft))
 				   wxMkdir(dft);
 			   dft += L"/";
+#else
+			   wxString dft = expath + GETSLASHS() + "vvd_cache";
+			   wxString dft2 = wxStandardPaths::Get().GetUserDataDir() + GETSLASHS() + "vvd_cache";
+			   if (!wxDirExists(dft) && wxDirExists(dft2))
+				   dft = dft2;
+			   else if (!wxDirExists(dft))
+				   wxMkdir(dft);
+			   dft += GETSLASH();
 #endif
 			   wstring randname;
 			   int len = 16;
@@ -1729,8 +1729,8 @@ z
         int decompressed_size = blosc2_decompress_ctx(ctx, in, in_size, out, out_size);
         if (decompressed_size < 0)
         {
-            size_t nbytes, cbytes, bs;
-            blosc_cbuffer_sizes(in, &nbytes, &cbytes, &bs);
+            int32_t nbytes, cbytes, bs;
+            blosc2_cbuffer_sizes(in, &nbytes, &cbytes, &bs);
             
             char* buf = new char[nbytes];
             int decompressed_size2 = blosc2_decompress_ctx(ctx, in, in_size, buf, nbytes);
@@ -1853,7 +1853,7 @@ z
 	   curl_easy_setopt(s_curl_, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEDATA, &chunk);
-	   //ƒsƒAØ–¾‘ŒŸØ‚È‚µ
+	   //ï¿½sï¿½Aï¿½Ø–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø‚È‚ï¿½
 	   curl_easy_setopt(s_curl_, CURLOPT_SSL_VERIFYPEER, 0);
 	   ret = curl_easy_perform(s_curl_);
 	   if (ret != CURLE_OK) {
@@ -1934,7 +1934,7 @@ z
 	   curl_easy_setopt(s_curl_, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEDATA, &chunk);
-	   //ƒsƒAØ–¾‘ŒŸØ‚È‚µ
+	   //ï¿½sï¿½Aï¿½Ø–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø‚È‚ï¿½
 	   curl_easy_setopt(s_curl_, CURLOPT_SSL_VERIFYPEER, 0);
 	   ret = curl_easy_perform(s_curl_);
 	   if (ret != CURLE_OK) {

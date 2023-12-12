@@ -284,6 +284,12 @@ private:
     
     wxTimer *m_idleTimer;
 
+#if defined(__WXGTK__)
+	static constexpr int size_fix_w = 10;
+#else
+	static constexpr int size_fix_w = 0;
+#endif
+
 private:
 	void LoadDefault();
 	wxWindow* CreateBrushPage(wxWindow *parent);

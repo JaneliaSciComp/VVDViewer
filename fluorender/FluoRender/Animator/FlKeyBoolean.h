@@ -38,7 +38,7 @@ public:
 		m_code.l2_name = "";
 		m_bval = false;
 	}
-	FlKeyBoolean(KeyCode keycode, bool bval)
+	FlKeyBoolean(FLKeyCode keycode, bool bval)
 	{
 		m_code = keycode;
 		m_bval = bval;

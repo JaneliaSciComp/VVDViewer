@@ -51,7 +51,11 @@ DEALINGS IN THE SOFTWARE.
 #ifdef _WIN32
 #define WINDOWS_LEAN_AND_MEAN
 #include <windows.h>
-#elif _DARWIN
+#else
+#ifndef _DARWIN
+#include <time.h>
+#include <cstdint>
+#endif
 #include <unistd.h>
 #endif
 
@@ -128,16 +132,19 @@ private:
     // Private data
     //
     
-#ifdef _WIN32
+#if defined(_WIN32)
     LARGE_INTEGER _nStartCount;
     LARGE_INTEGER _nStopCount;
     
     LARGE_INTEGER _nFrequency;
-#elif _DARWIN
+#elif defined(_DARWIN)
     uint64_t _nStartCount;
     uint64_t _nStopCount;
     uint64_t _nFrequency;
     uint64_t monotonicTimeNanos();
+#else
+    struct timespec _nStartCount, _nStopCount;
+    uint64_t _nFrequency;
 #endif
 // Data for other OSes potentially goes here
 

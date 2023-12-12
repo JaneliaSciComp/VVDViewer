@@ -21,9 +21,9 @@ struct TextDimensions {
 };
 
 class Renderer;
-class Font {
+class FLFont {
 public:
-    Font(const FT_Face& face, std::shared_ptr<TextureAtlas> ta);
+    FLFont(const FT_Face& face, std::shared_ptr<TextureAtlas> ta);
 
     int GetNumGlyphs();
     std::shared_ptr<Glyph> GetGlyph(wchar_t c);
