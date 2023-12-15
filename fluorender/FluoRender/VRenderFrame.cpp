@@ -965,7 +965,8 @@ void VRenderFrame::OnTimer(wxTimerEvent& event)
                        {
 						   wxFileName fn(m_tasks[1]);
 						   fn.ReplaceHomeDir();
-                           m_movie_view->SaveMovie(fn.GetAbsolutePath());
+						   fn.MakeAbsolute();
+                           m_movie_view->SaveMovie(fn.GetFullPath());
                            m_waiting_for_task = true;
                        }
                        else if (!m_movie_view->IsRecording())

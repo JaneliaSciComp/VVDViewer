@@ -629,7 +629,7 @@ void FFMpegMemDecoder::start()
 	// Dump information about file onto standard error
 	av_dump_format(_format_context, 0, charfname, 0);
 	
-	const AVCodec *decoder;
+	AVCodec *decoder;
 	ret = av_find_best_stream(_format_context, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
 	if (ret < 0) {
 		fprintf(stderr, "Cannot find a video stream in the input file\n");

@@ -34,6 +34,15 @@
 //in order to enable C++ to use them you have to append -D__STDC_CONSTANT_MACROS to your CXXFLAGS
 
 #include "QVideoEncoder.h"
+#ifdef av_err2str
+#undef av_err2str
+#include <string>
+av_always_inline std::string av_err2string(int errnum) {
+    char str[AV_ERROR_MAX_STRING_SIZE];
+    return av_make_error_string(str, AV_ERROR_MAX_STRING_SIZE, errnum);
+}
+#define av_err2str(err) av_err2string(err).c_str()
+#endif  // av_err2str
 
 QVideoEncoder::QVideoEncoder() {
     /* Initialize libavcodec, and register all codecs and formats. */
