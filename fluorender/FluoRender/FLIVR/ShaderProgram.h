@@ -35,6 +35,7 @@
 #include "vulkan/vulkan.h"
 
 #ifdef _DARWIN
+#include "Public/ShaderLang.h"
 #include "SPIRV/GlslangToSpv.h"
 #else
 #include "glslang/SPIRV/GlslangToSpv.h"

@@ -28,8 +28,11 @@
 #define AVUTIL_AVASSERT_H
 
 #include <stdlib.h>
-#include "avutil.h"
+#ifdef HAVE_AV_CONFIG_H
+#   include "config.h"
+#endif
 #include "log.h"
+#include "macros.h"
 
 /**
  * assert() equivalent, that is always enabled.
@@ -66,7 +69,7 @@
 #endif
 
 /**
- * Assert that floating point opperations can be executed.
+ * Assert that floating point operations can be executed.
  *
  * This will av_assert0() that the cpu is not in MMX state on X86
  */

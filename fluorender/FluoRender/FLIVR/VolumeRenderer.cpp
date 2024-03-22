@@ -165,7 +165,7 @@ namespace FLIVR
 	}
 
 	VolumeRenderer::VolumeRenderer(const VolumeRenderer& copy)
-		:TextureRenderer(copy),
+		:TextureRenderer((const TextureRenderer&)copy),
 		buffer_scale_(copy.buffer_scale_),
 		//scalar scale
 		scalar_scale_(copy.scalar_scale_),

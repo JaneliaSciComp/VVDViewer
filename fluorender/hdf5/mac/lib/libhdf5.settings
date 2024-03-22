@@ -1,71 +1,87 @@
-      SUMMARY OF THE HDF5 CONFIGURATION
-      =================================
+        SUMMARY OF THE HDF5 CONFIGURATION
+        =================================
 
 General Information:
 -------------------
-                   HDF5 Version: 1.8.20
-                  Configured on: 2018-11-30
-                  Configured by: Unix Makefiles
-                 Configure mode: CMAKE 3.4.1
-                    Host system: Darwin-16.7.0
-              Uname information: Darwin
+                   HDF5 Version: 1.14.3
+                  Configured on: Thu Mar 21 14:03:58 EDT 2024
+                  Configured by: kawaset@KawaseT-LM1
+                    Host system: arm-apple-darwin23.4.0
+              Uname information: Darwin KawaseT-LM1 23.4.0 Darwin Kernel Version 23.4.0: Wed Feb 21 21:45:49 PST 2024; root:xnu-10063.101.15~2/RELEASE_ARM64_T6020 arm64
                        Byte sex: little-endian
-                      Libraries: 
-             Installation point: /Users/kawase/CMake-hdf5-1.8.20/HDF_Group/HDF5/1.8.20
+             Installation point: /Users/kawaset/hdf5
 
 Compiling Options:
 ------------------
-               Compilation Mode: Release
-                     C Compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc
-                         CFLAGS: -Wno-format-nonliteral -Wno-cast-align -Wno-unused -Wno-unused-variable -Wno-unused-function -Wno-self-assign -Wno-unused-parameter -Wno-sign-compare -Wno-deprecated-declarations -Wno-uninitialized -g -O0 -fstack-protector-all -D_FORTIFY_SOURCE=2 
-                      H5_CFLAGS: 
-                      AM_CFLAGS: 
-                       CPPFLAGS: 
-                    H5_CPPFLAGS: 
-                    AM_CPPFLAGS: 
-               Shared C Library: NO
-               Static C Library: YES
-  Statically Linked Executables: OFF
+                     Build Mode: production
+              Debugging Symbols: no
+                        Asserts: no
+                      Profiling: no
+             Optimization Level: high
+
+Linking Options:
+----------------
+                      Libraries: static
+  Statically Linked Executables: 
                         LDFLAGS: 
+                     H5_LDFLAGS: 
                      AM_LDFLAGS: 
-                Extra libraries: m;dl
-                       Archiver: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar
-                         Ranlib: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ranlib
-              Debugged Packages: 
-                    API Tracing: OFF
+                Extra libraries: -lz -ldl -lm 
+                       Archiver: ar
+                       AR_FLAGS: cr
+                         Ranlib: ranlib
 
 Languages:
 ----------
-                        Fortran: OFF
-               Fortran Compiler: 
-          Fortran 2003 Compiler: OFF
-                  Fortran Flags: 
-               H5 Fortran Flags: 
-               AM Fortran Flags: 
-         Shared Fortran Library: NO
-         Static Fortran Library: YES
+                              C: yes
+                     C Compiler: /usr/bin/clang ( Apple clang version 15.0.0 )
+                       CPPFLAGS: 
+                    H5_CPPFLAGS:   -DNDEBUG -UH5_DEBUG_API -I/Users/kawaset/hdf5-hdf5-1_14_3/src/H5FDsubfiling
+                    AM_CPPFLAGS: 
+                        C Flags: 
+                     H5 C Flags:  -std=c99  -Wall -Warray-bounds -Wcast-qual -Wconversion -Wdouble-promotion -Wextra -Wformat=2 -Wframe-larger-than=16384 -Wimplicit-fallthrough -Wnull-dereference -Wunused-const-variable -Wwrite-strings -Wpedantic -Wvolatile-register-var -Wno-c++-compat     -Wbad-function-cast -Wimplicit-function-declaration -Wincompatible-pointer-types -Wmissing-declarations -Wpacked -Wshadow -Wswitch -Wno-error=incompatible-pointer-types-discards-qualifiers -Wunused-function -Wunused-variable -Wunused-parameter -Wcast-align -Wformat -Wno-missing-noreturn -O3
+                     AM C Flags: 
+               Shared C Library: no
+               Static C Library: yes
 
-                            C++: ON
-                   C++ Compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++
-                      C++ Flags: -Wno-format-nonliteral -Wno-cast-align -Wno-unused -Wno-unused-variable -Wno-unused-function -Wno-self-assign -Wno-unused-parameter -Wno-sign-compare -Woverloaded-virtual -Wshadow -Wwrite-strings -Wc++11-compat -g -O0 -fstack-protector-all -D_FORTIFY_SOURCE=2 
-                   H5 C++ Flags: 
+
+                        Fortran: no
+
+                            C++: yes
+                   C++ Compiler: /usr/bin/clang++ ( Apple clang version 15.0.0 )
+                      C++ Flags: 
+                   H5 C++ Flags:   -std=c++11 -Wall -Warray-bounds -Wcast-qual -Wconversion -Wdouble-promotion -Wextra -Wformat=2 -Wframe-larger-than=16384 -Wimplicit-fallthrough -Wnull-dereference -Wunused-const-variable -Wwrite-strings -Wpedantic -Wvolatile-register-var -Wno-c++-compat     -Wbad-function-cast -Wimplicit-function-declaration -Wincompatible-pointer-types -Wmissing-declarations -Wpacked -Wshadow -Wswitch -Wno-error=incompatible-pointer-types-discards-qualifiers -Wunused-function -Wunused-variable -Wunused-parameter -Wcast-align -Wformat -O3
                    AM C++ Flags: 
-             Shared C++ Library: NO
-             Static C++ Library: YES
+             Shared C++ Library: no
+             Static C++ Library: yes
+
+                           Java: no
+
 
 Features:
 ---------
-                  Parallel HDF5: OFF
-             High Level library: ON
-                   Threadsafety: OFF
-            Default API Mapping: v18
- With Deprecated Public Symbols: ON
-         I/O filters (external): 
-                            MPE: 
-                     Direct VFD: 
-                        dmalloc: 
-Clear file buffers before write: ON
-           Using memory checker: OFF
-         Function Stack Tracing: OFF
-      Strict File Format Checks: OFF
-   Optimization Instrumentation: 
+                     Parallel HDF5: no
+  Parallel Filtered Dataset Writes: no
+                Large Parallel I/O: no
+                High-level library: yes
+Dimension scales w/ new references: no
+                  Build HDF5 Tests: yes
+                  Build HDF5 Tools: yes
+                   Build GIF Tools: no
+                      Threadsafety: no
+               Default API mapping: v114
+    With deprecated public symbols: yes
+            I/O filters (external): deflate(zlib)
+                     Map (H5M) API: no
+                        Direct VFD: no
+                        Mirror VFD: no
+                     Subfiling VFD: no
+                (Read-Only) S3 VFD: no
+              (Read-Only) HDFS VFD: no
+    Packages w/ extra debug output: none
+                       API tracing: no
+              Using memory checker: no
+            Function stack tracing: no
+                  Use file locking: best-effort
+         Strict file format checks: no
+      Optimization instrumentation: no

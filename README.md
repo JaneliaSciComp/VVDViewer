@@ -4,6 +4,10 @@
 
 This is the open-source repository for VVDViewer, an interactive rendering tool for confocal microscopy data visualization. It combines the rendering of multi-channel volume data and polygon mesh data, where the properties of each dataset can be adjusted independently and quickly. The tool is designed for neurobiologists, to better visualize the fluorescent-stained confocal samples. This code base started as a fork of [Fluorender](https://github.com/SCIInstitute/fluorender).
 
+## Known Issues
+
+Older versions of VVDViewer might not be compatible with the latest Mac OS, Sonoma. If you encounter any issues on Sonoma, please ensure that VVDViewer is updated to the most recent version.
+
 ## Download 
 
 Click this button to download tha latest VVDViewer:
@@ -23,11 +27,6 @@ https://github.com/JaneliaSciComp/VVDViewer/wiki
 https://github.com/JaneliaSciComp/exllsm-circuit-reconstruction/blob/master/docs/NeuronSegmentation.md
 
 Joshua L Lillvis, Hideo Otsuna, Xiaoyu Ding, Igor Pisarev, Takashi Kawase, Jennifer Colonell, Konrad Rokicki, Cristian Goina, Ruixuan Gao, Amy Hu, Kaiyu Wang, John Bogovic, Daniel E Milkie, Linus Meienberg, Brett D Mensh, Edward S Boyden, Stephan Saalfeld, Paul W Tillberg, Barry J Dickson (2022) Rapid reconstruction of neural circuits using tissue expansion and light sheet microscopy *eLife* [11:e81248](https://doi.org/10.7554/eLife.81248  )
-
-## How to Cite
-
-If you use VVDViewer in work that leads to published research, we humbly ask that you add the following to the 'Acknowledgments' section of your paper: 
-"This work was made possible in part by software funded by the NIH: Fluorender: An Imaging Tool for Visualization and Analysis of Confocal Data as Applied to Zebrafish Research, R01-GM098151-01."
 
 ## Licenses
 

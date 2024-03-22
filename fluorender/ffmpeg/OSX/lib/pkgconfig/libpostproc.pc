@@ -1,12 +1,12 @@
-prefix=..
+prefix=/Users/kawaset/ffmpeg_build
 exec_prefix=${prefix}
-libdir=../lib
-includedir=../include
+libdir=/Users/kawaset/ffmpeg_build/lib
+includedir=/Users/kawaset/ffmpeg_build/include
 
 Name: libpostproc
 Description: FFmpeg postprocessing library
-Version: 55.1.100
-Requires: libavutil >= 56.14.100
+Version: 58.0.100
+Requires: libavutil >= 59.2.100
 Requires.private: 
 Conflicts:
 Libs: -L${libdir}  -lpostproc -lm

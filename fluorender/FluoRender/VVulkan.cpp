@@ -6,6 +6,10 @@ VVulkan::VVulkan() : VulkanExampleBase(ENABLE_VALIDATION)
 	enabledDeviceExtensions.push_back("VK_KHR_push_descriptor");
 	enabledDeviceExtensions.push_back("VK_KHR_maintenance3");
 	enabledDeviceExtensions.push_back("VK_EXT_memory_budget");
+#ifdef VK_USE_PLATFORM_MACOS_MVK
+    enabledInstanceExtensions.push_back("VK_KHR_portability_enumeration");
+    enabledDeviceExtensions.push_back("VK_KHR_portability_subset");
+#endif
 }
 
 VVulkan::~VVulkan()

@@ -749,8 +749,11 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 
 	//m_searcher = new LMSeacher(this, (wxWindow *)this, ID_Searcher, wxT("Search"), wxPoint(20, 20), wxSize(200, -1), wxTE_PROCESS_ENTER);
 	//m_searcher->Hide();
-
-	m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxDefaultPosition, wxSize(1,1));
+#if defined(__WXMAC__)
+	m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxPoint(-8, 8), wxSize(1,1));
+#else
+    m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxPoint(-1, -1), wxSize(1,1));
+#endif
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
@@ -17250,12 +17253,12 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 
 					Q2A();
 
-					wxString str = wxString::Format("%.1f", m_rotx);
+					wxString str = wxString::Format("%.1f", 360.0-m_rotx);
 					m_vrv->m_x_rot_text->ChangeValue(str);
 					if (m_rot_lock)
-						m_vrv->m_x_rot_sldr->SetValue(int(m_rotx/45.0));
+						m_vrv->m_x_rot_sldr->SetValue(int((360.0-m_rotx)/45.0));
 					else
-						m_vrv->m_x_rot_sldr->SetValue(int(m_rotx));
+						m_vrv->m_x_rot_sldr->SetValue(int(360.0-m_rotx));
 					str = wxString::Format("%.1f", m_roty);
 					m_vrv->m_y_rot_text->ChangeValue(str);
 					if (m_rot_lock)

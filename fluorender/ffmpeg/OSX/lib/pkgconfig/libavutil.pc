@@ -1,11 +1,11 @@
-prefix=..
+prefix=/Users/kawaset/ffmpeg_build
 exec_prefix=${prefix}
-libdir=../lib
-includedir=../include
+libdir=/Users/kawaset/ffmpeg_build/lib
+includedir=/Users/kawaset/ffmpeg_build/include
 
 Name: libavutil
 Description: FFmpeg utility library
-Version: 56.14.100
+Version: 59.2.100
 Requires: 
 Requires.private: 
 Conflicts:

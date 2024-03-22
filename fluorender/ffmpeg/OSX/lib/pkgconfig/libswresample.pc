@@ -1,12 +1,12 @@
-prefix=..
+prefix=/Users/kawaset/ffmpeg_build
 exec_prefix=${prefix}
-libdir=../lib
-includedir=../include
+libdir=/Users/kawaset/ffmpeg_build/lib
+includedir=/Users/kawaset/ffmpeg_build/include
 
 Name: libswresample
 Description: FFmpeg audio resampling library
-Version: 3.1.100
-Requires: libavutil >= 56.14.100
+Version: 5.0.100
+Requires: libavutil >= 59.2.100
 Requires.private: 
 Conflicts:
 Libs: -L${libdir}  -lswresample -lm

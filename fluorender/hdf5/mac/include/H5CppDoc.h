@@ -1,19 +1,18 @@
 // C++ informative line for the emacs editor: -*- C++ -*-
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * Copyright by The HDF Group.                                               *
- * Copyright by the Board of Trustees of the University of Illinois.         *
  * All rights reserved.                                                      *
  *                                                                           *
  * This file is part of HDF5.  The full HDF5 copyright notice, including     *
  * terms governing use, modification, and redistribution, is contained in    *
  * the COPYING file, which can be found at the root of the source code       *
- * distribution tree, or in https://support.hdfgroup.org/ftp/HDF5/releases.  *
+ * distribution tree, or in https://www.hdfgroup.org/licenses.               *
  * If you do not have access to either file, you may request a copy from     *
  * help@hdfgroup.org.                                                        *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#ifndef __H5CppDoc_H
-#define __H5CppDoc_H
+#ifndef H5CppDoc_H
+#define H5CppDoc_H
 
 //-------------------------------------------------------------------------
 // The following section will be used to generate the 'Mainpage'
@@ -25,13 +24,10 @@
  * \section intro_sec Introduction
  *
  * The C++ API provides C++ wrappers for the HDF5 C Library.
- * 
- * It is assumed that the user has knowledge of the 
- * <a href="https://support.hdfgroup.org/HDF5/doc/H5.format.html">
- * HDF5 file format</a> and its components. 
- * For more information on the HDF5 C Library, see the 
- * <a href="https://support.hdfgroup.org/HDF5/doc/index.html"> 
- * HDF5 Software Documentation</a> page.
+ *
+ * It is assumed that the user has knowledge of the HDF5 file format and its
+ * components.  For more information on the HDF5 C Library, please refer to
+ * the HDF5 Software Documentation page.
  *
  * Because the HDF5 C Library maps very well to
  * the object oriented design approach, classes in the C++ API can
@@ -51,18 +47,15 @@
     Datatype Interface (H5T)          DataType and subclasses
   \endverbatim
  *
- * This <a href="./C2Cppfunction_map.mht">
+ * This <a href="./C2Cppfunction_map.htm">
  * table </a> provides a map from the C APIs to the C++ member functions.
  * <br />
  * \section install_sec Installation
  *
- * The HDF5 C++ API is included with the HDF5 source code and can 
- * be obtained from 
- * <a href="https://support.hdfgroup.org/HDF5/release/obtainsrc.html">
- * https://support.hdfgroup.org/HDF5/release/obtainsrc.html</a>.
- * 
- * Please refer to the release_docs/INSTALL file under the top directory 
- * of the HDF5 source code for information about installing, building, 
+ * The HDF5 C++ API is included with the HDF5 source code.
+ *
+ * Please refer to the release_docs/INSTALL file under the top directory
+ * of the HDF5 source code for information about installing, building,
  * and testing the C++ API.
  *
  * <br />
@@ -98,4 +91,4 @@
 ///        This example shows how to work with groups.
 ///\example     h5group.cpp
 
-#endif // __H5CppDoc_H
+#endif // H5CppDoc_H

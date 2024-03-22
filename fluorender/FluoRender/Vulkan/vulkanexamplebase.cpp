@@ -73,6 +73,11 @@ VkResult VulkanExampleBase::createInstance(bool enableValidation)
 		instanceCreateInfo.enabledLayerCount = vks::debug::validationLayerCount;
 		instanceCreateInfo.ppEnabledLayerNames = vks::debug::validationLayerNames;
 	}
+    
+#if defined(VK_USE_PLATFORM_MACOS_MVK)
+    instanceCreateInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    
 	return vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 }
 
