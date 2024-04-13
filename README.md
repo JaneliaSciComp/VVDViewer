@@ -4,9 +4,12 @@
 
 This is the open-source repository for VVDViewer, an interactive rendering tool for confocal microscopy data visualization. It combines the rendering of multi-channel volume data and polygon mesh data, where the properties of each dataset can be adjusted independently and quickly. The tool is designed for neurobiologists, to better visualize the fluorescent-stained confocal samples. This code base started as a fork of [Fluorender](https://github.com/SCIInstitute/fluorender).
 
-## Known Issues
+## Known Issues (for Mac)
 
-Older versions of VVDViewer might not be compatible with the latest Mac OS, Sonoma. If you encounter any issues on Sonoma, please ensure that VVDViewer is updated to the most recent version.
+If you encounter the message 'VVDViewer can't be installed because Apple cannot check it for malicious software' on your Mac, please right-click the app and choose 'Open' from the context menu to launch it. Although the same security notification will appear, you will have the option to open it.
+
+Older versions of VVDViewer might not be compatible with the latest Mac OS, Sonoma. If you encounter any issues on Sonoma, please ensure that VVDViewer is updated to the most recent version. 
+ 
 
 ## Download 
 
