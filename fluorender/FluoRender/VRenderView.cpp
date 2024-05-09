@@ -15493,8 +15493,19 @@ double VRenderVulkanView::GetPointAndIntVolume(Point& mp, double &intensity, boo
 	vector<Plane*> *planes = 0;
 	double mspc = 1.0;
 	double return_val = -1.0;
+
+	double scx, scy, scz;
+	scx = scy = scz = 1.0;
+	if (vd->isBrxml())
+	{
+		int64_t vnx = (int64_t)(nrrd->axis[0].size);
+		int64_t vny = (int64_t)(nrrd->axis[1].size);
+		int64_t vnz = (int64_t)(nrrd->axis[2].size);
+		scx = (double)vnx / resx; scy = (double)vny / resy; scz = (double)vnz / resz;
+	}
+
 	if (vd->GetSampleRate() > 0.0)
-		mspc = sqrt(1.0 / (resx * resx) + 1.0 / (resy * resy) + 1.0 / (resz * resz)) / 2.0;
+		mspc = sqrt(1.0 / (resx * scx * resx * scx) + 1.0 / (resy * scy * resy * scy) + 1.0 / (resz * scz * resz * scz)) / 2.0;
 	if (vd->GetVR())
 		planes = vd->GetVR()->get_planes();
 	if (bbox.intersect(mp1, vv, hit))
@@ -15508,7 +15519,8 @@ double VRenderVulkanView::GetPointAndIntVolume(Point& mp, double &intensity, boo
 			tmp_xx = int(hp1.x() * resx);
 			tmp_yy = int(hp1.y() * resy);
 			tmp_zz = int(hp1.z() * resz);
-			if (tmp_xx==xx && tmp_yy==yy && tmp_zz==zz)
+			if ( (!vd->isBrxml() && tmp_xx==xx && tmp_yy==yy && tmp_zz==zz) || 
+				(vd->isBrxml() && (int)(tmp_xx*scx) == (int)(xx*scx) && (int)(tmp_yy*scy) == (int)(yy*scy) && (int)(tmp_zz*scz) == (int)(zz*scz)) )
 			{
 				//same, skip
 				hp1 += vv2 * mspc;

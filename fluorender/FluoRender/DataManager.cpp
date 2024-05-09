@@ -1555,6 +1555,16 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 	int64_t ny = (int64_t)(data->axis[1].size);
 	int64_t nz = (int64_t)(data->axis[2].size);
 
+	if (isBrxml())
+	{
+		double scx, scy, scz;
+		int resx, resy, resz;
+		GetResolution(resx, resy, resz);
+		scx = scy = scz = 1.0;
+		scx = (double)nx / resx; scy = (double)ny / resy; scz = (double)nz / resz;
+		i = (int)(i * scx); j = (int)(j * scy); k = (int)(k * scz);
+	}
+
 	if (i<0 || i>=nx || j<0 || j>=ny || k<0 || k>=nz)
 		return 0.0;
 	uint64_t ii = i, jj = j, kk = k;
