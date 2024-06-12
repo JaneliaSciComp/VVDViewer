@@ -215,9 +215,9 @@ public:
 	static constexpr int PLATFORM_WAYLAND = 0;
 	static constexpr int PLATFORM_X11 = 1;
 	int m_platform;
-	bool initVulkan(int platform = PLATFORM_WAYLAND);
+	bool initVulkan(int platform = PLATFORM_WAYLAND, int device_id=-1);
 #else
-	bool initVulkan();
+	bool initVulkan(int device_id=-1);
 #endif
 
 #if defined(_WIN32)

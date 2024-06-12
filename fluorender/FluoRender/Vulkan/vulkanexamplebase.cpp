@@ -343,9 +343,9 @@ VulkanExampleBase::~VulkanExampleBase()
 }
 
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
-bool VulkanExampleBase::initVulkan(int platform)
+bool VulkanExampleBase::initVulkan(int platform, int device_id)
 #else
-bool VulkanExampleBase::initVulkan()
+bool VulkanExampleBase::initVulkan(int device_id)
 #endif
 {
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
@@ -386,37 +386,91 @@ bool VulkanExampleBase::initVulkan()
 
 	// GPU selection
 	/* Try to auto select most suitable device */
-	int gpu_number = -1;
+	int gpu_number = 0;
 
     constexpr uint32_t device_type_count = static_cast<uint32_t>(VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU) + 1;
     std::array<uint32_t, device_type_count> count_device_type{};
 
-    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
-        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
-        assert(deviceProperties.deviceType <= VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU);
-        count_device_type[static_cast<int>(deviceProperties.deviceType)]++;
-    }
+	std::vector<double> device_score(gpuCount, 0.0);
 
-    std::array<VkPhysicalDeviceType, device_type_count> const device_type_preference = {
-        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU,
-        VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU, VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_OTHER};
+	for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+		vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+		std::cout << "GPU " << i << ": " << deviceProperties.deviceName << std::endl;
+		assert(deviceProperties.deviceType <= VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU);
+		count_device_type[static_cast<int>(deviceProperties.deviceType)]++;
 
-    VkPhysicalDeviceType search_for_device_type = VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-    for (uint32_t i = 0; i < sizeof(device_type_preference) / sizeof(VkPhysicalDeviceType); i++) {
-        if (count_device_type[static_cast<int>(device_type_preference[i])]) {
-            search_for_device_type = device_type_preference[i];
-            break;
-        }
-    }
+		switch (deviceProperties.deviceType) {
+		case VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+			device_score[i] += 100.0;
+			break;
+		case VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+			device_score[i] += 90.0;
+			break;
+		case VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+			device_score[i] += 80.0;
+			break;
+		case VkPhysicalDeviceType::VK_PHYSICAL_DEVICE_TYPE_CPU:
+			device_score[i] += 70.0;
+			break;
+		}
 
-    for (uint32_t i = 0; i < physicalDevices.size(); i++) {
-        vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
-        if (deviceProperties.deviceType == search_for_device_type) {
-            gpu_number = i;
-            break;
-        }
-    }
-    assert(gpu_number >= 0);
+		VkPhysicalDeviceMemoryProperties mem_prop;
+		vkGetPhysicalDeviceMemoryProperties(physicalDevices[i], &mem_prop);
+		double max_mem = 0.0;
+		for (int j = 0; j < mem_prop.memoryHeapCount; j++)
+		{
+			if (mem_prop.memoryHeaps[j].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+			{
+				double mem_pb = (double)mem_prop.memoryHeaps[j].size / 1024.0 / 1024.0 / 1024.0 / 1024.0;
+				if (mem_pb > max_mem)
+					max_mem = mem_pb;
+			}
+		}
+		device_score[i] += max_mem;
+	}
+
+	for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+		// Get available queue family properties
+		uint32_t queueCount;
+		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevices[i], &queueCount, NULL);
+		if (queueCount >= 1) {
+			std::vector<VkQueueFamilyProperties> queueProps(queueCount);
+			vkGetPhysicalDeviceQueueFamilyProperties(physicalDevices[i], &queueCount, queueProps.data());
+
+			uint32_t graphicsQueueNodeIndex = UINT32_MAX;
+			for (uint32_t j = 0; j < queueCount; j++)
+			{
+				if ((queueProps[j].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+				{
+					if (graphicsQueueNodeIndex == UINT32_MAX)
+					{
+						graphicsQueueNodeIndex = j;
+						break;
+					}
+				}
+			}
+			if (graphicsQueueNodeIndex == UINT32_MAX)
+			{
+				device_score[i] -= 10000.0;
+			}
+		}
+		else
+			device_score[i] -= 10000.0;
+	}
+
+	double max_score = 0.0;
+	for (uint32_t i = 0; i < physicalDevices.size(); i++) {
+		if (device_score[i] > max_score) {
+			max_score = device_score[i];
+			gpu_number = i;
+		}
+	}
+
+	if (device_id >= 0 && device_id < physicalDevices.size())
+		gpu_number = device_id;
+	else if (device_id >= 0)
+		std::cerr << "the gpu id in the setting file is invalid. vvdviewer will use the default device." << std::endl;
+
     physicalDevice = physicalDevices[gpu_number];
 
 	// Store properties (including limits), features and memory properties of the phyiscal device (so that examples can check against them)

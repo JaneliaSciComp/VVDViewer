@@ -832,13 +832,32 @@ void VRenderVulkanView::InitVulkan()
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
+	wxString expath = wxStandardPaths::Get().GetExecutablePath();
+	expath = expath.BeforeLast(GETSLASH(), NULL);
+#ifdef _DARWIN
+	wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
+#else
+	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
+	if (!wxFileExists(dft))
+		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
+#endif
+	wxFileInputStream is(dft);
+	if (!is.IsOk())
+		return;
+	wxFileConfig fconfig(is);
+
+	int gpu = -1;
+	int val = -1;
+	if (fconfig.Read("gpu", &val))
+		gpu = val;
+
 #if defined(_WIN32)
 	m_vulkan = make_shared<VVulkan>();
-	m_vulkan->initVulkan();
+	m_vulkan->initVulkan(gpu);
 	m_vulkan->setWindow((HWND)GetHWND(), GetModuleHandle(NULL));
 #elif defined(__WXMAC__)
 	m_vulkan = make_shared<VVulkan>();
-	m_vulkan->initVulkan();
+	m_vulkan->initVulkan(gpu);
     makeViewMetalCompatible(GetHandle());
 	m_vulkan->setWindow(GetHandle());
 #elif defined(__WXGTK__)
@@ -856,7 +875,7 @@ void VRenderVulkanView::InitVulkan()
 	if (GDK_IS_WAYLAND_DISPLAY(gtk_display))
 	{
 		//m_readyToDraw = false;
-		m_vulkan->initVulkan(VVulkan::PLATFORM_WAYLAND);
+		m_vulkan->initVulkan(VVulkan::PLATFORM_WAYLAND, gpu);
 		wl_display* wdisp = gdk_wayland_display_get_wl_display(gtk_display);
 		wl_surface* wsurf = gdk_wayland_window_get_wl_surface(gtk_window);
 		m_vulkan->setWindow(wdisp, wsurf);
@@ -889,7 +908,7 @@ void VRenderVulkanView::InitVulkan()
 	}
 	else
 	{
-		m_vulkan->initVulkan(VVulkan::PLATFORM_X11);
+		m_vulkan->initVulkan(VVulkan::PLATFORM_X11, gpu);
 		Display *dpy = GDK_DISPLAY_XDISPLAY(gtk_display);
     	xcb_window_t win = GDK_WINDOW_XID(gtk_window);
 		xcb_connection_t *c = xcb_connect(NULL, NULL);
