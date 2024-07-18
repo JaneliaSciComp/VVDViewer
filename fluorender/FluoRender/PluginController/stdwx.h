@@ -4,7 +4,7 @@
 #if defined(WIN32) || defined(WINDOWS)
 #include <windows.h>
 #include <winnt.h>
-#define PLUGIN_EXPORTED_API	WXEXPORT
+#define PLUGIN_EXPORTED_API	extern "C" WXEXPORT
 #else
 #define PLUGIN_EXPORTED_API	extern "C"
 #endif
