@@ -33,7 +33,7 @@ DEALINGS IN THE SOFTWARE.
 #include "Formats/brkxml_writer.h"
 #include <boost/lexical_cast.hpp>
 
-#include <wx/valnum.h>s
+#include <wx/valnum.h>
 
 //resources
 #include "img/icons.h"
