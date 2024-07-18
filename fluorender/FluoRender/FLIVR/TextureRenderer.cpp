@@ -913,7 +913,7 @@ namespace FLIVR
 
 	void TextureRenderer::set_desel_palette_mode_dark(float fac)
 	{
-		if (!sel_segs_.empty())
+		if (!sel_segs_.empty() || !roi_tree_.empty())
 		{
 			for (int i = 1; i < PALETTE_SIZE; i++)
 			{
@@ -955,7 +955,7 @@ namespace FLIVR
 
 	void TextureRenderer::set_desel_palette_mode_gray(float fac)
 	{
-		if (!sel_segs_.empty())
+		if (!sel_segs_.empty() || !roi_tree_.empty())
 		{
 			for (int i = 1; i < PALETTE_SIZE; i++)
 			{
@@ -993,7 +993,7 @@ namespace FLIVR
 
 	void TextureRenderer::set_desel_palette_mode_invisible()
 	{
-		if (!sel_segs_.empty())
+		if (!sel_segs_.empty() || !roi_tree_.empty())
 		{
 			for (int i = 0; i < PALETTE_SIZE; i++)
 				for (int j = 0; j < 4; j++)
