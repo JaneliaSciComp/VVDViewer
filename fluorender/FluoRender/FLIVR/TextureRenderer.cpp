@@ -1172,6 +1172,22 @@ namespace FLIVR
 		return ss.str();
 	}
 
+	string TextureRenderer::exprot_combined_roi_ids()
+	{
+		std::ostringstream oss;
+		for (const auto& pair : combined_rois_) {
+			oss << pair.first << ":";
+			for (size_t i = 0; i < pair.second.size(); ++i) {
+				oss << pair.second[i];
+				if (i < pair.second.size() - 1) {
+					oss << ",";
+				}
+			}
+			oss << ";";
+		}
+		return oss.str();
+	}
+
 	void TextureRenderer::import_roi_tree_xml(const wstring &filepath)
 	{
 		tinyxml2::XMLDocument doc; 
@@ -1296,6 +1312,45 @@ namespace FLIVR
 		}
 
 		update_palette(desel_palette_mode_, desel_col_fac_);
+	}
+
+	void TextureRenderer::import_combined_ids(const string& combined_ids_str)
+	{
+		combined_rois_.clear();
+		std::istringstream iss(combined_ids_str);
+		std::string item;
+
+		while (std::getline(iss, item, ';')) {
+			if (item.empty()) continue;
+			std::istringstream itemStream(item);
+			std::string keyStr, valuesStr;
+			std::getline(itemStream, keyStr, ':');
+			std::getline(itemStream, valuesStr);
+
+			int key = std::stoi(keyStr);
+			std::vector<int> values;
+			std::istringstream valuesStream(valuesStr);
+			std::string valueStr;
+
+			while (std::getline(valuesStream, valueStr, ',')) {
+				values.push_back(std::stoi(valueStr));
+			}
+
+			combined_rois_[key] = values;
+		}
+
+		rois_combined_to_.clear();
+		for (const auto& pair : combined_rois_)
+		{
+			if (pair.first >= 0)
+			{
+				for (int val : pair.second)
+				{
+					if (val >= 0)
+						rois_combined_to_[val] = pair.first;
+				}
+			}
+		}
 	}
 
 	void TextureRenderer::combine_selected_rois()

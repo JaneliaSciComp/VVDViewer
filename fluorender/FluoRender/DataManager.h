@@ -823,9 +823,11 @@ public:
 	boost::property_tree::wptree* getROITree() { return m_vr ? m_vr->get_roi_tree() : NULL; }
 	wstring ExportROITree() { return m_vr ? m_vr->export_roi_tree() : wstring(); }
 	string ExportSelIDs() { return m_vr ? m_vr->exprot_selected_roi_ids() : string(); }
+	string ExportCombinedROIs() { return m_vr ? m_vr->exprot_combined_roi_ids() : string(); }
 	void ImportROITree(const wstring& tree) { if (m_vr) m_vr->import_roi_tree(tree); }
 	void ImportROITreeXML(const wstring& filepath) { if (m_vr) m_vr->import_roi_tree_xml(filepath); }
 	void ImportSelIDs(const string& sel_ids_str) { if (m_vr) m_vr->import_selected_ids(sel_ids_str); }
+	void ImportCombinedROIs(const string& combined_ids_str) { if (m_vr) m_vr->import_combined_ids(combined_ids_str); }
 	void CombineSelectedROIs() { if (m_vr) m_vr->combine_selected_rois(); }
 	void SplitSelectedROIs() { if (m_vr) m_vr->split_selected_rois(); }
 	int IsROICombined(int id) { return m_vr ? m_vr->is_roi_combined(id) : -1; }

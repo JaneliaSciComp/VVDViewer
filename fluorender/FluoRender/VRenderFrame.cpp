@@ -3808,6 +3808,12 @@ void VRenderFrame::SaveProject(wxString& filename)
 				wxString wxstr(roi_ids_str);
 				fconfig.Write("selected_rois", wxstr);
 			}
+			string combined_roi_ids_str = vd->ExportCombinedROIs();
+			if (!combined_roi_ids_str.empty())
+			{
+				wxString wxstr(combined_roi_ids_str);
+				fconfig.Write("combined_rois", wxstr);
+			}
 			fconfig.Write("roi_disp_mode", vd->GetIDColDispMode());
 
 			//mask
@@ -4803,6 +4809,8 @@ VolumeData* VRenderFrame::OpenVolumeFromProject(wxString name, wxFileConfig &fco
 							vd->ImportROITree(str.ToStdWstring());
 						if (fconfig.Read("selected_rois", &str))
 							vd->ImportSelIDs(str.ToStdString());
+						if (fconfig.Read("combined_rois", &str))
+							vd->ImportCombinedROIs(str.ToStdString());
 						if (fconfig.Read("roi_disp_mode", &iVal))
 							vd->SetIDColDispMode(iVal);
 
@@ -5308,6 +5316,8 @@ void VRenderFrame::SetVolumePropertiesFromProject(wxFileConfig &fconfig)
                             vd->ImportROITree(str.ToStdWstring());
                         if (fconfig.Read("selected_rois", &str))
                             vd->ImportSelIDs(str.ToStdString());
+						if (fconfig.Read("combined_rois", &str))
+							vd->ImportCombinedROIs(str.ToStdString());
                         if (fconfig.Read("roi_disp_mode", &iVal))
                             vd->SetIDColDispMode(iVal);
                         

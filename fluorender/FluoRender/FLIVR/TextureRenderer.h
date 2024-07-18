@@ -238,8 +238,10 @@ namespace FLIVR
 		 wstring export_roi_tree();
 		 void export_roi_tree_r(wstring &buf, const boost::property_tree::wptree& tree, const wstring& parent);
 		 string exprot_selected_roi_ids();
+         string exprot_combined_roi_ids();
 		 void import_roi_tree(const wstring &tree);
 		 void import_selected_ids(const string &sel_ids_str);
+         void import_combined_ids(const string& combined_ids_str);
 
          void combine_selected_rois();
          void split_selected_rois();
