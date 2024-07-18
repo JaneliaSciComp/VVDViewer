@@ -1308,13 +1308,26 @@ namespace FLIVR
 				if (first < 0)
 				{
 					first = *ite;
-					combined_rois_[first] = vector<int>();
+					if (combined_rois_.find(first) == combined_rois_.end())
+						combined_rois_[first] = vector<int>();
 					++ite;
 				}
 				else
 				{
-					combined_rois_[first].push_back(*ite);
-					rois_combined_to_[*ite] = first;
+					if (combined_rois_.find(*ite) != combined_rois_.end())
+					{
+						for (const int& element : combined_rois_[*ite])
+						{
+							combined_rois_[first].push_back(element);
+							rois_combined_to_[element] = first;
+						}
+						combined_rois_.erase(*ite);
+					}
+					else
+					{
+						combined_rois_[first].push_back(*ite);
+						rois_combined_to_[*ite] = first;
+					}
 					ite = sel_ids_.erase(ite);
 				}
 			}

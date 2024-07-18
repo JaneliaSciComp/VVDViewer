@@ -1784,6 +1784,13 @@ void DataTreeCtrl::OnDeleteAllSeg(wxCommandEvent& event)
 	if (m_fixed)
 	return;
 
+	wxMessageDialog dialog(this, "Do you want to proceed?", "Delete all segments",
+		wxOK | wxCANCEL | wxCENTRE);
+	int result = dialog.ShowModal();
+
+	if (result == wxID_CANCEL)
+		return;
+
 	wxTreeItemId sel_item = GetSelection();
 	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
 	if (!vr_frame) return;
@@ -3966,7 +3973,9 @@ void DataTreeCtrl::UpdateVolItem(wxTreeItemId item, VolumeData *vd)
 	LayerInfo* item_data = (LayerInfo *)GetItemData(item);
 	item_data->type = 2;//volume data
 	
+	SetEvtHandlerEnabled(false);
 	DeleteChildren(item);
+	SetEvtHandlerEnabled(true);
 	if (vd->GetColormapMode() == 3)
 		BuildROITree(item, *vd->getROITree(), vd);
 
@@ -3985,13 +3994,14 @@ void DataTreeCtrl::BuildROITree(wxTreeItemId par_item, const boost::property_tre
 			{
 				wptree subtree = child->second;
 				int id = boost::lexical_cast<int>(child->first);
-				wxString name = *val;
-				wxTreeItemId item = AppendItem(par_item, name, 1);
-				LayerInfo* item_data = new LayerInfo;
-				item_data->type = (id > 0) ? 7 : 8;//7-volume segment : 8-segmnet group
-				item_data->id = id;
-				if (item_data->type == 8 || !vd || vd->IsROICombined(id) < 0)
+				if (id <= 0 || !vd || vd->IsROICombined(id) < 0)
 				{
+					wxString name = *val;
+					wxTreeItemId item = AppendItem(par_item, name, 1);
+					LayerInfo* item_data = new LayerInfo;
+					item_data->type = (id > 0) ? 7 : 8;//7-volume segment : 8-segmnet group
+					item_data->id = id;
+				
 					SetItemData(item, item_data);
 					if (vd)
 					{
@@ -4005,9 +4015,9 @@ void DataTreeCtrl::BuildROITree(wxTreeItemId par_item, const boost::property_tre
 						SetItemImage(item, vd->isSelID(id) ? 2 * ii + 1 : 2 * ii);
 						item_data->icon = vd->isSelID(id) ? 2 * ii + 1 : 2 * ii;
 					}
-				}
 
-				BuildROITree(item, subtree, vd);
+					BuildROITree(item, subtree, vd);
+				}
 			}
 			catch (boost::bad_lexical_cast e)
 			{
