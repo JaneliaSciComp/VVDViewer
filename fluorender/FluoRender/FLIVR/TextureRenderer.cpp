@@ -1323,11 +1323,10 @@ namespace FLIVR
 						}
 						combined_rois_.erase(*ite);
 					}
-					else
-					{
-						combined_rois_[first].push_back(*ite);
-						rois_combined_to_[*ite] = first;
-					}
+
+					combined_rois_[first].push_back(*ite);
+					rois_combined_to_[*ite] = first;
+
 					ite = sel_ids_.erase(ite);
 				}
 			}
