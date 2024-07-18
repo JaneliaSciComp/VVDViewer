@@ -221,6 +221,8 @@ class EXPORT_API VRenderVulkanView: public wxWindow
 		ID_CTXMENU_HIDE_SELECTED_FLAGMENTS,
 		ID_CTXMENU_UNDO_VISIBILITY_SETTING_CHANGES,
 		ID_CTXMENU_REDO_VISIBILITY_SETTING_CHANGES,
+		ID_CTXMENU_JOIN_SEGMENTS,
+		ID_CTXMENU_SPLIT_SEGMENTS,
 	};
 
 public:
@@ -1370,6 +1372,8 @@ private:
     void OnDeselectAllFragments(wxCommandEvent& event);
 	void OnHideOtherFragments(wxCommandEvent& event);
 	void OnHideSelectedFragments(wxCommandEvent& event);
+	void OnJoinSegments(wxCommandEvent& event);
+	void OnSplitSegments(wxCommandEvent& event);
 	void OnUndoVisibilitySettings(wxCommandEvent& event);
 	void OnRedoVisibilitySettings(wxCommandEvent& event);
 

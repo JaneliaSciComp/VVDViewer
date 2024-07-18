@@ -305,6 +305,7 @@ private:
 	int m_rename;
 
 	static bool m_md_save_indv;
+	static int m_save_scale_level;
 
 	std::unordered_map<wxString, bool> m_exp_state;
 
@@ -315,6 +316,7 @@ private:
 
 	static wxWindow* CreateExtraControl(wxWindow* parent);
 	void OnCh1Check(wxCommandEvent &event);
+	void OnTxt1Change(wxCommandEvent& event);
 
 	//change the color of just one icon of the dual,
 	//either enable(type=0), or disable(type=1)

@@ -253,7 +253,7 @@ namespace FLIVR {
                 break;
             case nrrdTypeInt:
             case nrrdTypeUInt:
-                    ret = (float)( ((unsigned short *)m_nrrd->data)[idx] );
+                    ret = (float)( ((unsigned int *)m_nrrd->data)[idx] );
                 break;
             case nrrdTypeFloat:
                 ret = ((float *)m_nrrd->data)[idx];
@@ -262,6 +262,30 @@ namespace FLIVR {
             
             return ret;
         }
+
+		//you must check null before using this
+		void setFloatUnsafe(size_t idx, float value)
+		{
+			float ret = 0.0f;
+			switch (m_nrrd->type)
+			{
+			case nrrdTypeChar:
+			case nrrdTypeUChar:
+				((unsigned char*)m_nrrd->data)[idx] = (unsigned char) value;
+				break;
+			case nrrdTypeShort:
+			case nrrdTypeUShort:
+				((unsigned short*)m_nrrd->data)[idx] = (unsigned short) value;
+				break;
+			case nrrdTypeInt:
+			case nrrdTypeUInt:
+				((unsigned int*)m_nrrd->data)[idx] = (unsigned int) value;
+				break;
+			case nrrdTypeFloat:
+				((float*)m_nrrd->data)[idx] = value;
+				break;
+			}
+		}
 
 
 	};

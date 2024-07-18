@@ -514,10 +514,10 @@ class EXPORT_API VolumeData : public TreeLayer
 {
 public:
 	VolumeData();
-	VolumeData(VolumeData &copy);
+	VolumeData(VolumeData& copy);
 	virtual ~VolumeData();
 
-	static VolumeData* DeepCopy(VolumeData &copy, bool use_default_settings=false, DataManager *d_manager=NULL);
+	static VolumeData* DeepCopy(VolumeData& copy, bool use_default_settings = false, DataManager* d_manager = NULL);
 
 	//duplication
 	bool GetDup();
@@ -526,8 +526,8 @@ public:
 
 	//data related
 	//reader
-	void SetReader(BaseReader* reader) {m_reader = reader;}
-	BaseReader* GetReader() {return m_reader;}
+	void SetReader(BaseReader* reader) { m_reader = reader; }
+	BaseReader* GetReader() { return m_reader; }
 	//compression
 	void SetCompression(bool compression);
 	bool GetCompression();
@@ -535,7 +535,7 @@ public:
 	void SetSkipBrick(bool skip);
 	bool GetSkipBrick();
 	//load
-	int Load(const std::shared_ptr<VL_Nrrd> &data, const wxString &name, const wxString &path, BRKXMLReader *breader = NULL);
+	int Load(const std::shared_ptr<VL_Nrrd>& data, const wxString& name, const wxString& path, BRKXMLReader* breader = NULL);
 	int Replace(const std::shared_ptr<VL_Nrrd>& data, bool del_tex);
 	int Replace(VolumeData* data);
 	std::shared_ptr<VL_Nrrd> GetVolume(bool ret);
@@ -560,20 +560,20 @@ public:
 	std::shared_ptr<VL_Nrrd> GetStroke(bool ret);
 	void AddEmptyStroke();
 	//mode: 0-zeros;1-ordered; 2-shuffled
-	void AddEmptyLabel(int mode=0);
+	void AddEmptyLabel(int mode = 0);
 	bool SearchLabel(unsigned int label);
 
 	//save
-	double GetOriginalValue(int i, int j, int k, bool normalize=true);
+	double GetOriginalValue(int i, int j, int k, bool normalize = true);
 	double GetTransferedValue(int i, int j, int k);
 	int GetLabellValue(int i, int j, int k);
-	void Save(wxString &filename, int mode=0, bool bake=false, bool compress=false, bool save_msk=true, bool save_label=true, VolumeLoader *vl=NULL, bool crop=false);
-	void ExportMask(wxString &filename);
-	void ImportMask(wxString &filename);
-	void ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd=nullptr, int mode=2, bool compress=true);
+	void Save(wxString& filename, int mode = 0, bool bake = false, bool compress = false, bool save_msk = true, bool save_label = true, VolumeLoader* vl = NULL, bool crop = false, int lv = 0);
+	void ExportMask(wxString& filename);
+	void ImportMask(wxString& filename);
+	void ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd = nullptr, int mode = 2, bool compress = true);
 
 	//volumerenderer
-	VolumeRenderer *GetVR();
+	VolumeRenderer* GetVR();
 	//texture
 	Texture* GetTexture();
 	void SetTexture();
@@ -591,15 +591,15 @@ public:
 	int GetCurTime();
 
 	//draw volume
-	void SetMatrices(glm::mat4 &mv_mat, glm::mat4 &proj_mat, glm::mat4 &tex_mat);
+	void SetMatrices(glm::mat4& mv_mat, glm::mat4& proj_mat, glm::mat4& tex_mat);
 	void Draw(
-		std::unique_ptr<vks::VFrameBuffer> &framebuf,
+		std::unique_ptr<vks::VFrameBuffer>& framebuf,
 		bool clear_framebuf,
 		bool otho = false,
 		bool intactive = false,
 		double zoom = 1.0,
 		double sampling_frq_fac = -1.0,
-		VkClearColorValue clearColor = {0.0f, 0.0f, 0.0f, 0.0f},
+		VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 0.0f },
 		Texture* ext_msk = NULL,
 		Texture* ext_lbl = NULL
 	);
@@ -642,9 +642,9 @@ public:
 	double GetLeftThresh();
 	void SetRightThresh(double dVal);
 	double GetRightThresh();
-	void SetColor(const Color &color, bool update_hsv=true);
+	void SetColor(const Color& color, bool update_hsv = true);
 	Color GetColor();
-	void SetMaskColor(Color &color, bool set=true);
+	void SetMaskColor(Color& color, bool set = true);
 	Color GetMaskColor();
 	bool GetMaskColorSet();
 	void ResetMaskColorSet();
@@ -655,7 +655,7 @@ public:
 	void SetEnableAlpha(bool mode);
 	bool GetEnableAlpha();
 	void SetHSV(double hue = -1, double sat = -1, double val = -1);
-	void GetHSV(double &hue, double &sat, double &val);
+	void GetHSV(double& hue, double& sat, double& val);
 
 	//mask threshold
 	void SetMaskThreshold(double thresh);
@@ -665,14 +665,14 @@ public:
 	void SetShading(bool bVal);
 	bool GetShading();
 	void SetMaterial(double amb, double diff, double spec, double shine);
-	void GetMaterial(double &amb, double &diff, double &spec, double &shine);
+	void GetMaterial(double& amb, double& diff, double& spec, double& shine);
 	void SetLowShading(double dVal);
 	void SetHiShading(double dVal);
 	//shadow
 	void SetShadow(bool bVal);
 	bool GetShadow();
 	void SetShadowParams(double val);
-	void GetShadowParams(double &val);
+	void GetShadowParams(double& val);
 	//sample rate
 	void SetSampleRate(double rate);
 	double GetSampleRate();
@@ -683,29 +683,29 @@ public:
 	void SetColormapDisp(bool disp);
 	bool GetColormapDisp();
 	void SetColormapValues(double low, double high);
-	void GetColormapValues(double &low, double &high);
+	void GetColormapValues(double& low, double& high);
 	void SetColormap(int value);
 	void SetColormapProj(int value);
 	int GetColormap();
 	int GetColormapProj();
 
 	//resolution  scaling and spacing
-	void GetResolution(int &res_x, int &res_y, int &res_z);
+	void GetResolution(int& res_x, int& res_y, int& res_z);
 	void SetScalings(double sclx, double scly, double sclz);
-	void GetScalings(double &sclx, double &scly, double &sclz);
+	void GetScalings(double& sclx, double& scly, double& sclz);
 	void SetSpacings(double spcx, double spcy, double spcz);
-	void GetSpacings(double &spcx, double &spcy, double & spcz, int lv = -1);
+	void GetSpacings(double& spcx, double& spcy, double& spcz, int lv = -1);
 	void SetBaseSpacings(double spcx, double spcy, double spcz);
-	void GetBaseSpacings(double &spcx, double &spcy, double & spcz);
+	void GetBaseSpacings(double& spcx, double& spcy, double& spcz);
 	void SetSpacingScales(double s_spcx, double s_spcy, double s_spcz);
-	void GetSpacingScales(double &s_spcx, double &s_spcy, double &s_spcz);
+	void GetSpacingScales(double& s_spcx, double& s_spcy, double& s_spcz);
 	void SetLevel(int lv);
 	int GetLevel();
 	int GetLevelNum();
-	void GetFileSpacings(double &spcx, double &spcy, double &spcz);
+	void GetFileSpacings(double& spcx, double& spcy, double& spcz);
 	//read resolutions from file
-	void SetSpcFromFile(bool val=true) {m_spc_from_file = val;}
-	bool GetSpcFromFile() {return m_spc_from_file;}
+	void SetSpcFromFile(bool val = true) { m_spc_from_file = val; }
+	bool GetSpcFromFile() { return m_spc_from_file; }
 
 	//display controls
 	void SetDisp(bool disp);
@@ -723,8 +723,8 @@ public:
 	int GetMode();
 	void RestoreMode();
 	//stream modes
-	void SetStreamMode(int mode) {m_stream_mode = mode;}
-	int GetStreamMode() {return m_stream_mode;}
+	void SetStreamMode(int mode) { m_stream_mode = mode; }
+	int GetStreamMode() { return m_stream_mode; }
 
 	//invert
 	void SetInvert(bool mode);
@@ -745,16 +745,16 @@ public:
 	int GetBlendMode();
 
 	//scalar value info
-	double GetScalarScale() {return m_scalar_scale;}
-	void SetScalarScale(double val) {m_scalar_scale = val; if (m_vr) m_vr->set_scalar_scale(val);}
-	double GetGMScale() {return m_gm_scale;}
-	void SetGMScale(double val) {m_gm_scale = val; if (m_vr) m_vr->set_gm_scale(val);}
-	double GetMaxValue() {return m_max_value;}
-	void SetMaxValue(double val) {m_max_value = val;}
+	double GetScalarScale() { return m_scalar_scale; }
+	void SetScalarScale(double val) { m_scalar_scale = val; if (m_vr) m_vr->set_scalar_scale(val); }
+	double GetGMScale() { return m_gm_scale; }
+	void SetGMScale(double val) { m_gm_scale = val; if (m_vr) m_vr->set_gm_scale(val); }
+	double GetMaxValue() { return m_max_value; }
+	void SetMaxValue(double val) { m_max_value = val; }
 
 	//clip distance
 	void SetClipDistance(int distx, int disty, int distz);
-	void GetClipDistance(int &distx, int &disty, int &distz);
+	void GetClipDistance(int& distx, int& disty, int& distz);
 
 	//randomize color
 	void RandomizeColor();
@@ -766,66 +766,70 @@ public:
 	bool GetInterpolate();
 
 	//number of valid bricks
-	void SetBrickNum(int num) {m_brick_num = num;}
-	int GetBrickNum() {return m_brick_num;}
+	void SetBrickNum(int num) { m_brick_num = num; }
+	int GetBrickNum() { return m_brick_num; }
 
 	//added by takashi
-	vector<AnnotationDB> GetAnnotation(){return m_annotation;}
-	void SetAnnotation(vector<AnnotationDB> ann){m_annotation = ann;}
+	vector<AnnotationDB> GetAnnotation() { return m_annotation; }
+	void SetAnnotation(vector<AnnotationDB> ann) { m_annotation = ann; }
 
-	void GetLandmark(int index, VD_Landmark &vdl){ if(0 <= index && index < m_landmarks.size()) vdl = m_landmarks[index]; }
-	int GetLandmarkNum() {return m_landmarks.size();}
-	void GetMetadataID(wstring &mid){mid = m_metadata_id;}
+	void GetLandmark(int index, VD_Landmark& vdl) { if (0 <= index && index < m_landmarks.size()) vdl = m_landmarks[index]; }
+	int GetLandmarkNum() { return m_landmarks.size(); }
+	void GetMetadataID(wstring& mid) { mid = m_metadata_id; }
 
 	VolumeData* CopyLevel(int lv = -1);
 	bool isBrxml();
 
 	void SetFog(bool use_fog, double fog_intensity, double fog_start, double fog_end);
 
-    void GenAllROINames(){ if (m_vr) m_vr->gen_all_roi_names(); }
-    std::unordered_set<int> GetSelIDs() { return m_vr ? m_vr->get_sel_ids() : std::unordered_set<int>(); }
-    void SetSelIDs(const std::unordered_set<int> &ids) { if (m_vr) m_vr->set_sel_ids(ids); }
-	void SetROIName(wstring name, int id=-1, wstring parent_name=L""){ if (m_vr) m_vr->set_roi_name(name, id, parent_name); }
-	int AddROIGroup(wstring parent_name=L"", wstring name=L""){ return m_vr ? m_vr->add_roi_group_node(parent_name, name) : -1; }
-	int GetNextSiblingROI(int id){ return m_vr ? m_vr->get_next_sibling_roi(id) : -1; }
+	void GenAllROINames() { if (m_vr) m_vr->gen_all_roi_names(); }
+	std::unordered_set<int> GetSelIDs() { return m_vr ? m_vr->get_sel_ids() : std::unordered_set<int>(); }
+	void SetSelIDs(const std::unordered_set<int>& ids) { if (m_vr) m_vr->set_sel_ids(ids); }
+	void SetROIName(wstring name, int id = -1, wstring parent_name = L"") { if (m_vr) m_vr->set_roi_name(name, id, parent_name); }
+	int AddROIGroup(wstring parent_name = L"", wstring name = L"") { return m_vr ? m_vr->add_roi_group_node(parent_name, name) : -1; }
+	int GetNextSiblingROI(int id) { return m_vr ? m_vr->get_next_sibling_roi(id) : -1; }
 	//insert_mode: 0-before dst; 1-after dst; 2-into group
-	void MoveROINode(int src_id, int dst_id, int insert_mode=0){ if (m_vr) m_vr->move_roi_node(src_id, dst_id, insert_mode); }
-	void EraseROITreeNode(int id=-1){ if (m_vr) m_vr->erase_node(id); }
-	void EraseROITreeNode(wstring name){ if (m_vr) m_vr->erase_node(name); }
-	wstring GetROIName(int id=-1){ return m_vr ? m_vr->get_roi_name(id) : wstring(); }
-	int GetROIid(wstring name){ return m_vr ? m_vr->get_roi_id(name) : -1; }
-	void SetROISel(wstring name, bool select, bool traverse=false){ if (m_vr) m_vr->set_roi_select(name, select, traverse); }
-	void SetROISelChildren(wstring name, bool select, bool traverse=false){ if (m_vr) m_vr->set_roi_select_children(name, select, traverse); }
-	void SelectAllNamedROI(){ if (m_vr) m_vr->select_all_roi_tree(); }
-	void DeselectAllNamedROI(){ if (m_vr) m_vr->deselect_all_roi_tree(); }
-	void DeselectAllROI(){ if (m_vr) m_vr->deselect_all_roi(); }
-	void ClearROIs(){ if (m_vr) m_vr->clear_roi(); }
-	void SetIDColor(unsigned char r, unsigned char g, unsigned char b, bool update_palette=true, int id=-1)
+	void MoveROINode(int src_id, int dst_id, int insert_mode = 0) { if (m_vr) m_vr->move_roi_node(src_id, dst_id, insert_mode); }
+	void EraseROITreeNode(int id = -1) { if (m_vr) m_vr->erase_node(id); }
+	void EraseROITreeNode(wstring name) { if (m_vr) m_vr->erase_node(name); }
+	wstring GetROIName(int id = -1) { return m_vr ? m_vr->get_roi_name(id) : wstring(); }
+	int GetROIid(wstring name) { return m_vr ? m_vr->get_roi_id(name) : -1; }
+	void SetROISel(wstring name, bool select, bool traverse = false) { if (m_vr) m_vr->set_roi_select(name, select, traverse); }
+	void SetROISelChildren(wstring name, bool select, bool traverse = false) { if (m_vr) m_vr->set_roi_select_children(name, select, traverse); }
+	void SelectAllNamedROI() { if (m_vr) m_vr->select_all_roi_tree(); }
+	void DeselectAllNamedROI() { if (m_vr) m_vr->deselect_all_roi_tree(); }
+	void DeselectAllROI() { if (m_vr) m_vr->deselect_all_roi(); }
+	void ClearROIs() { if (m_vr) m_vr->clear_roi(); }
+	void SetIDColor(unsigned char r, unsigned char g, unsigned char b, bool update_palette = true, int id = -1)
 	{
 		if (m_vr) m_vr->set_id_color(r, g, b, update_palette, id);
 	}
-	void GetIDColor(unsigned char &r, unsigned char &g, unsigned char &b, int id=-1)
+	void GetIDColor(unsigned char& r, unsigned char& g, unsigned char& b, int id = -1)
 	{
 		if (m_vr) m_vr->get_id_color(r, g, b, id);
 	}
-	void GetRenderedIDColor(unsigned char &r, unsigned char &g, unsigned char &b, int id=-1)
+	void GetRenderedIDColor(unsigned char& r, unsigned char& g, unsigned char& b, int id = -1)
 	{
 		if (m_vr) m_vr->get_rendered_id_color(r, g, b, id);
 	}
-	bool isSelID(int id){ return m_vr ? m_vr->is_sel_id(id) : false; }
-	void AddSelID(int id){ if (m_vr) m_vr->add_sel_id(id); }
-	void DelSelID(int id){ if (m_vr) m_vr->del_sel_id(id); }
-	int GetEditSelID(){ return m_vr ? m_vr->get_edit_sel_id() : -1; }
-	void SetEditSelID(int id){ if (m_vr) m_vr->set_edit_sel_id(id); }
-	void ClearSelIDs(){ if (m_vr) m_vr->clear_sel_ids(); }
-	void SetIDColDispMode(int mode){ if (m_vr) m_vr->update_palette(mode); }
-	int GetIDColDispMode(){ return m_vr ? m_vr->get_roi_disp_mode() : 0; }
-	boost::property_tree::wptree *getROITree(){ return m_vr ? m_vr->get_roi_tree() : NULL; };
-	wstring ExportROITree(){ return m_vr ? m_vr->export_roi_tree() : wstring(); }
-	string ExportSelIDs(){ return m_vr ? m_vr->exprot_selected_roi_ids() : string(); }
-	void ImportROITree(const wstring &tree){ if (m_vr) m_vr->import_roi_tree(tree); }
-	void ImportROITreeXML(const wstring &filepath){ if (m_vr) m_vr->import_roi_tree_xml(filepath); }
-	void ImportSelIDs(const string &sel_ids_str){ if (m_vr) m_vr->import_selected_ids(sel_ids_str); }
+	bool isSelID(int id) { return m_vr ? m_vr->is_sel_id(id) : false; }
+	void AddSelID(int id) { if (m_vr) m_vr->add_sel_id(id); }
+	void DelSelID(int id) { if (m_vr) m_vr->del_sel_id(id); }
+	int GetEditSelID() { return m_vr ? m_vr->get_edit_sel_id() : -1; }
+	void SetEditSelID(int id) { if (m_vr) m_vr->set_edit_sel_id(id); }
+	void ClearSelIDs() { if (m_vr) m_vr->clear_sel_ids(); }
+	void SetIDColDispMode(int mode) { if (m_vr) m_vr->update_palette(mode); }
+	int GetIDColDispMode() { return m_vr ? m_vr->get_roi_disp_mode() : 0; }
+	boost::property_tree::wptree* getROITree() { return m_vr ? m_vr->get_roi_tree() : NULL; }
+	wstring ExportROITree() { return m_vr ? m_vr->export_roi_tree() : wstring(); }
+	string ExportSelIDs() { return m_vr ? m_vr->exprot_selected_roi_ids() : string(); }
+	void ImportROITree(const wstring& tree) { if (m_vr) m_vr->import_roi_tree(tree); }
+	void ImportROITreeXML(const wstring& filepath) { if (m_vr) m_vr->import_roi_tree_xml(filepath); }
+	void ImportSelIDs(const string& sel_ids_str) { if (m_vr) m_vr->import_selected_ids(sel_ids_str); }
+	void CombineSelectedROIs() { if (m_vr) m_vr->combine_selected_rois(); }
+	void SplitSelectedROIs() { if (m_vr) m_vr->split_selected_rois(); }
+	int IsROICombined(int id) { return m_vr ? m_vr->is_roi_combined(id) : -1; }
+	std::map<int, vector<int>>* GetCombinedROIs() { return m_vr ? m_vr->get_combined_rois() : NULL; }
 
 	void FlipHorizontally();
 	void FlipVertically();

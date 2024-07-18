@@ -241,6 +241,11 @@ namespace FLIVR
 		 void import_roi_tree(const wstring &tree);
 		 void import_selected_ids(const string &sel_ids_str);
 
+         void combine_selected_rois();
+         void split_selected_rois();
+         int is_roi_combined(int id);
+         std::map<int, vector<int>> *get_combined_rois() { return &combined_rois_; }
+
 		 boost::property_tree::wptree roi_tree_;
 #else
 		void *roi_tree_; //dummy
@@ -389,6 +394,8 @@ namespace FLIVR
 			   unsigned char base_palette_[PALETTE_SIZE*PALETTE_ELEM_COMP];
 			   std::unordered_set<int> sel_ids_;
 			   std::unordered_set<int> sel_segs_;
+               std::map<int, vector<int>> combined_rois_;
+               std::map<int, int> rois_combined_to_;
 
 			   int desel_palette_mode_;
 			   float desel_col_fac_;

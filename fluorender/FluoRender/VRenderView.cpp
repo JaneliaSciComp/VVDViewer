@@ -434,6 +434,8 @@ BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
     EVT_MENU(ID_CTXMENU_DESELECT_ALL_FRAGMENTS, VRenderVulkanView::OnDeselectAllFragments)
 	EVT_MENU(ID_CTXMENU_HIDE_OTHER_FRAGMENTS, VRenderVulkanView::OnHideOtherFragments)
 	EVT_MENU(ID_CTXMENU_HIDE_SELECTED_FLAGMENTS, VRenderVulkanView::OnHideSelectedFragments)
+	EVT_MENU(ID_CTXMENU_JOIN_SEGMENTS, VRenderVulkanView::OnJoinSegments)
+	EVT_MENU(ID_CTXMENU_SPLIT_SEGMENTS, VRenderVulkanView::OnSplitSegments)
 	EVT_MENU(ID_CTXMENU_UNDO_VISIBILITY_SETTING_CHANGES, VRenderVulkanView::OnUndoVisibilitySettings)
 	EVT_MENU(ID_CTXMENU_REDO_VISIBILITY_SETTING_CHANGES, VRenderVulkanView::OnRedoVisibilitySettings)
 	EVT_PAINT(VRenderVulkanView::OnDraw)
@@ -6529,6 +6531,10 @@ bool VRenderVulkanView::SelSegVolume(int mode)
 
 	if (picked_vd && picked_sel_id > 0)
 	{
+		int combined_seg_id = picked_vd->IsROICombined(picked_sel_id);
+		if (combined_seg_id > 0)
+			picked_sel_id = combined_seg_id;
+
 		switch(mode)
 		{
 		case 0:
@@ -7077,6 +7083,9 @@ void VRenderVulkanView::OnContextMenu(wxContextMenuEvent& event)
         menu.AppendSeparator();
 		menu.Append(ID_CTXMENU_HIDE_OTHER_VOLS, "Show only selected");
 		menu.Append(ID_CTXMENU_HIDE_THIS_VOL, "Hide selected");
+		menu.AppendSeparator();
+		menu.Append(ID_CTXMENU_JOIN_SEGMENTS, "Join selected segments");
+		menu.Append(ID_CTXMENU_SPLIT_SEGMENTS, "Split selected segments");
 	}
     menu.AppendSeparator();
 	menu.Append(ID_CTXMENU_UNDO_VISIBILITY_SETTING_CHANGES, "Undo visibility");
@@ -7390,6 +7399,36 @@ void VRenderVulkanView::OnHideSelectedFragments(wxCommandEvent& event)
 	{
 		RefreshGL();
 		vr_frame->UpdateTreeIcons();
+	}
+}
+void VRenderVulkanView::OnJoinSegments(wxCommandEvent& event)
+{
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (!vr_frame) return;
+
+	TreePanel* tree_panel = vr_frame->GetTree();
+	if (!tree_panel) return;
+
+	if (m_cur_vol && m_cur_vol->GetColormapMode() == 3)
+	{
+		m_cur_vol->CombineSelectedROIs();
+		vr_frame->UpdateROITree(m_cur_vol);
+		RefreshGL();
+	}
+}
+void VRenderVulkanView::OnSplitSegments(wxCommandEvent& event)
+{
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (!vr_frame) return;
+
+	TreePanel* tree_panel = vr_frame->GetTree();
+	if (!tree_panel) return;
+
+	if (m_cur_vol && m_cur_vol->GetColormapMode() == 3)
+	{
+		m_cur_vol->SplitSelectedROIs();
+		vr_frame->UpdateROITree(m_cur_vol);
+		RefreshGL();
 	}
 }
 void VRenderVulkanView::OnUndoVisibilitySettings(wxCommandEvent& event)

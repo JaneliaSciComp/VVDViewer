@@ -294,8 +294,10 @@ namespace FLIVR
 #ifndef _UNIT_TEST_VOLUME_RENDERER_WITHOUT_IDVOL
 		update_sel_segs();
 
-		if (sel_ids_.empty() && roi_tree_.empty()) return base_palette_tex_id_;
-		else return palette_tex_id_;
+		//if (sel_ids_.empty() && roi_tree_.empty()) return base_palette_tex_id_;
+		//else return palette_tex_id_;
+		return palette_tex_id_;
+
 #else
 		return palette_tex_id_;
 #endif
@@ -911,17 +913,38 @@ namespace FLIVR
 
 	void TextureRenderer::set_desel_palette_mode_dark(float fac)
 	{
-		for (int i = 1; i < PALETTE_SIZE; i++)
+		if (!sel_segs_.empty())
 		{
-			for (int j = 0; j < 3; j++)
-				palette_[i*PALETTE_ELEM_COMP+j] = (unsigned char)(base_palette_[i*PALETTE_ELEM_COMP+j]*fac);
-			palette_[i * PALETTE_ELEM_COMP + 3] = (unsigned char)255;
-		}
-		palette_[0] = 0; palette_[1] = 0; palette_[2] = 0; palette_[3] = 0;
+			for (int i = 1; i < PALETTE_SIZE; i++)
+			{
+				for (int j = 0; j < 3; j++)
+					palette_[i * PALETTE_ELEM_COMP + j] = (unsigned char)(base_palette_[i * PALETTE_ELEM_COMP + j] * fac);
+				palette_[i * PALETTE_ELEM_COMP + 3] = (unsigned char)255;
+			}
+			palette_[0] = 0; palette_[1] = 0; palette_[2] = 0; palette_[3] = 0;
 
-		for(auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
-			for (int j = 0; j < PALETTE_ELEM_COMP; j++)
-				if ((*ite) >= 0) palette_[(*ite)*PALETTE_ELEM_COMP + j] = base_palette_[(*ite)*PALETTE_ELEM_COMP + j];
+			for (auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
+				for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+					if ((*ite) >= 0) palette_[(*ite) * PALETTE_ELEM_COMP + j] = base_palette_[(*ite) * PALETTE_ELEM_COMP + j];
+		}
+		else
+			memcpy(palette_, base_palette_, sizeof(unsigned char) * PALETTE_SIZE * PALETTE_ELEM_COMP);
+
+		//combine segments
+		for (const auto& pair : combined_rois_)
+		{
+			if (pair.first >= 0) 
+			{
+				for (int val : pair.second)
+				{
+					if (val >= 0)
+					{
+						for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+								palette_[val * PALETTE_ELEM_COMP + j] = palette_[pair.first * PALETTE_ELEM_COMP + j];
+					}
+				}
+			}
+		}
 /*
 		for (int i = 0; i < 256*64; i++)
 			for (int j = 0; j < PALETTE_ELEM_COMP; j++)
@@ -932,31 +955,73 @@ namespace FLIVR
 
 	void TextureRenderer::set_desel_palette_mode_gray(float fac)
 	{
-		for (int i = 1; i < PALETTE_SIZE; i++)
+		if (!sel_segs_.empty())
 		{
-			for (int j = 0; j < 3; j++)
-				palette_[i*PALETTE_ELEM_COMP+j] = (unsigned char)(128.0*fac);
-			palette_[i*PALETTE_ELEM_COMP+3] = (unsigned char)255;
+			for (int i = 1; i < PALETTE_SIZE; i++)
+			{
+				for (int j = 0; j < 3; j++)
+					palette_[i * PALETTE_ELEM_COMP + j] = (unsigned char)(128.0 * fac);
+				palette_[i * PALETTE_ELEM_COMP + 3] = (unsigned char)255;
+			}
+			palette_[0] = 0; palette_[1] = 0; palette_[2] = 0; palette_[3] = 0;
+
+			for (auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
+				for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+					if ((*ite) >= 0) palette_[(*ite) * PALETTE_ELEM_COMP + j] = base_palette_[(*ite) * PALETTE_ELEM_COMP + j];
 		}
-		palette_[0] = 0; palette_[1] = 0; palette_[2] = 0; palette_[3] = 0;
+		else
+			memcpy(palette_, base_palette_, sizeof(unsigned char) * PALETTE_SIZE * PALETTE_ELEM_COMP);
 
-		for(auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
-			for (int j = 0; j < PALETTE_ELEM_COMP; j++)
-				if ((*ite) >= 0) palette_[(*ite)*PALETTE_ELEM_COMP + j] = base_palette_[(*ite)*PALETTE_ELEM_COMP + j];
-
+		//combine segments
+		for (const auto& pair : combined_rois_)
+		{
+			if (pair.first >= 0)
+			{
+				for (int val : pair.second)
+				{
+					if (val >= 0)
+					{
+						for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+							palette_[val * PALETTE_ELEM_COMP + j] = palette_[pair.first * PALETTE_ELEM_COMP + j];
+					}
+				}
+			}
+		}
+		
 		update_palette_tex();
 	}
 
 	void TextureRenderer::set_desel_palette_mode_invisible()
 	{
-		for (int i = 0; i < PALETTE_SIZE; i++)
-			for (int j = 0; j < 4; j++)
-				palette_[i*PALETTE_ELEM_COMP+j] = 0;
+		if (!sel_segs_.empty())
+		{
+			for (int i = 0; i < PALETTE_SIZE; i++)
+				for (int j = 0; j < 4; j++)
+					palette_[i * PALETTE_ELEM_COMP + j] = 0;
 
-		for(auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
-			for (int j = 0; j < PALETTE_ELEM_COMP; j++)
-				if ((*ite) >= 0) palette_[(*ite)*PALETTE_ELEM_COMP + j] = base_palette_[(*ite)*PALETTE_ELEM_COMP + j];
+			for (auto ite = sel_segs_.begin(); ite != sel_segs_.end(); ++ite)
+				for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+					if ((*ite) >= 0) palette_[(*ite) * PALETTE_ELEM_COMP + j] = base_palette_[(*ite) * PALETTE_ELEM_COMP + j];
+		}
+		else
+			memcpy(palette_, base_palette_, sizeof(unsigned char) * PALETTE_SIZE * PALETTE_ELEM_COMP);
 
+		//combine segments
+		for (const auto& pair : combined_rois_)
+		{
+			if (pair.first >= 0)
+			{
+				for (int val : pair.second)
+				{
+					if (val >= 0)
+					{
+						for (int j = 0; j < PALETTE_ELEM_COMP; j++)
+							palette_[val * PALETTE_ELEM_COMP + j] = palette_[pair.first * PALETTE_ELEM_COMP + j];
+					}
+				}
+			}
+		}
+		
 		update_palette_tex();
 	}
 
@@ -1232,6 +1297,70 @@ namespace FLIVR
 
 		update_palette(desel_palette_mode_, desel_col_fac_);
 	}
+
+	void TextureRenderer::combine_selected_rois()
+	{
+		int first = -1;
+		for (auto ite = sel_ids_.begin(); ite != sel_ids_.end(); )
+		{
+			if (*ite >= 0)
+			{
+				if (first < 0)
+				{
+					first = *ite;
+					combined_rois_[first] = vector<int>();
+					++ite;
+				}
+				else
+				{
+					combined_rois_[first].push_back(*ite);
+					rois_combined_to_[*ite] = first;
+					ite = sel_ids_.erase(ite);
+				}
+			}
+			else
+				++ite;
+		}
+		update_palette(desel_palette_mode_, desel_col_fac_);
+	}
+
+	void TextureRenderer::split_selected_rois()
+	{
+		unordered_set<int> new_selids;
+		for (auto ite = sel_ids_.begin(); ite != sel_ids_.end(); ++ite)
+		{
+			if (combined_rois_.find(*ite) != combined_rois_.end())
+			{
+				for (const int& element : combined_rois_[*ite])
+					new_selids.insert(element);
+				combined_rois_.erase(*ite);
+			}
+
+			for (auto ite2 = rois_combined_to_.begin(); ite2 != rois_combined_to_.end(); ) {
+				if (ite2->second == *ite) {
+					ite2 = rois_combined_to_.erase(ite2);
+				}
+				else {
+					++ite2;
+				}
+			}
+		}
+		if (!new_selids.empty())
+		{
+			for (const int& element : new_selids) {
+				sel_ids_.insert(element);
+			}
+		}
+		update_palette(desel_palette_mode_, desel_col_fac_);
+	}
+
+	int TextureRenderer::is_roi_combined(int id)
+	{
+		if (rois_combined_to_.find(id) != rois_combined_to_.end())
+			return rois_combined_to_[id];
+		return -1;
+	}
+
 #endif
 
 	//set the texture for rendering

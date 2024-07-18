@@ -33,6 +33,8 @@ DEALINGS IN THE SOFTWARE.
 #include "Formats/brkxml_writer.h"
 #include <boost/lexical_cast.hpp>
 
+#include <wx/valnum.h>s
+
 //resources
 #include "img/icons.h"
 
@@ -96,6 +98,7 @@ BEGIN_EVENT_TABLE(DataTreeCtrl, wxTreeCtrl)
 END_EVENT_TABLE()
 
 bool DataTreeCtrl::m_md_save_indv = false;
+int DataTreeCtrl::m_save_scale_level = 0;
 
 DataTreeCtrl::DataTreeCtrl(
 	wxWindow* frame,
@@ -927,7 +930,8 @@ void DataTreeCtrl::OnSave(wxCommandEvent& event)
 		wxString formats;
 		if (vd && vd->isBrxml())
 		{
-			formats = "Single-page Tiff sequence (*.tif)|*.tif;*.tiff";
+			formats = "Muti-page Tiff file (*.tif, *.tiff)|*.tif;*.tiff|"\
+					  "Single-page Tiff sequence (*.tif)|*.tif;*.tiff";
 		}
 		else
 		{
@@ -947,7 +951,7 @@ void DataTreeCtrl::OnSave(wxCommandEvent& event)
 		{
 			wxString filename = fopendlg->GetPath();
 			if (vd)
-				vd->Save(filename, fopendlg->GetFilterIndex(), false, VRenderFrame::GetCompression(), true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, true);
+				vd->Save(filename, fopendlg->GetFilterIndex(), false, true, true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, true, m_save_scale_level);
 		}
 		if (vd && vd->isBrxml())
 			vr_frame->RefreshVRenderViews();
@@ -1537,6 +1541,13 @@ void DataTreeCtrl::OnCh1Check(wxCommandEvent &event)
       m_md_save_indv = ch1->GetValue();
 }
 
+void DataTreeCtrl::OnTxt1Change(wxCommandEvent& event)
+{
+	wxTextCtrl* txt1 = (wxTextCtrl*)event.GetEventObject();
+	if (txt1)
+		m_save_scale_level = wxAtoi(txt1->GetValue());
+}
+
 wxWindow* DataTreeCtrl::CreateExtraControl(wxWindow* parent)
 {
    wxPanel* panel = new wxPanel(parent, 0, wxDefaultPosition, wxSize(400, 90));
@@ -1552,9 +1563,25 @@ wxWindow* DataTreeCtrl::CreateExtraControl(wxWindow* parent)
    if (ch1)
       ch1->SetValue(m_md_save_indv);
 
+   wxBoxSizer* sizer1 = new wxBoxSizer(wxHORIZONTAL);
+   wxIntegerValidator<unsigned int> vald_int;
+   wxTextCtrl* txt1 = new wxTextCtrl(panel, wxID_HIGHEST + 3005, "0",
+	   wxDefaultPosition, wxSize(34, 22), 0, vald_int);
+   wxString default_level = wxString::Format(wxT("%i"), m_save_scale_level);
+   txt1->SetValue(default_level);
+   txt1->Connect(txt1->GetId(), wxEVT_COMMAND_TEXT_UPDATED,
+	   wxCommandEventHandler(DataTreeCtrl::OnTxt1Change), NULL, panel);
+   wxStaticText* st = new wxStaticText(panel, 0,
+	   "Scale level (for resolution pyramid)");
+   sizer1->Add(txt1);
+   sizer1->Add(10, 10);
+   sizer1->Add(st);
+
    //group
    group1->Add(10, 10);
    group1->Add(ch1);
+   group1->Add(10, 10);
+   group1->Add(sizer1);
    group1->Add(10, 10);
 
    panel->SetSizer(group1);
@@ -3963,18 +3990,21 @@ void DataTreeCtrl::BuildROITree(wxTreeItemId par_item, const boost::property_tre
 				LayerInfo* item_data = new LayerInfo;
 				item_data->type = (id > 0) ? 7 : 8;//7-volume segment : 8-segmnet group
 				item_data->id = id;
-				SetItemData(item, item_data);
-				if (vd)
+				if (item_data->type == 8 || !vd || vd->IsROICombined(id) < 0)
 				{
-					AppendIcon();
-					unsigned char r = 255, g = 255, b = 255;
-					if (item_data->type == 7)
-						vd->GetIDColor(r, g, b, id);
-					wxColor wxc(r, g, b);
-					int ii = GetIconNum()-1;
-					ChangeIconColor(ii, wxc);
-					SetItemImage(item, vd->isSelID(id)?2*ii+1:2*ii);
-					item_data->icon = vd->isSelID(id)?2*ii+1:2*ii;
+					SetItemData(item, item_data);
+					if (vd)
+					{
+						AppendIcon();
+						unsigned char r = 255, g = 255, b = 255;
+						if (item_data->type == 7)
+							vd->GetIDColor(r, g, b, id);
+						wxColor wxc(r, g, b);
+						int ii = GetIconNum() - 1;
+						ChangeIconColor(ii, wxc);
+						SetItemImage(item, vd->isSelID(id) ? 2 * ii + 1 : 2 * ii);
+						item_data->icon = vd->isSelID(id) ? 2 * ii + 1 : 2 * ii;
+					}
 				}
 
 				BuildROITree(item, subtree, vd);

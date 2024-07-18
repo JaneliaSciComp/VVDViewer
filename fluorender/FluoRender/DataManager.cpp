@@ -1576,12 +1576,24 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 		{
 			uint64_t index = (nx)*(ny)*(kk) + (nx)*(jj) + (ii);
 			uint8 old_value = ((uint8*)(data->data))[index];
+			if (m_colormap_mode == 3)
+			{
+				int combined_seg_id = IsROICombined((int)old_value);
+				if (combined_seg_id > 0)
+					old_value = (uint8)combined_seg_id;
+			}
 			return normalize ? double(old_value)/255.0 : double(old_value);
 		}
 		else if (bits == nrrdTypeUShort)
 		{
 			uint64_t index = (nx)*(ny)*(kk) + (nx)*(jj) + (ii);
 			uint16 old_value = ((uint16*)(data->data))[index];
+			if (m_colormap_mode == 3)
+			{
+				int combined_seg_id = IsROICombined((int)old_value);
+				if (combined_seg_id > 0)
+					old_value = (uint16)combined_seg_id;
+			}
 			return normalize ? double(old_value)*m_scalar_scale/65535.0 : double(old_value);
 		}
 	}
@@ -1589,6 +1601,12 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 	{
 		double rval = 0.0;
 		rval = m_tex->get_brick_original_value(ii, jj, kk, normalize);
+		if (m_colormap_mode == 3)
+		{
+			int combined_seg_id = IsROICombined((int)rval);
+			if (combined_seg_id > 0)
+				rval = (uint16)combined_seg_id;
+		}
 		if (bits == nrrdTypeUShort && normalize)
 			rval *= m_scalar_scale;
 		return rval;
@@ -1785,15 +1803,13 @@ int VolumeData::GetLabellValue(int i, int j, int k)
 
 
 //save
-void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bool save_msk, bool save_label, VolumeLoader *vl, bool crop)
+void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bool save_msk, bool save_label, VolumeLoader *vl, bool crop, int lv)
 {
 	if (m_vr && m_tex)
 	{
 		Nrrd* data = 0;
 
 		BaseWriter *writer = 0;
-
-		if (isBrxml()) mode = 1;
 
 		switch (mode)
 		{
@@ -2140,7 +2156,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                 
 				int curlv = -1;
 				curlv = GetLevel();
-				int tarlv = 0;
+				int tarlv = lv;
 				SetLevel(tarlv);
 				GetSpacings(spcx, spcy, spcz);
 				size_t w, h, d;
@@ -2188,9 +2204,14 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 
 				if (!check)
 				{
+					TIFF* tif = nullptr;
+					if (mode == 0)
+						tif = TIFFOpenW(filename.ToStdWstring().c_str(), "wb");
+
 					int bid = 0;
                     int layernum = bricknum_layer.size();
                     int cur_layer = 0;
+					int slice_id = 0;
 					for (auto layercount : bricknum_layer)
 					{
                         prg_diag->Update(95*(cur_layer+1)/layernum);
@@ -2256,25 +2277,152 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 
 						int lnz = lbs[0]->nz();
 						int loz = lbs[0]->oz();
+						int tmp_lnz = lnz;
+						int tmp_loz = loz;
+						if (loz < sz)
+						{
+							lnz = lnz + loz - sz;
+							loz = sz;
+						}
                         if (loz + lnz >= sz + nz)
-                            lnz = sz + nz - loz;
+							lnz = sz + nz - loz;
+
 						for (int s = 0; s < lnz; s += slicenum)
 						{
 							size_t bufd = (s+slicenum <= lnz) ? slicenum : lnz-s;
 
 							Nrrd* datablock = m_tex->getSubData(tarlv, GetMaskHideMode(), &lbs, sx, sy, s+loz, nx, ny, bufd);
 							auto block_vlnrrd = make_shared<VL_Nrrd>(datablock);
-							tifwriter->SetData(block_vlnrrd);
-							tifwriter->SetBaseSeqID(s+loz+1); //start from 1
-							tifwriter->SetDigitNum(ndigit);
-							tifwriter->SetSpacings(spcx, spcy, spcz);
-							tifwriter->SetCompression(compress);
-							tifwriter->Save(filename.ToStdWstring(), mode);
+							if (m_colormap_mode == 3)
+							{
+								size_t pixnum = block_vlnrrd->getDatasize() / block_vlnrrd->getBytesPerSample();
+								size_t nthreads = std::thread::hardware_concurrency() - 1;
+								if (nthreads < 1) nthreads = 1;
+								std::vector<std::thread> threads(nthreads);
+								int grain_size = pixnum / nthreads;
+								auto worker = [this, &block_vlnrrd, &pixnum](size_t start, size_t end) {
+									if (start >= pixnum) start = pixnum;
+									if (end > pixnum) end = pixnum;
+									if (start < end) {
+										for (uint32_t idx = start; idx < end; idx++)
+										{
+											int val = (int)block_vlnrrd->getFloatUnsafe(idx);
+											int combined_seg = this->IsROICombined(val);
+											if (combined_seg > 0)
+												block_vlnrrd->setFloatUnsafe(idx, (float)combined_seg);
+										}
+									}
+								};
+								size_t offset = 0;
+								for (uint32_t i = 0; i < nthreads - 1; i++)
+								{
+									threads[i] = std::thread(worker, offset, offset + grain_size);
+									offset += grain_size;
+								}
+								threads.back() = std::thread(worker, offset, pixnum);
+								for (auto&& i : threads) {
+									i.join();
+								}
+							}
+
+							if (mode == 1)
+							{
+								tifwriter->SetData(block_vlnrrd);
+								tifwriter->SetBaseSeqID(s + loz + 1); //start from 1
+								tifwriter->SetDigitNum(ndigit);
+								tifwriter->SetSpacings(spcx, spcy, spcz);
+								tifwriter->SetCompression(compress);
+								tifwriter->Save(filename.ToStdWstring(), mode);
+							}
+							else if (mode == 0 && tif)
+							{
+								for (int ss = 0; ss < bufd; ss++)
+								{
+									TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, nx);
+									TIFFSetField(tif, TIFFTAG_IMAGELENGTH, ny);
+									TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+									TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, block_vlnrrd->getBytesPerSample() * 8);
+									TIFFSetField(tif, TIFFTAG_XRESOLUTION, spcx);
+									TIFFSetField(tif, TIFFTAG_YRESOLUTION, spcy);
+									TIFFSetField(tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+									TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+									TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+									if (compress)
+										TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_LZW);
+									TIFFSetField(tif, TIFFTAG_SUBFILETYPE, FILETYPE_PAGE);
+									TIFFSetField(tif, TIFFTAG_PAGENUMBER, slice_id + ss);
+									TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize(tif, 0));
+									ostringstream strs;
+									strs << "ImageJ=1.52a\n";
+									strs << "spacing=" << spcz << "\n";
+									strs << "images=" << nz << "\n";
+									strs << "slices=" << nz << "\n";
+									strs << "loop=false";
+									string desc = strs.str();
+									TIFFSetField(tif, TIFFTAG_IMAGEDESCRIPTION, desc.c_str());
+
+									switch (datablock->type)
+									{
+									case nrrdTypeChar:
+									case nrrdTypeUChar:
+									{
+										uint8_t* slice = (uint8_t*)datablock->data + nx * ny * ss;
+										for (uint32_t row = 0; row < ny; ++row) {
+											if (TIFFWriteScanline(tif, const_cast<uint8_t*>(&slice[row * nx]), row, 0) < 0) {
+												std::cerr << "Error writing scanline " << row << std::endl;
+												return;
+											}
+										}
+									}
+									break;
+									case nrrdTypeShort:
+									case nrrdTypeUShort:
+									{
+										uint16_t* slice = (uint16_t*)datablock->data + nx * ny * ss;
+										for (uint32_t row = 0; row < ny; ++row) {
+											if (TIFFWriteScanline(tif, const_cast<uint16_t*>(&slice[row * nx]), row, 0) < 0) {
+												std::cerr << "Error writing scanline " << row << std::endl;
+												return;
+											}
+										}
+									}
+									break;
+									case nrrdTypeInt:
+									case nrrdTypeUInt:
+									{
+										uint32_t* slice = (uint32_t*)datablock->data + nx * ny * ss;
+										for (uint32_t row = 0; row < ny; ++row) {
+											if (TIFFWriteScanline(tif, const_cast<uint32_t*>(&slice[row * nx]), row, 0) < 0) {
+												std::cerr << "Error writing scanline " << row << std::endl;
+												return;
+											}
+										}
+									}
+									break;
+									case nrrdTypeFloat:
+									{
+										float* slice = (float*)datablock->data + nx * ny * ss;
+										for (uint32_t row = 0; row < ny; ++row) {
+											if (TIFFWriteScanline(tif, const_cast<float*>(&slice[row * nx]), row, 0) < 0) {
+												std::cerr << "Error writing scanline " << row << std::endl;
+												return;
+											}
+										}
+									}
+									break;
+									}
+
+									TIFFWriteDirectory(tif);
+								}
+							}
+							slice_id += bufd;
 						}
 
 						for (auto &b : lbs)
 							b->lock_brickdata(false);
 					}
+					if (mode == 0 && tif)
+						TIFFClose(tif);
 				}
 
 				m_tex->set_sort_bricks();
