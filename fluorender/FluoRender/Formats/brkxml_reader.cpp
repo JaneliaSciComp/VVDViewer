@@ -9,10 +9,13 @@
 #include <sstream>
 #include <locale>
 #include <algorithm>
+#include <filesystem>
 #include <regex>
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include "boost/filesystem.hpp"
+
+namespace fs = std::filesystem;
 
 using namespace boost::filesystem;
 
@@ -951,11 +954,10 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 	//	m_scalar_scale = 65535.0 / m_max_value;
 	m_scalar_scale = 1.0;
 
-	if (m_xspc>0.0 && m_xspc<100.0 &&
-		m_yspc>0.0 && m_yspc<100.0)
+	if (m_xspc > 0.0 && m_yspc > 0.0)
 	{
 		m_valid_spc = true;
-		if (m_zspc<=0.0 || m_zspc>100.0)
+		if (m_zspc <= 0.0)
 			m_zspc = max(m_xspc, m_yspc);
 	}
 	else
@@ -1279,12 +1281,15 @@ void BRKXMLReader::loadFSN5()
 	boost::filesystem::path root_path(m_dir_name);
 
 	vector<double> pix_res(3, 1.0);
+    bool pix_res_found = false;
 	auto root_attrpath = root_path / "attributes.json";
 	std::ifstream ifs(root_attrpath.string());
 	if (ifs.is_open()) {
 		auto jf = json::parse(ifs);
-		if (!jf.is_null() && jf.contains(PixelResolutionKey) && jf[PixelResolutionKey].contains(DimensionsKey))
-			pix_res = jf[PixelResolutionKey][DimensionsKey].get<vector<double>>();
+        if (!jf.is_null() && jf.contains(PixelResolutionKey) && jf[PixelResolutionKey].contains(DimensionsKey)) {
+            pix_res = jf[PixelResolutionKey][DimensionsKey].get<vector<double>>();
+            pix_res_found = true;
+        }
 	}
     
     directory_iterator end_itr; // default construction yields past-the-end
@@ -1365,8 +1370,19 @@ void BRKXMLReader::loadFSN5()
 	for (int i = 0; i < ch_dirs.size(); i++) {
         if (m_bdv_metadata_path.empty())
         {
+            vector<double> ch_pix_res = pix_res;
+            if (!pix_res_found) {
+                auto attrpath = root_path / ch_dirs[i] / "attributes.json";
+                std::ifstream ifs(attrpath.string());
+                if (ifs.is_open()) {
+                    auto jf = json::parse(ifs);
+                    if (!jf.is_null() && jf.contains(PixelResolutionKey) && jf[PixelResolutionKey].contains(DimensionsKey)) {
+                        ch_pix_res = jf[PixelResolutionKey][DimensionsKey].get<vector<double>>();
+                    }
+                }
+            }
             boost::filesystem::path pyramid_abs_path = root_path / ch_dirs[i];
-            ReadResolutionPyramidFromSingleN5Dataset(pyramid_abs_path.wstring(), 0, i, pix_res);
+            ReadResolutionPyramidFromSingleN5Dataset(pyramid_abs_path.wstring(), 0, i, ch_pix_res);
         }
         else
         {
@@ -1446,8 +1462,26 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
         }
     }
     
-    if (scale_dirs.empty())
-        return;
+    if (scale_dirs.empty()) {
+        bool is_data = false;
+        std::regex datadir_pattern("^\\d+$");
+        for (directory_iterator itr(root_path); itr != end_itr; ++itr)
+        {
+            if (is_directory(itr->status()))
+            {
+                if (regex_match(itr->path().filename().string(), datadir_pattern))
+                {
+                    is_data = true;
+                    break;
+                }
+            }
+        }
+
+        if (is_data)
+            scale_dirs.push_back(L".");
+        else
+            return;
+    }
     
     sort(scale_dirs.begin(), scale_dirs.end(),
          [](const wstring& x, const wstring& y) { return WSTOI(x.substr(1)) < WSTOI(y.substr(1)); });
@@ -1483,16 +1517,22 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
             
             if (attr->m_pix_res[0] > 0.0)
                 lvinfo.xspc = attr->m_pix_res[0];
+            else if (attr->m_downsampling_factors[0] > 0.0)
+                lvinfo.xspc = pix_res[0] * attr->m_downsampling_factors[0];
             else
                 lvinfo.xspc = pix_res[0] / ((double)lvinfo.imageW / orgw);
-            
+
             if (attr->m_pix_res[1] > 0.0)
                 lvinfo.yspc = attr->m_pix_res[1];
+            else if (attr->m_downsampling_factors[1] > 0.0)
+                lvinfo.yspc = pix_res[1] * attr->m_downsampling_factors[1];
             else
                 lvinfo.yspc = pix_res[1] / ((double)lvinfo.imageH / orgh);
-            
+
             if (attr->m_pix_res[2] > 0.0)
                 lvinfo.zspc = attr->m_pix_res[2];
+            else if (attr->m_downsampling_factors[2] > 0.0)
+                lvinfo.zspc = pix_res[2] * attr->m_downsampling_factors[2];
             else
                 lvinfo.zspc = pix_res[2] / ((double)lvinfo.imageD / orgd);
             
@@ -1663,11 +1703,35 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
         root_path = root_path / r_n5path;
     }
     
-    for (directory_iterator itr(root_path); itr != end_itr; ++itr)
-    {
-        if (is_directory(itr->status()))
-        {
-            output.push_back(itr->path().wstring());
+    std::regex pattern(R"((^|\bs)\d+$)");
+    
+    fs::recursive_directory_iterator ite(root_path.string());
+    for (const auto& entry : ite) {
+        try {
+            if (fs::is_directory(entry.status())) {
+                if (std::regex_match(entry.path().filename().string(), pattern)) {
+                    ite.disable_recursion_pending();
+                    continue;
+                }
+                for (const auto& sub_entry : fs::directory_iterator(entry.path())) {
+                    try {
+                        if (fs::is_directory(sub_entry.status())) {
+                            std::string dir_name = sub_entry.path().filename().string();
+                            if (std::regex_match(dir_name, pattern)) {
+                                output.push_back(entry.path());
+                                ite.disable_recursion_pending();
+                                break;
+                            }
+                        }
+                    }
+                    catch (const fs::filesystem_error & ex) {
+                        std::cerr << "Error: " << ex.what() << std::endl;
+                    }
+                }
+            }
+        }
+        catch (const fs::filesystem_error & ex) {
+            std::cerr << "Error: " << ex.what() << std::endl;
         }
     }
     
@@ -1716,8 +1780,15 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadata(wstring jpath)
 		ret->m_compression = jf[CompressionKey].get<int>();
 	if (jf.contains(PixelResolutionKey) && jf[PixelResolutionKey].contains(DimensionsKey))
 		ret->m_pix_res = jf[PixelResolutionKey][DimensionsKey].get<vector<double>>();
-	else
+	else if (jf.contains(TransformKey) && jf[TransformKey].contains(ScaleKey))
+        ret->m_pix_res = jf[TransformKey][ScaleKey].get<vector<double>>();
+    else
 		ret->m_pix_res = vector<double>(3, -1.0);
+    
+    if (jf.contains(DownsamplingFactorsKey))
+        ret->m_downsampling_factors = jf[DownsamplingFactorsKey].get<vector<double>>();
+    else 
+        ret->m_downsampling_factors = vector<double>(3, -1.0);
     
     /* version 0 */
     string cptype;

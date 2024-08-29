@@ -27,6 +27,9 @@
 #define CompressionKey "compression"
 #define CompressionTypeKey "type"
 #define PixelResolutionKey "pixelResolution"
+#define DownsamplingFactorsKey "downsamplingFactors"
+#define TransformKey "transform"
+#define ScaleKey "scale"
 
 #define BloscLevelKey "clevel"
 #define BloscBlockSizeKey "blockSize"
@@ -85,6 +88,7 @@ public:
     int m_dataType;
     int m_compression;
 	vector<double> m_pix_res;
+	vector<double> m_downsampling_factors;
     
     struct BloscParam {
         int blocksize;
@@ -99,7 +103,7 @@ public:
 	{
 	}
     
-    DatasetAttributes(const vector<long>& dimensions, const vector<int>& blockSize, int dataType, int compression, const vector<double>& pix_res, BloscParam bp)
+    DatasetAttributes(const vector<long>& dimensions, const vector<int>& blockSize, int dataType, int compression, const vector<double>& pix_res, const vector<double>& downsampling_factors, BloscParam bp)
     {
         m_dimensions = dimensions;
         m_blockSize = blockSize;
@@ -107,6 +111,7 @@ public:
         m_compression = compression;
 		m_pix_res = pix_res;
         m_blosc_param = bp;
+		m_downsampling_factors = downsampling_factors;
     }
     
     vector<long> getDimensions() {

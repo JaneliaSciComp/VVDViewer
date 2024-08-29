@@ -45,6 +45,7 @@ DEALINGS IN THE SOFTWARE.
 #include <sstream>
 #include <cctype>
 #include <algorithm>
+#include <filesystem>
 #include <curl/curl.h>
 
 //resources
@@ -1393,11 +1394,25 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 #else
             wchar_t slash = L'/';
 #endif
+			if (n5paths.empty())
+			{
+				wstring n5path = files[j].ToStdWstring();
+				wstring dir_name = n5path;
+				if (suffix == ".json")
+					dir_name = n5path.substr(0, n5path.find_last_of(slash));
+				n5paths.push_back(dir_name);
+			}
             wxArrayString list;
             for (wstring &p : n5paths)
             {
-                wxString data_name = p.substr(p.find_last_of(slash)+1);
-                list.Add(data_name);
+				wstring root_path_wstr = files[j].ToStdWstring();
+				if (suffix == ".json")
+					root_path_wstr = root_path_wstr.substr(0, root_path_wstr.find_last_of(slash));
+				std::filesystem::path root = root_path_wstr;
+				std::filesystem::path data_path = p;
+				
+				wxString key = std::filesystem::relative(p, root);
+                list.Add(key);
             }
             
             DatasetSelectionDialog dsdlg(this, wxID_ANY, files[j], list, wxDefaultPosition, wxSize(500, 600));
