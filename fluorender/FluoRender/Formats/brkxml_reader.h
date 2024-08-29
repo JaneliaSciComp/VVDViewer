@@ -36,6 +36,18 @@
 #define BloscCompressionKey "cname"
 #define BloscShuffleKey "shuffle"
 
+#define MultiScalesKey "multiscales"
+#define CoordinateTransformationsKey "coordinateTransformations"
+#define DatasetsKey "datasets"
+#define PathKey "path"
+
+#define ChunksKey "chunks"
+#define CompressorKey "compressor"
+#define CompressorIDKey "id"
+#define ZarrDataTypeKey "dtype"
+#define OrderKey "order"
+#define ShapeKey "shape"
+
 using namespace std;
 
 class DataBlock
@@ -89,6 +101,8 @@ public:
     int m_compression;
 	vector<double> m_pix_res;
 	vector<double> m_downsampling_factors;
+
+	bool m_is_big_endian;
     
     struct BloscParam {
         int blocksize;
@@ -229,8 +243,10 @@ public:
 	tinyxml2::XMLDocument *GetMetadataXMLDoc() {return &m_md_doc;}
     
 	void loadFSN5();
+	void loadFSZarr();
     void SetBDVMetadataPath(const wstring path) { m_bdv_metadata_path = path; }
-	DatasetAttributes* parseDatasetMetadata(wstring jpath);
+	DatasetAttributes* parseDatasetMetadataN5(wstring jpath);
+	DatasetAttributes* parseDatasetMetadataZarr(wstring jpath);
     map<wstring, wstring> getAttributes(wstring pathName);
     DataBlock readBlock(wstring pathName, const DatasetAttributes& datasetAttributes, const vector<long> gridPosition);
     vector<wstring> list(wstring pathName);
@@ -248,6 +264,7 @@ public:
     
     FLIVR::Transform GetBDVTransform(int setup = -1, int timepoint = -1);
     
+	static bool GetZarrChannelPaths(wstring zarr_path, vector<wstring>& output);
     static bool GetN5ChannelPaths(wstring n5path, vector<wstring> &output);
 
 protected:
@@ -302,6 +319,8 @@ private:
         int blosc_clevel;
         int blosc_ctype;
         int blosc_suffle;
+		int nrrd_type;
+		int endianness;
 	};
 	vector<LevelInfo> m_pyramid;
 
@@ -381,6 +400,8 @@ private:
     void ReadBDVResolutions(tinyxml2::XMLDocument& xXmlDocument, vector<vector<double>> &resolutions);
     void ReadBDVViewRegistrations(tinyxml2::XMLDocument& xXmlDocument, vector<vector<FLIVR::Transform>> &transforms);
     void ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, int f, int c, vector<double> pix_res);
+
+	void ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, int f, int c, vector<double> pix_res);
 
 	void Clear();
 };

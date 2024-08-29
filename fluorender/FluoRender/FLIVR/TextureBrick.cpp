@@ -49,6 +49,12 @@
 #include <blosc2.h>
 #endif
 
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/filter/zstd.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/device/array.hpp>
+
 using namespace std;
 
 namespace FLIVR
@@ -1405,21 +1411,64 @@ z
 	   return true;
    }
 
-   bool TextureBrick::decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d)
+   bool TextureBrick::decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness)
    {
-       if      (type == BRICK_FILE_TYPE_N5RAW) return raw_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d);
+       if      (type == BRICK_FILE_TYPE_N5RAW) return raw_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
 	   else if (type == BRICK_FILE_TYPE_JPEG) return jpeg_decompressor(out, in, out_size, in_size);
 	   else if (type == BRICK_FILE_TYPE_ZLIB) return zlib_decompressor(out, in, out_size, in_size);
-	   else if (type == BRICK_FILE_TYPE_N5GZIP) return zlib_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d);
+	   else if (type == BRICK_FILE_TYPE_N5GZIP) return zlib_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
 	   else if (type == BRICK_FILE_TYPE_H265) return h265_decompressor(out, in, out_size, in_size, w, h);
 	   else if (type == BRICK_FILE_TYPE_LZ4) return lz4_decompressor(out, in, out_size, in_size);
-       else if (type == BRICK_FILE_TYPE_N5LZ4) return lz4_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d);
-       else if (type == BRICK_FILE_TYPE_N5BLOSC) return blosc_decompressor(out, in, out_size, in_size, true, w, h, d, nb, n5_w, n5_h, n5_d);
+       else if (type == BRICK_FILE_TYPE_N5LZ4) return lz4_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
+       else if (type == BRICK_FILE_TYPE_N5ZSTD) return zstd_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
+       else if (type == BRICK_FILE_TYPE_N5BLOSC) return blosc_decompressor(out, in, out_size, in_size, true, w, h, d, nb, n5_w, n5_h, n5_d, endianness);
 
 	   return false;
    }
+
+
+   // Function to switch endianness for 16-bit integers
+   inline uint16_t switchEndianness16(uint16_t value) {
+       return (value << 8) | (value >> 8);
+   }
+
+   // Function to switch endianness for 32-bit integers
+   inline uint32_t switchEndianness32(uint32_t value) {
+       return (value << 24) |
+           ((value << 8) & 0x00FF0000) |
+           ((value >> 8) & 0x0000FF00) |
+           (value >> 24);
+   }
+
+   // Function to switch endianness for 64-bit integers
+   inline uint64_t switchEndianness64(uint64_t value) {
+       return (value << 56) |
+           ((value << 40) & 0x00FF000000000000) |
+           ((value << 24) & 0x0000FF0000000000) |
+           ((value << 8) & 0x000000FF00000000) |
+           ((value >> 8) & 0x00000000FF000000) |
+           ((value >> 24) & 0x0000000000FF0000) |
+           ((value >> 40) & 0x000000000000FF00) |
+           (value >> 56);
+   }
+
+   // Template function to switch endianness of each element in a binary array
+   template <typename T>
+   void switchEndianness(T* data, size_t elementCount) {
+       for (size_t i = 0; i < elementCount; ++i) {
+           if constexpr (sizeof(T) == 2) {
+               data[i] = switchEndianness16(data[i]);
+           }
+           else if constexpr (sizeof(T) == 4) {
+               data[i] = switchEndianness32(data[i]);
+           }
+           else if constexpr (sizeof(T) == 8) {
+               data[i] = switchEndianness64(data[i]);
+           }
+       }
+   }
     
-    bool TextureBrick::raw_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d)
+    bool TextureBrick::raw_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
     {
         if (!isn5)
             memcpy(out, in, in_size);
@@ -1450,13 +1499,19 @@ z
                 memcpy(out, in, in_size);
             }
             
-            if (nb == 2)
+            if (nb >= 2)
             {
                 char e = check_machine_endian();
-                if (e == 'L')
+                if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                 {
-                    for (int i = 0; i < out_size-1; i += 2)
-                        swap(out[i], out[i+1]);
+                    if (nb == 2)
+                        switchEndianness((unsigned short*)out, out_size);
+                    else if (nb == 4)
+                        switchEndianness((unsigned int*)out, out_size);
+                    else if (nb == 8)
+                        switchEndianness((unsigned long*)out, out_size);
+                    //for (int i = 0; i < out_size - 1; i += 2)
+                    //    swap(out[i], out[i + 1]);
                 }
             }
         }
@@ -1523,7 +1578,7 @@ z
 	   return true;
    }
 
-   bool TextureBrick::zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d)
+   bool TextureBrick::zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
    {
 	   try
 	   {
@@ -1580,13 +1635,19 @@ z
                    delete[] buf;
                }
                
-               if (nb == 2)
+               if (nb >= 2)
                {
                    char e = check_machine_endian();
-                   if (e == 'L')
+                   if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                    {
-                       for (int i = 0; i < out_size-1; i += 2)
-                           swap(out[i], out[i+1]);
+                       if (nb == 2)
+                           switchEndianness((unsigned short*)out, out_size);
+                       else if (nb == 4)
+                           switchEndianness((unsigned int*)out, out_size);
+                       else if (nb == 8)
+                           switchEndianness((unsigned long*)out, out_size);
+                       //for (int i = 0; i < out_size - 1; i += 2)
+                       //    swap(out[i], out[i + 1]);
                    }
                }
 		   }
@@ -1632,7 +1693,7 @@ z
    }
 
 
-   bool TextureBrick::lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d)
+   bool TextureBrick::lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
    {
        /*
        LZ4F_dctx* dctx = nullptr;
@@ -1699,13 +1760,19 @@ z
                delete[] buf;
            }
            
-           if (nb == 2)
+           if (nb >= 2)
            {
                char e = check_machine_endian();
-               if (e == 'L')
+               if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                {
-                   for (int i = 0; i < out_size-1; i += 2)
-                       swap(out[i], out[i+1]);
+                   if (nb == 2)
+                       switchEndianness((unsigned short*)out, out_size);
+                   else if (nb == 4)
+                       switchEndianness((unsigned int*)out, out_size);
+                   else if (nb == 8)
+                       switchEndianness((unsigned long*)out, out_size);
+                   //for (int i = 0; i < out_size - 1; i += 2)
+                   //    swap(out[i], out[i + 1]);
                }
            }
        }
@@ -1714,8 +1781,114 @@ z
 
 	   return true;
    }
+   
+   bool TextureBrick::zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
+   {
+       if (!isn5)
+       {
+           std::vector<char> decompressedData;
+           try {
+               // Create an input stream from the compressed data
+               boost::iostreams::array_source compressedSource(in, in_size);
+               boost::iostreams::filtering_istream in;
+               in.push(boost::iostreams::zstd_decompressor());
+               in.push(compressedSource);
+
+               // Read directly from the decompression stream into the output buffer
+               size_t bytesRead = 0;
+               while (in && bytesRead < out_size) {
+                   in.read(out + bytesRead, out_size - bytesRead);
+                   bytesRead += in.gcount();  // Increment by the number of bytes read in the last read operation
+               }
+
+               // Check if the decompression was successful and fits within the output buffer
+               if (in.bad() || bytesRead > out_size) {
+                   std::cerr << "Decompression error or output buffer too small." << std::endl;
+                   return false;
+               }
+           }
+           catch (const std::exception & e) {
+               std::cerr << "Decompression error: " << e.what() << std::endl;
+               return false;
+           }
+       }
+       else
+       {
+           size_t n5out_size = nb * n5_w * n5_h * n5_d;
+           if (n5out_size <= 0)
+               return false;
+
+           bool use_buf = (n5out_size != out_size);
+           char* buf = nullptr;
+           if (use_buf)
+               buf = new char[n5out_size];
+
+           char* zstd_out = use_buf ? buf : out;
+
+           try {
+               // Create an input stream from the compressed data
+               boost::iostreams::array_source compressedSource(in, in_size);
+               boost::iostreams::filtering_istream in;
+               in.push(boost::iostreams::zstd_decompressor());
+               in.push(compressedSource);
+
+               // Read directly from the decompression stream into the output buffer
+               size_t bytesRead = 0;
+               while (in && bytesRead < n5out_size) {
+                   in.read(zstd_out + bytesRead, n5out_size - bytesRead);
+                   bytesRead += in.gcount();  // Increment by the number of bytes read in the last read operation
+               }
+
+               // Check if the decompression was successful and fits within the output buffer
+               if (in.bad() || bytesRead > n5out_size) {
+                   std::cerr << "Decompression error or output buffer too small." << std::endl;
+                   return false;
+               }
+           }
+           catch (const std::exception & e) {
+               std::cerr << "Decompression error: " << e.what() << std::endl;
+               return false;
+           }
+
+           if (use_buf)
+           {
+               char* src = buf;
+               char* dst = out;
+               int src_y_pitch = n5_w * nb;
+               int dst_y_pitch = w * nb;
+               int src_z_pitch = n5_w * n5_h * nb;
+               int dst_z_pitch = w * h * nb;
+               for (int zz = 0; zz < d; zz++)
+               {
+                   for (int yy = 0; yy < h; yy++)
+                       memcpy(dst + dst_y_pitch * yy, src + src_y_pitch * yy, dst_y_pitch);
+                   src += src_z_pitch;
+                   dst += dst_z_pitch;
+               }
+               delete[] buf;
+           }
+
+           if (nb >= 2)
+           {
+               char e = check_machine_endian();
+               if ( (e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
+               {
+                   if (nb == 2)
+                       switchEndianness((unsigned short*)out, out_size);
+                   else if (nb == 4)
+                       switchEndianness((unsigned int*)out, out_size);
+                   else if (nb == 8)
+                       switchEndianness((unsigned long*)out, out_size);
+                   //for (int i = 0; i < out_size - 1; i += 2)
+                   //    swap(out[i], out[i + 1]);
+               }
+           }
+       }
+
+       return true;
+   }
     
-    bool TextureBrick::blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d)
+    bool TextureBrick::blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness)
     {
         blosc2_dparams params;
         params.nthreads = 1;
@@ -1753,13 +1926,19 @@ z
             delete[] buf;
         }
         
-        if (isn5 && nb == 2)
+        if (isn5 && nb >= 2)
         {
             char e = check_machine_endian();
-            if (e == 'L')
+            if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
             {
-                for (int i = 0; i < out_size-1; i += 2)
-                    swap(out[i], out[i+1]);
+                if (nb == 2)
+                    switchEndianness((unsigned short*)out, out_size);
+                else if (nb == 4)
+                    switchEndianness((unsigned int*)out, out_size);
+                else if (nb == 8)
+                    switchEndianness((unsigned long*)out, out_size);
+                //for (int i = 0; i < out_size - 1; i += 2)
+                //    swap(out[i], out[i + 1]);
             }
         }
         

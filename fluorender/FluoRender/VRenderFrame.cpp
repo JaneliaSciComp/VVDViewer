@@ -1324,7 +1324,7 @@ void VRenderFrame::OnOpenVolume(wxCommandEvent& WXUNUSED(event))
 
 	wxFileDialog *fopendlg = new wxFileDialog(
 		this, "Choose the volume data file", "", "",
-        "All Supported|*.tif;*.tiff;*.zip;*.oib;*.oif;*.lsm;*.czi;*.xml;*.nrrd;*.h5j;*.vvd;*.v3dpbd;*.n5;*.json;|"\
+        "All Supported|*.tif;*.tiff;*.zip;*.oib;*.oif;*.lsm;*.czi;*.xml;*.nrrd;*.h5j;*.vvd;*.v3dpbd;*.n5;*.json;*.zarr;*.zgroup;|"\
 		"Tiff Files (*.tif, *.tiff, *.zip)|*.tif;*.tiff;*.zip|"\
 		"Olympus Image Binary Files (*.oib)|*.oib|"\
 		"Olympus Original Imaging Format (*.oif)|*.oif|"\
@@ -1337,6 +1337,7 @@ void VRenderFrame::OnOpenVolume(wxCommandEvent& WXUNUSED(event))
 		"V3DPBD files (*.v3dpbd)|*.v3dpbd|"\
         "Indexed images (*.idi)|*.idi|"\
 		"VVD files (*.vvd)|*.vvd|"\
+		"Zarr files (*.zarr, *.zgroup)|*.zarr;*.zgroup|"\
         "N5 files (*.n5, *.json)|*.n5;*.json", wxFD_OPEN|wxFD_MULTIPLE);
 	fopendlg->SetExtraControlCreator(CreateExtraControlVolume);
 
@@ -1385,6 +1386,51 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
     for (j=0; j<(int)files.Count(); j++)
     {
         wxString suffix = files[j].Mid(files[j].Find('.', true)).MakeLower();
+		if (suffix == ".zarr" || suffix == ".zgroup")
+		{
+			vector<wstring> zpaths;
+			BRKXMLReader::GetZarrChannelPaths(files[j].ToStdWstring(), zpaths);
+#ifdef _WIN32
+			wchar_t slash = L'\\';
+#else
+			wchar_t slash = L'/';
+#endif
+			if (zpaths.empty())
+			{
+				wstring zpath = files[j].ToStdWstring();
+				wstring dir_name = zpath;
+				if (suffix == ".zgroup")
+					dir_name = zpath.substr(0, zpath.find_last_of(slash));
+				zpaths.push_back(dir_name);
+			}
+			wxArrayString list;
+			for (wstring& p : zpaths)
+			{
+				wstring root_path_wstr = files[j].ToStdWstring();
+				if (suffix == ".zgroup")
+					root_path_wstr = root_path_wstr.substr(0, root_path_wstr.find_last_of(slash));
+				std::filesystem::path root = root_path_wstr;
+				std::filesystem::path data_path = p;
+
+				wxString key = std::filesystem::relative(p, root);
+				list.Add(key);
+			}
+			DatasetSelectionDialog dsdlg(this, wxID_ANY, files[j], list, wxDefaultPosition, wxSize(500, 600));
+			if (dsdlg.ShowModal() == wxID_OK)
+			{
+				for (int i = 0; i < dsdlg.GetDatasetNum(); i++)
+				{
+					if (dsdlg.isDatasetSelected(i))
+					{
+						tmpfiles.Add(zpaths[i] + L".zfs_ch");
+						if (suffix == ".zattrs")
+							metadatafiles.Add(files[j]);
+						else
+							metadatafiles.Add(wxEmptyString);
+					}
+				}
+			}
+		}
         if (suffix==".n5" || suffix==".json" || suffix==".xml")
         {
             vector<wstring> n5paths;
@@ -1485,7 +1531,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
                 ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_ND2, -1, -1, datasize, prefix);
 			//else if (suffix==".xml")
 			//	ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_PVXML, -1, -1, datasize, prefix);
-			else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml")
+			else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml" || suffix==".zarr" || suffix == ".zattrs" || suffix==".zfs_ch")
 				ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_BRKXML, -1, -1, datasize, prefix, metadatafiles[j]);
 			else if (suffix == ".h5j")
 				ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_H5J, -1, -1, datasize, prefix);
@@ -1728,6 +1774,7 @@ void VRenderFrame::StartupLoad(wxArrayString files, size_t datasize, wxArrayStri
                     suffix == ".xml" ||
                     suffix == ".vvd" ||
                     suffix == ".n5" ||
+					suffix == ".zarr" ||
                     suffix == ".nd2" ||
                     suffix == ".json" ||
                     suffix == ".h5j" ||
@@ -4520,7 +4567,7 @@ VolumeData* VRenderFrame::OpenVolumeFromProject(wxString name, wxFileConfig &fco
                         loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_ND2, cur_chan, cur_time, 0, wxEmptyString, metadata);
 					//else if (suffix == ".xml")
 					//	loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_PVXML, cur_chan, cur_time);
-					else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml")
+					else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml" || suffix == ".zarr" || suffix == ".zgroup" || suffix == ".zfs_ch")
 						loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_BRKXML, cur_chan, cur_time, 0, wxEmptyString, metadata);
 					else if (suffix == ".h5j")
 						loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_H5J, cur_chan, cur_time, 0, wxEmptyString, metadata);
@@ -7707,7 +7754,7 @@ DatasetSelectionDialog::DatasetSelectionDialog(wxWindow* parent, wxWindowID id, 
     wxBoxSizer* itemBoxSizer = new wxBoxSizer(wxVERTICAL);
     
     wxBoxSizer *sizer1 = new wxBoxSizer(wxVERTICAL);
-    wxStaticText *st = new wxStaticText(this, 0, "Choose N5 datasets", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
+    wxStaticText *st = new wxStaticText(this, 0, "Choose Zarr/N5 datasets", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
     m_list = new DatasetListCtrl(this, wxID_ANY, list, wxDefaultPosition, wxSize(480, 500));
     sizer1->Add(st, 0, wxALIGN_CENTER);
     sizer1->Add(5,10);

@@ -239,6 +239,9 @@ void BRKXMLReader::Preprocess()
     if (ext == L"n5" || ext == L"json" || ext == L"n5fs_ch" || ext == L"xml") {
         loadFSN5();
     }
+    else if (ext == L"zarr" || ext == L"zgroup" || ext == L"z5fs_ch") {
+        loadFSZarr();
+    }
     else if (ext == L"vvd") {
         if (m_doc.LoadFile(ws2s(m_path_name).c_str()) != 0){
             return;
@@ -976,9 +979,7 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 	{
 		char dummy = 0;
 		data = nrrdNew();
-		if(m_pyramid[m_cur_level].bit_depth == 8)nrrdWrap(data, &dummy, nrrdTypeUChar, 3, (size_t)m_x_size, (size_t)m_y_size, (size_t)m_slice_num);
-		else if(m_pyramid[m_cur_level].bit_depth == 16)nrrdWrap(data, &dummy, nrrdTypeUShort, 3, (size_t)m_x_size, (size_t)m_y_size, (size_t)m_slice_num);
-		else if(m_pyramid[m_cur_level].bit_depth == 32)nrrdWrap(data, &dummy, nrrdTypeFloat, 3, (size_t)m_x_size, (size_t)m_y_size, (size_t)m_slice_num);
+		nrrdWrap(data, &dummy, m_pyramid[m_cur_level].nrrd_type, 3, (size_t)m_x_size, (size_t)m_y_size, (size_t)m_slice_num);
 		nrrdAxisInfoSet(data, nrrdAxisInfoSpacing, m_xspc, m_yspc, m_zspc);
 		nrrdAxisInfoSet(data, nrrdAxisInfoMax, m_xspc*m_x_size, m_yspc*m_y_size, m_zspc*m_slice_num);
 		nrrdAxisInfoSet(data, nrrdAxisInfoMin, 0.0, 0.0, 0.0);
@@ -993,7 +994,8 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 	{
 		if(m_pyramid[m_cur_level].bit_depth == 8) m_max_value = 255.0;
 		else if(m_pyramid[m_cur_level].bit_depth == 16) m_max_value = 65535.0;
-		else if(m_pyramid[m_cur_level].bit_depth == 32) m_max_value = 1.0;
+        else if(m_pyramid[m_cur_level].nrrd_type == nrrdTypeInt || m_pyramid[m_cur_level].nrrd_type == nrrdTypeUInt) m_max_value = 100000.0;
+		else m_max_value = 1.0;
 	}
 
 	return data;
@@ -1141,7 +1143,7 @@ void BRKXMLReader::build_bricks(vector<FLIVR::TextureBrick*> &tbrks, int lv)
 	int max_texture_size = 65535;
 	
 	int numb[1];
-	if (m_pyramid[lev].bit_depth == 8 || m_pyramid[lev].bit_depth == 16 || m_pyramid[lev].bit_depth == 32)
+	if (m_pyramid[lev].bit_depth == 8 || m_pyramid[lev].bit_depth == 16 || m_pyramid[lev].bit_depth == 32 || m_pyramid[lev].bit_depth == 64)
 		numb[0] = m_pyramid[lev].bit_depth / 8;
 	else
 		numb[0] = 0;
@@ -1268,6 +1270,96 @@ void BRKXMLReader::SetInfo()
 	wss << L"Frames: " << m_time_num << L'\n';
 
 	m_info = wss.str();
+}
+
+void BRKXMLReader::loadFSZarr()
+{
+    size_t ext_pos = m_path_name.find_last_of(L".");
+    wstring ext = m_path_name.substr(ext_pos + 1);
+    transform(ext.begin(), ext.end(), ext.begin(), towlower);
+    boost::filesystem::path file_path(m_path_name);
+
+    //boost::filesystem::path::imbue(std::locale(std::locale(), new std::codecvt_utf8_utf16<wchar_t>()));
+    boost::filesystem::path root_path(m_dir_name);
+
+    vector<double> pix_res(3, 1.0);
+    bool pix_res_found = false;
+    auto root_attrpath = root_path / ".zattrs";
+    std::ifstream ifs(root_attrpath.string());
+    if (ifs.is_open()) {
+        auto jf = json::parse(ifs);
+        if (!jf.is_null() && jf.contains(MultiScalesKey) &&
+            jf[MultiScalesKey].contains(CoordinateTransformationsKey) &&
+            jf[MultiScalesKey][CoordinateTransformationsKey].contains(ScaleKey)) {
+            pix_res = jf[MultiScalesKey][CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
+            pix_res_found = true;
+        }
+    }
+
+    directory_iterator end_itr; // default construction yields past-the-end
+    vector<wstring> ch_dirs;
+    if (file_path.extension() == ".zfs_ch") {
+        ch_dirs.push_back(file_path.stem().wstring());
+    }
+
+    if (ch_dirs.empty())
+        ch_dirs.push_back(L"");
+
+    if (ch_dirs.empty())
+    {
+        m_error_msg = L"Error (N5 Reader): No channel exists.";
+        return;
+    }
+
+    sort(ch_dirs.begin(), ch_dirs.end(),
+        [](const wstring& x, const wstring& y) { return WSTOI(x.substr(1)) < WSTOI(y.substr(1)); });
+
+    m_chan_names = ch_dirs;
+
+    vector<vector<wstring>> relpaths;
+    for (int i = 0; i < ch_dirs.size(); i++) {
+		vector<double> ch_pix_res = pix_res;
+		if (!pix_res_found) {
+			auto attrpath = root_path / ch_dirs[i] / ".zattrs";
+			std::ifstream ifs(attrpath.string());
+			if (ifs.is_open()) {
+				auto jf = json::parse(ifs);
+                if (!jf.is_null() && jf.contains(MultiScalesKey) &&
+                    jf[MultiScalesKey].contains(CoordinateTransformationsKey) &&
+                    jf[MultiScalesKey][CoordinateTransformationsKey].contains(ScaleKey)) {
+                    ch_pix_res = jf[MultiScalesKey][CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
+                }
+			}
+		}
+		boost::filesystem::path pyramid_abs_path = root_path / ch_dirs[i];
+		ReadResolutionPyramidFromSingleZarrDataset(pyramid_abs_path.wstring(), 0, i, ch_pix_res);
+    }
+
+    m_imageinfo.nFrame = 1;
+    m_imageinfo.nChannel = ch_dirs.size();
+    m_imageinfo.copyableLv = m_pyramid.size() - 1;
+
+    m_time_num = m_imageinfo.nFrame;
+    m_chan_num = m_imageinfo.nChannel;
+    m_copy_lv = m_imageinfo.copyableLv;
+
+    m_cur_time = 0;
+
+    if (m_pyramid.empty()) return;
+
+    m_xspc = m_pyramid[0].xspc;
+    m_yspc = m_pyramid[0].yspc;
+    m_zspc = m_pyramid[0].zspc;
+
+    m_x_size = m_pyramid[0].imageW;
+    m_y_size = m_pyramid[0].imageH;
+    m_slice_num = m_pyramid[0].imageD;
+
+    m_file_type = m_pyramid[0].file_type;
+
+    m_level_num = m_pyramid.size();
+    m_cur_level = 0;
+
 }
 
 void BRKXMLReader::loadFSN5()
@@ -1438,6 +1530,255 @@ void BRKXMLReader::loadFSN5()
 
 }
 
+void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, int f, int c, vector<double> pix_res)
+{
+#ifdef _WIN32
+    wchar_t slash = L'\\';
+#else
+    wchar_t slash = L'/';
+#endif
+
+    boost::filesystem::path root_path(root_dir);
+    directory_iterator end_itr;
+
+    vector<vector<wstring>> relpaths;
+
+    vector<wstring> scale_dirs;
+
+    vector<vector<double>> pix_res_array;
+
+    auto root_attrpath = root_path / ".zattrs";
+    std::ifstream ifs(root_attrpath.string());
+    if (ifs.is_open()) {
+        auto jf = json::parse(ifs);
+        if (!jf.is_null() && jf.contains(MultiScalesKey) && jf[MultiScalesKey].contains(DatasetsKey)) {
+            for (auto& elem : jf[MultiScalesKey][DatasetsKey]) {
+                if (elem.contains(PathKey) && elem.contains(CoordinateTransformationsKey) && elem[CoordinateTransformationsKey].contains(ScaleKey)) {
+                    scale_dirs.push_back(elem[PathKey]);
+                    vector<double> p_res = jf[CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
+                    pix_res_array.push_back(p_res);
+                }
+            }
+        }
+    }
+    
+    if (scale_dirs.empty()) {
+        std::regex scdir_pattern("^s\\d+$");
+        for (directory_iterator itr(root_path); itr != end_itr; ++itr)
+        {
+            if (is_directory(itr->status()))
+            {
+                if (regex_match(itr->path().filename().string(), scdir_pattern)) {
+                    scale_dirs.push_back(itr->path().filename().wstring());
+                    vector<double> p_res = vector<double>(3, -1.0);
+                    pix_res_array.push_back(p_res);
+                }
+            }
+        }
+    }
+
+    if (scale_dirs.empty()) {
+        auto metadata_path = root_path / ".zarray";
+        if (boost::filesystem::exists(metadata_path)) {
+            scale_dirs.push_back(L".");
+            vector<double> p_res = vector<double>(3, -1.0);
+            pix_res_array.push_back(p_res);
+        }
+        else
+            return;
+    }
+
+    sort(scale_dirs.begin(), scale_dirs.end(),
+        [](const wstring& x, const wstring& y) { return WSTOI(x.substr(1)) < WSTOI(y.substr(1)); });
+
+    int orgw = 0;
+    int orgh = 0;
+    int orgd = 0;
+    if (m_pyramid.size() < scale_dirs.size())
+        m_pyramid.resize(scale_dirs.size());
+    for (int j = 0; j < scale_dirs.size(); j++) {
+        auto attrpath = root_path / scale_dirs[j] / "attributes.json";
+        DatasetAttributes* attr = parseDatasetMetadataZarr(attrpath.wstring());
+
+        LevelInfo& lvinfo = m_pyramid[j];
+        if (c == 0 && f == 0) {
+            lvinfo.endianness = attr->m_is_big_endian ? BRICK_ENDIAN_BIG : BRICK_ENDIAN_LITTLE;
+
+            lvinfo.imageW = attr->m_dimensions[0];
+
+            lvinfo.imageH = attr->m_dimensions[1];
+
+            lvinfo.imageD = attr->m_dimensions[2];
+
+            if (c == 0 && j == 0) {
+                orgw = lvinfo.imageW;
+                orgh = lvinfo.imageH;
+                orgd = lvinfo.imageD;
+            }
+
+            lvinfo.file_type = attr->m_compression;
+            lvinfo.blosc_ctype = attr->m_blosc_param.ctype;
+            lvinfo.blosc_clevel = attr->m_blosc_param.clevel;
+            lvinfo.blosc_suffle = attr->m_blosc_param.suffle;
+            lvinfo.blosc_blocksize = attr->m_blosc_param.blocksize;
+
+            if (pix_res_array[j][0] > 0.0)
+                lvinfo.xspc = pix_res[0] * pix_res_array[j][0];
+            else
+                lvinfo.xspc = pix_res[0] / ((double)lvinfo.imageW / orgw);
+
+            if (pix_res_array[j][1] > 0.0)
+                lvinfo.yspc = pix_res[1] * pix_res_array[j][1];
+            else
+                lvinfo.yspc = pix_res[1] / ((double)lvinfo.imageH / orgh);
+
+            if (pix_res_array[j][2] > 0.0)
+                lvinfo.zspc = pix_res[2] * pix_res_array[j][2];
+            else
+                lvinfo.zspc = pix_res[2] / ((double)lvinfo.imageD / orgd);
+
+            if (attr->m_dataType == nrrdTypeChar || attr->m_dataType == nrrdTypeUChar)
+                lvinfo.bit_depth = 8;
+            else if (attr->m_dataType == nrrdTypeShort || attr->m_dataType == nrrdTypeUShort)
+                lvinfo.bit_depth = 16;
+            else if (attr->m_dataType == nrrdTypeInt || attr->m_dataType == nrrdTypeUInt || attr->m_dataType == nrrdTypeFloat)
+                lvinfo.bit_depth = 32;
+            else if (attr->m_dataType == nrrdTypeDouble)
+                lvinfo.bit_depth = 64;
+
+            lvinfo.nrrd_type = attr->m_dataType;
+
+            lvinfo.brick_baseW = attr->m_blockSize[0];
+
+            lvinfo.brick_baseH = attr->m_blockSize[1];
+
+            lvinfo.brick_baseD = attr->m_blockSize[2];
+
+            vector<wstring> lvpaths;
+            int ii, jj, kk;
+            int mx, my, mz, mx2, my2, mz2, ox, oy, oz;
+            double tx0, ty0, tz0, tx1, ty1, tz1;
+            double bx1, by1, bz1;
+            double dx0, dy0, dz0, dx1, dy1, dz1;
+            const int overlapx = 0;
+            const int overlapy = 0;
+            const int overlapz = 0;
+            size_t count = 0;
+            size_t zcount = 0;
+            for (kk = 0; kk < lvinfo.imageD; kk += lvinfo.brick_baseD)
+            {
+                if (kk) kk -= overlapz;
+                size_t ycount = 0;
+                for (jj = 0; jj < lvinfo.imageH; jj += lvinfo.brick_baseH)
+                {
+                    if (jj) jj -= overlapy;
+                    size_t xcount = 0;
+                    for (ii = 0; ii < lvinfo.imageW; ii += lvinfo.brick_baseW)
+                    {
+                        BrickInfo* binfo = new BrickInfo();
+
+                        if (ii) ii -= overlapx;
+                        mx = min(lvinfo.brick_baseW, lvinfo.imageW - ii);
+                        my = min(lvinfo.brick_baseH, lvinfo.imageH - jj);
+                        mz = min(lvinfo.brick_baseD, lvinfo.imageD - kk);
+
+                        mx2 = mx;
+                        my2 = my;
+                        mz2 = mz;
+
+                        // Compute Texture Box.
+                        tx0 = ii ? ((mx2 - mx + overlapx / 2.0) / mx2) : 0.0;
+                        ty0 = jj ? ((my2 - my + overlapy / 2.0) / my2) : 0.0;
+                        tz0 = kk ? ((mz2 - mz + overlapz / 2.0) / mz2) : 0.0;
+
+                        tx1 = 1.0 - overlapx / 2.0 / mx2;
+                        if (mx < lvinfo.brick_baseW) tx1 = 1.0;
+                        if (lvinfo.imageW - ii == lvinfo.brick_baseW) tx1 = 1.0;
+
+                        ty1 = 1.0 - overlapy / 2.0 / my2;
+                        if (my < lvinfo.brick_baseH) ty1 = 1.0;
+                        if (lvinfo.imageH - jj == lvinfo.brick_baseH) ty1 = 1.0;
+
+                        tz1 = 1.0 - overlapz / 2.0 / mz2;
+                        if (mz < lvinfo.brick_baseD) tz1 = 1.0;
+                        if (lvinfo.imageD - kk == lvinfo.brick_baseD) tz1 = 1.0;
+
+                        binfo->tx0 = tx0;
+                        binfo->ty0 = ty0;
+                        binfo->tz0 = tz0;
+                        binfo->tx1 = tx1;
+                        binfo->ty1 = ty1;
+                        binfo->tz1 = tz1;
+
+                        // Compute BBox.
+                        bx1 = min((ii + lvinfo.brick_baseW - overlapx / 2.0) / (double)lvinfo.imageW, 1.0);
+                        if (lvinfo.imageW - ii == lvinfo.brick_baseW) bx1 = 1.0;
+
+                        by1 = min((jj + lvinfo.brick_baseH - overlapy / 2.0) / (double)lvinfo.imageH, 1.0);
+                        if (lvinfo.imageH - jj == lvinfo.brick_baseH) by1 = 1.0;
+
+                        bz1 = min((kk + lvinfo.brick_baseD - overlapz / 2.0) / (double)lvinfo.imageD, 1.0);
+                        if (lvinfo.imageD - kk == lvinfo.brick_baseD) bz1 = 1.0;
+
+                        binfo->bx0 = ii == 0 ? 0 : (ii + overlapx / 2.0) / (double)lvinfo.imageW;
+                        binfo->by0 = jj == 0 ? 0 : (jj + overlapy / 2.0) / (double)lvinfo.imageH;
+                        binfo->bz0 = kk == 0 ? 0 : (kk + overlapz / 2.0) / (double)lvinfo.imageD;
+                        binfo->bx1 = bx1;
+                        binfo->by1 = by1;
+                        binfo->bz1 = bz1;
+
+                        ox = ii - (mx2 - mx);
+                        oy = jj - (my2 - my);
+                        oz = kk - (mz2 - mz);
+
+                        binfo->id = count++;
+                        binfo->x_start = ox;
+                        binfo->y_start = oy;
+                        binfo->z_start = oz;
+                        binfo->x_size = mx2;
+                        binfo->y_size = my2;
+                        binfo->z_size = mz2;
+
+                        binfo->fsize = 0;
+                        binfo->offset = 0;
+
+                        if (count > lvinfo.bricks.size())
+                            lvinfo.bricks.resize(count, NULL);
+
+                        lvinfo.bricks[binfo->id] = binfo;
+
+                        wstringstream wss;
+                        wss << xcount << slash << ycount << slash << zcount;
+                        lvpaths.push_back(wss.str());
+
+                        xcount++;
+                    }
+                    ycount++;
+                }
+                zcount++;
+            }
+            relpaths.push_back(lvpaths);
+        }
+
+        if (f + 1 > lvinfo.filename.size())
+            lvinfo.filename.resize(f + 1);
+        if (c + 1 > lvinfo.filename[f].size())
+            lvinfo.filename[f].resize(c + 1);
+        if (relpaths[j].size() > lvinfo.filename[f][c].size())
+            lvinfo.filename[f][c].resize(relpaths[j].size(), NULL);
+
+        for (int pid = 0; pid < relpaths[j].size(); pid++)
+        {
+            boost::filesystem::path br_file_path(root_path / scale_dirs[j] / relpaths[j][pid]);
+            FLIVR::FileLocInfo* fi = nullptr;
+            fi = new FLIVR::FileLocInfo(br_file_path.wstring(), 0, 0, lvinfo.file_type, false, true, lvinfo.blosc_blocksize, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle, lvinfo.endianness);
+            lvinfo.filename[f][c][pid] = fi;
+        }
+
+        delete attr;
+    }
+}
+
 void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, int f, int c, vector<double> pix_res)
 {
 #ifdef _WIN32
@@ -1493,10 +1834,12 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
         m_pyramid.resize(scale_dirs.size());
     for (int j = 0; j < scale_dirs.size(); j++) {
         auto attrpath = root_path / scale_dirs[j] / "attributes.json";
-        DatasetAttributes* attr = parseDatasetMetadata(attrpath.wstring());
+        DatasetAttributes* attr = parseDatasetMetadataN5(attrpath.wstring());
         
         LevelInfo& lvinfo = m_pyramid[j];
         if (c == 0 && f == 0) {
+            lvinfo.endianness = attr->m_is_big_endian ? BRICK_ENDIAN_BIG : BRICK_ENDIAN_LITTLE;
+
             lvinfo.imageW = attr->m_dimensions[0];
             
             lvinfo.imageH = attr->m_dimensions[1];
@@ -1536,7 +1879,16 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
             else
                 lvinfo.zspc = pix_res[2] / ((double)lvinfo.imageD / orgd);
             
-            lvinfo.bit_depth = attr->m_dataType;
+            if (attr->m_dataType == nrrdTypeChar || attr->m_dataType == nrrdTypeUChar)
+                lvinfo.bit_depth = 8;
+            else if (attr->m_dataType == nrrdTypeShort || attr->m_dataType == nrrdTypeUShort)
+                lvinfo.bit_depth = 16;
+            else if (attr->m_dataType == nrrdTypeInt || attr->m_dataType == nrrdTypeUInt || attr->m_dataType == nrrdTypeFloat)
+                lvinfo.bit_depth = 32;
+            else if (attr->m_dataType == nrrdTypeDouble)
+                lvinfo.bit_depth = 64;
+
+            lvinfo.nrrd_type = attr->m_dataType;
             
             lvinfo.brick_baseW = attr->m_blockSize[0];
             
@@ -1661,12 +2013,87 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
         {
             boost::filesystem::path br_file_path(root_path / scale_dirs[j] / relpaths[j][pid]);
             FLIVR::FileLocInfo* fi = nullptr;
-            fi = new FLIVR::FileLocInfo(br_file_path.wstring(), 0, 0, lvinfo.file_type, false, true, lvinfo.blosc_blocksize, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle);
+            fi = new FLIVR::FileLocInfo(br_file_path.wstring(), 0, 0, lvinfo.file_type, false, true, lvinfo.blosc_blocksize, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle, lvinfo.endianness);
             lvinfo.filename[f][c][pid] = fi;
         }
         
         delete attr;
     }
+}
+
+bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& output)
+{
+#ifdef _WIN32
+    wchar_t slash = L'\\';
+#else
+    wchar_t slash = L'/';
+#endif
+
+    size_t ext_pos = zarr_path.find_last_of(L".");
+    wstring ext = zarr_path.substr(ext_pos + 1);
+    transform(ext.begin(), ext.end(), ext.begin(), towlower);
+    wstring dir_name = zarr_path.substr(0, zarr_path.find_last_of(slash) + 1);
+
+    if (dir_name.size() > 1 && ext == L"zarr")
+        dir_name = zarr_path + slash;
+
+
+    boost::filesystem::path file_path(zarr_path);
+
+    //boost::filesystem::path::imbue(std::locale(std::locale(), new std::codecvt_utf8_utf16<wchar_t>()));
+    boost::filesystem::path root_path(dir_name);
+
+    directory_iterator end_itr; // default construction yields past-the-end
+    if (output.size() > 0)
+        output.clear();
+
+    std::regex pattern(R"((^|\bs)\d+$)");
+
+    fs::recursive_directory_iterator ite(root_path.string());
+    for (const auto& entry : ite) {
+        try {
+            if (fs::is_directory(entry.status())) {
+                if (std::regex_match(entry.path().filename().string(), pattern)) {
+                    ite.disable_recursion_pending();
+                    continue;
+                }
+
+                auto attrpath = entry.path() / ".zattrs";
+                std::ifstream ifs(attrpath.string());
+                if (ifs.is_open()) {
+                    auto jf = json::parse(ifs);
+                    if (!jf.is_null() && jf.contains(MultiScalesKey)) {
+                        output.push_back(entry.path());
+                        ite.disable_recursion_pending();
+                        continue;
+                    }
+                }
+
+                for (const auto& sub_entry : fs::directory_iterator(entry.path())) {
+                    try {
+                        if (fs::is_directory(sub_entry.status())) {
+                            std::string dir_name = sub_entry.path().filename().string();
+                            if (std::regex_match(dir_name, pattern)) {
+                                output.push_back(entry.path());
+                                ite.disable_recursion_pending();
+                                break;
+                            }
+                        }
+                    }
+                    catch (const fs::filesystem_error & ex) {
+                        std::cerr << "Error: " << ex.what() << std::endl;
+                    }
+                }
+            }
+        }
+        catch (const fs::filesystem_error & ex) {
+            std::cerr << "Error: " << ex.what() << std::endl;
+        }
+    }
+
+    std::sort(output.begin(), output.end());
+
+    return true;
 }
 
 bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
@@ -1740,7 +2167,146 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
     return true;
 }
 
-DatasetAttributes* BRKXMLReader::parseDatasetMetadata(wstring jpath)
+DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
+{
+    boost::filesystem::path path(jpath);
+    std::ifstream ifs(path.string());
+
+    if (!ifs.is_open())
+        return nullptr;
+
+    auto jf = json::parse(ifs);
+
+    if (jf.is_null() ||
+        !jf.contains(ShapeKey) ||
+        !jf.contains(ZarrDataTypeKey) ||
+        !jf.contains(ChunksKey))
+        return nullptr;
+
+    DatasetAttributes* ret = new DatasetAttributes();
+
+    ret->m_dimensions = jf[ShapeKey].get<vector<long>>();
+
+    string str = jf[ZarrDataTypeKey].get<string>();
+    ret->m_is_big_endian = (str[0] == '>');
+
+    int bytes = 0;
+    bytes = str[2] - '0';
+    ret->m_dataType = -1;
+    if (str[1] == 'i') {
+        if (bytes == 1)
+            ret->m_dataType = nrrdTypeChar;
+        else if (bytes == 2)
+            ret->m_dataType = nrrdTypeShort;
+        else if (bytes == 4)
+            ret->m_dataType = nrrdTypeInt;
+    }
+    else if (str[1] == 'u') {
+        if (bytes == 1)
+            ret->m_dataType = nrrdTypeUChar;
+        else if (bytes == 2)
+            ret->m_dataType = nrrdTypeUShort;
+        else if (bytes == 4)
+            ret->m_dataType = nrrdTypeUInt;
+    }
+    else if (str[1] == 'f') {
+        if (bytes == 4)
+            ret->m_dataType = nrrdTypeFloat;
+        else if (bytes == 8)
+            ret->m_dataType = nrrdTypeDouble;
+    }
+
+
+    ret->m_blockSize = jf[ChunksKey].get<vector<int>>();
+
+    ret->m_pix_res = vector<double>(3, -1.0);
+    
+    /* version 0 */
+    string cptype;
+    if (jf.contains(CompressorKey) && jf[CompressorKey].contains(CompressorIDKey)) {
+        cptype = jf[CompressorKey][CompressorIDKey].get<string>();
+        if (cptype == "raw")
+            ret->m_compression = 0;
+        else if (cptype == "gzip")
+            ret->m_compression = 1;
+        else if (cptype == "bzip2")
+            ret->m_compression = 2;
+        else if (cptype == "lz4")
+            ret->m_compression = 3;
+        else if (cptype == "xz")
+            ret->m_compression = 4;
+        else if (cptype == "zstd")
+            ret->m_compression = 6;
+        else if (cptype == "blosc")
+        {
+            ret->m_compression = 5;
+            if (jf[CompressionKey].contains(BloscLevelKey))
+                ret->m_blosc_param.clevel = jf[CompressionKey][BloscLevelKey].get<int>();
+            else ret->m_blosc_param.clevel = 0;
+
+            if (jf[CompressionKey].contains(BloscBlockSizeKey))
+                ret->m_blosc_param.blocksize = jf[CompressionKey][BloscBlockSizeKey].get<int>();
+            else ret->m_blosc_param.blocksize = 0;
+
+            if (jf[CompressionKey].contains(BloscCompressionKey))
+            {
+                auto bcptype = jf[CompressionKey][BloscCompressionKey].get<string>();
+
+                if (bcptype == BLOSC_BLOSCLZ_COMPNAME)
+                    ret->m_blosc_param.ctype = BLOSC_BLOSCLZ;
+                else if (bcptype == BLOSC_LZ4_COMPNAME)
+                    ret->m_blosc_param.ctype = BLOSC_LZ4;
+                else if (bcptype == BLOSC_LZ4HC_COMPNAME)
+                    ret->m_blosc_param.ctype = BLOSC_LZ4HC;
+                //else if (bcptype == BLOSC_SNAPPY_COMPNAME)
+                //    ret->m_blosc_param.ctype = BLOSC_SNAPPY;
+                else if (bcptype == BLOSC_ZLIB_COMPNAME)
+                    ret->m_blosc_param.ctype = BLOSC_ZLIB;
+                else if (bcptype == BLOSC_ZSTD_COMPNAME)
+                    ret->m_blosc_param.ctype = BLOSC_ZSTD;
+                else
+                {
+                    m_error_msg = L"Error (N5Reader): Unsupported blosc compression format ";
+                    m_error_msg += s2ws(bcptype);
+                }
+            }
+            else ret->m_blosc_param.ctype = BLOSC_BLOSCLZ;
+
+            if (jf[CompressionKey].contains(BloscShuffleKey))
+                ret->m_blosc_param.suffle = jf[CompressionKey][BloscShuffleKey].get<int>();
+            else ret->m_blosc_param.suffle = 0;
+        }
+        else
+            ret->m_compression = -1;
+    }
+
+    switch (ret->m_compression)
+    {
+    case 0:
+        ret->m_compression = BRICK_FILE_TYPE_N5RAW;
+        break;
+    case 1:
+        ret->m_compression = BRICK_FILE_TYPE_N5GZIP;
+        break;
+    case 3:
+        ret->m_compression = BRICK_FILE_TYPE_N5LZ4;
+        break;
+    case 5:
+        ret->m_compression = BRICK_FILE_TYPE_N5BLOSC;
+        break;
+    case 6:
+        ret->m_compression = BRICK_FILE_TYPE_N5ZSTD;
+        break;
+    default:
+        ret->m_compression = BRICK_FILE_TYPE_NONE;
+        m_error_msg = L"Error (N5Reader): Unsupported compression format ";
+        m_error_msg += s2ws(cptype);
+    }
+
+    return ret;
+}
+
+DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
 {
     //boost::filesystem::path::imbue(std::locale( std::locale(), new std::codecvt_utf8_utf16<wchar_t>()));
     boost::filesystem::path path(jpath);
@@ -1760,12 +2326,18 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadata(wstring jpath)
 	DatasetAttributes* ret = new DatasetAttributes();
     
     ret->m_dimensions = jf[DimensionsKey].get<vector<long>>();
+
+    ret->m_is_big_endian = true;
     
 	string str = jf[DataTypeKey].get<string>();
 	if (str == "uint8")
-		ret->m_dataType = 8;
+		ret->m_dataType = nrrdTypeUChar;
 	else if (str == "uint16")
-		ret->m_dataType = 16;
+		ret->m_dataType = nrrdTypeUShort;
+    //else if (str == "uint32")
+    //    ret->m_dataType = nrrdTypeUInt;
+    //else if (str == "float32")
+    //    ret->m_dataType = nrrdTypeFloat;
 	else
     {
 		ret->m_dataType = 0;

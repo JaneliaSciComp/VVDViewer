@@ -104,6 +104,9 @@ bool DnDFile::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &filenames)
                              suffix == ".v3dpbd" ||
                              suffix == ".zip" ||
                              suffix == ".idi" ||
+                             suffix == ".zarr" ||
+                             suffix == ".zgroup" ||
+                             suffix == ".zfs_ch" ||
                              suffix == ".n5" ||
                              suffix == ".json" ||
                              suffix == ".n5fs_ch")
@@ -172,6 +175,9 @@ bool DnDFile::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &filenames)
                                 suffix == ".v3dpbd" ||
                                 suffix == ".zip" ||
                                 suffix == ".idi" ||
+                                suffix == ".zarr" ||
+                                suffix == ".zgroup" ||
+                                suffix == ".zfs_ch" ||
                                 suffix == ".n5" ||
                                 suffix == ".json" ||
                                 suffix == ".n5fs_ch")

@@ -79,7 +79,11 @@ namespace FLIVR {
 #define BRICK_FILE_TYPE_LZ4		7
 #define BRICK_FILE_TYPE_N5LZ4   8
 #define BRICK_FILE_TYPE_N5BLOSC 9
+#define BRICK_FILE_TYPE_N5ZSTD  10
 
+#define BRICK_ENDIAN_DEFAULT 0
+#define BRICK_ENDIAN_LITTLE 1
+#define BRICK_ENDIAN_BIG 2
 
 	class EXPORT_API VL_Nrrd
 	{
@@ -334,9 +338,10 @@ namespace FLIVR {
             blosc_ctype = 0;
             blosc_suffle = 0;
             isn5 = false;
+			endianness = BRICK_ENDIAN_DEFAULT;
             isvalid = true;
 		}
-		FileLocInfo(std::wstring filename_, int offset_, int datasize_, int type_, bool isurl_, bool isn5_, int bblocksize_x_ = 0, int bblocksize_y_ = 0, int bblocksize_z_ = 0, int bclevel_ = 0, int bctype_ = 0, int bsuffle_ = 0)
+		FileLocInfo(std::wstring filename_, int offset_, int datasize_, int type_, bool isurl_, bool isn5_, int bblocksize_x_ = 0, int bblocksize_y_ = 0, int bblocksize_z_ = 0, int bclevel_ = 0, int bctype_ = 0, int bsuffle_ = 0, int endianness_ = 0)
 		{
 			filename = filename_;
 			offset = offset_;
@@ -355,6 +360,7 @@ namespace FLIVR {
             blosc_clevel = bclevel_;
             blosc_ctype = bctype_;
             blosc_suffle = bsuffle_;
+			endianness = endianness_;
             isvalid = true;
 		}
 		FileLocInfo(const FileLocInfo &copy)
@@ -374,6 +380,7 @@ namespace FLIVR {
             blosc_clevel = copy.blosc_clevel;
             blosc_ctype = copy.blosc_ctype;
             blosc_suffle = copy.blosc_suffle;
+			endianness = copy.endianness;
             isvalid = copy.isvalid;
 		}
 
@@ -393,6 +400,8 @@ namespace FLIVR {
         int blosc_clevel;
         int blosc_ctype;
         int blosc_suffle;
+
+		int endianness;
         
         bool isvalid;
 	};
@@ -636,13 +645,14 @@ namespace FLIVR {
 		void set_brkdata(const std::shared_ptr<VL_Array> &brkdata) {brkdata_ = brkdata;}
 		void set_brkdata(void *brkdata, size_t size) {brkdata_ = std::make_shared<VL_Array>((char *)brkdata, size);}
 		static bool read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, wxThread *th=NULL);
-		static bool decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0);
-        static bool raw_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0);
+		static bool decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+        static bool raw_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
 		static bool jpeg_decompressor(char *out, char* in, size_t out_size, size_t in_size);
-		static bool zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0);
+		static bool zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
 		static bool h265_decompressor(char *out, char* in, size_t out_size, size_t in_size, int w, int h);
-		static bool lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0);
-        static bool blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0);
+		static bool lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+		static bool zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+        static bool blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
 		static void delete_all_cache_files();
         static char check_machine_endian();
 
