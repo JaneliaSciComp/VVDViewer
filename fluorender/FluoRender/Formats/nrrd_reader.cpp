@@ -312,6 +312,10 @@ Nrrd* NRRDReader::ConvertNrrd(int t, int c, bool get_max)
     size_t data_size = voxelnum;
 	if (output->type == nrrdTypeUShort || output->type == nrrdTypeShort)
 		data_size *= 2;
+	else if (output->type == nrrdTypeUInt || output->type == nrrdTypeInt || output->type == nrrdTypeFloat)
+		data_size *= 4;
+	else if (output->type == nrrdTypeULLong || output->type == nrrdTypeLLong || output->type == nrrdTypeDouble)
+		data_size *= 8;
 	output->data = new unsigned char[data_size];
 
 	//if (data_size >= 1073741824UL)
@@ -363,6 +367,19 @@ Nrrd* NRRDReader::ConvertNrrd(int t, int c, bool get_max)
 				m_max_value = (n > m_max_value)?n:m_max_value;
 		}
 	}
+	if (output->type == nrrdTypeFloat && get_max) {
+		for (i = 0; i < voxelnum; i++) {
+			float f = ((float*)output->data)[i];
+			m_max_value = (f > m_max_value) ? f : m_max_value;
+		}
+	}
+	if (output->type == nrrdTypeDouble && get_max) {
+		for (i = 0; i < voxelnum; i++) {
+			double f = ((double*)output->data)[i];
+			m_max_value = (f > m_max_value) ? f : m_max_value;
+		}
+	}
+
 	//find max value
 	if (output->type == nrrdTypeUChar)
 	{
@@ -393,6 +410,16 @@ Nrrd* NRRDReader::ConvertNrrd(int t, int c, bool get_max)
             m_max_value = 65535.0;
 			m_scalar_scale = 1.0;
         }
+	}
+	else if (output->type == nrrdTypeFloat || output->type == nrrdTypeDouble)
+	{
+		if (m_max_value > 0.0)
+			m_scalar_scale = 1.0 / m_max_value;
+		else
+		{
+			m_max_value = 1.0;
+			m_scalar_scale = 1.0;
+		}
 	}
 	else
 	{

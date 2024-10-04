@@ -384,6 +384,47 @@ double VolumeMeshConv::GetValue(int x, int y, int z)
 			}
 		}
 	}
+	else if (nrrd->type == nrrdTypeFloat)
+	{
+		value = ((unsigned short*)nrrd->data)[index];
+		value /= m_vol_max;
+		if (m_use_transfer)
+		{
+			double gm = 0.0;
+			if (x > 0 && x < m_nx - 1 &&
+				y>0 && y < m_ny - 1 &&
+				z>0 && z < m_nz - 1)
+			{
+				double v1 = ((float*)(nrrd->data))[m_nx * m_ny * z + m_nx * y + (x - 1)];
+				double v2 = ((float*)(nrrd->data))[m_nx * m_ny * z + m_nx * y + (x + 1)];
+				double v3 = ((float*)(nrrd->data))[m_nx * m_ny * z + m_nx * (y - 1) + x];
+				double v4 = ((float*)(nrrd->data))[m_nx * m_ny * z + m_nx * (y + 1) + x];
+				double v5 = ((float*)(nrrd->data))[m_nx * m_ny * (z - 1) + m_nx * y + x];
+				double v6 = ((float*)(nrrd->data))[m_nx * m_ny * (z + 1) + m_nx * y + x];
+				double normal_x, normal_y, normal_z;
+				normal_x = (v2 - v1) / m_vol_max;
+				normal_y = (v4 - v3) / m_vol_max;
+				normal_z = (v6 - v5) / m_vol_max;
+				gm = sqrt(normal_x * normal_x + normal_y * normal_y + normal_z * normal_z) * 0.53;
+			}
+			if (value<m_lo_thresh - m_sw ||
+				value>m_hi_thresh + m_sw ||
+				gm < m_gm_thresh)
+				value = 0.0;
+			else
+			{
+				double gamma = 1.0 / m_gamma;
+				value = (value < m_lo_thresh ?
+					(m_sw - m_lo_thresh + value) / m_sw :
+					(value > m_hi_thresh ?
+					(m_sw - value + m_hi_thresh) / m_sw : 1.0))
+					* value;
+				value = pow(Clamp(value / m_offset,
+					gamma < 1.0 ? -(gamma - 1.0) * 0.00001 : 0.0,
+					gamma>1.0 ? 0.9999 : 1.0), gamma);
+			}
+		}
+	}
 
 	if (m_use_mask && m_mask && m_mask->getNrrd())
 	{

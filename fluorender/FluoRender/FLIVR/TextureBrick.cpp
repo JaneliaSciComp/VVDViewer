@@ -49,11 +49,7 @@
 #include <blosc2.h>
 #endif
 
-#include <boost/iostreams/filtering_streambuf.hpp>
-#include <boost/iostreams/copy.hpp>
-#include <boost/iostreams/filter/zstd.hpp>
-#include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/device/array.hpp>
+#include <zstd.h>
 
 using namespace std;
 
@@ -921,7 +917,10 @@ z
       if (n->type == nrrdTypeUShort) return VK_FORMAT_R16_UNORM;
 	  if (n->type == nrrdTypeInt)    return VK_FORMAT_R32_SINT;
       if (n->type == nrrdTypeUInt)   return VK_FORMAT_R32_UINT;
+      if (n->type == nrrdTypeLLong)    return VK_FORMAT_R64_SINT;
+      if (n->type == nrrdTypeULLong)   return VK_FORMAT_R64_UINT;
 	  if (n->type == nrrdTypeFloat)  return VK_FORMAT_R32_SFLOAT;
+      if (n->type == nrrdTypeDouble)  return VK_FORMAT_R64_SFLOAT;
       return VK_FORMAT_UNDEFINED;
    }
 
@@ -933,7 +932,10 @@ z
       if (t == VK_FORMAT_R16_UNORM || t == VK_FORMAT_R16_UINT) { return sizeof(uint16_t); }
       if (t == VK_FORMAT_R32_SINT)  { return sizeof(int32_t); }
       if (t == VK_FORMAT_R32_UINT)  { return sizeof(uint32_t); }
+      if (t == VK_FORMAT_R64_SINT) { return sizeof(int64_t); }
+      if (t == VK_FORMAT_R64_UINT) { return sizeof(uint64_t); }
       if (t == VK_FORMAT_R32_SFLOAT){ return sizeof(float); }
+      if (t == VK_FORMAT_R64_SFLOAT) { return sizeof(double); }
       return 0;
    }
 
@@ -951,6 +953,8 @@ z
 			  return VK_FORMAT_R16_UINT;
 		  else if (data_[c]->getNrrd()->type == nrrdTypeUInt)
 			  return VK_FORMAT_R32_UINT;
+          else if (data_[c]->getNrrd()->type == nrrdTypeULLong)
+              return VK_FORMAT_R64_UINT;
 	  }
 	  else if (c == nstroke_)
          return VK_FORMAT_R8_UNORM;
@@ -1411,17 +1415,17 @@ z
 	   return true;
    }
 
-   bool TextureBrick::decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness)
+   bool TextureBrick::decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
    {
-       if      (type == BRICK_FILE_TYPE_N5RAW) return raw_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
+       if      (type == BRICK_FILE_TYPE_N5RAW) return raw_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness, is_row_major);
 	   else if (type == BRICK_FILE_TYPE_JPEG) return jpeg_decompressor(out, in, out_size, in_size);
 	   else if (type == BRICK_FILE_TYPE_ZLIB) return zlib_decompressor(out, in, out_size, in_size);
-	   else if (type == BRICK_FILE_TYPE_N5GZIP) return zlib_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
+	   else if (type == BRICK_FILE_TYPE_N5GZIP) return zlib_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness, is_row_major);
 	   else if (type == BRICK_FILE_TYPE_H265) return h265_decompressor(out, in, out_size, in_size, w, h);
 	   else if (type == BRICK_FILE_TYPE_LZ4) return lz4_decompressor(out, in, out_size, in_size);
-       else if (type == BRICK_FILE_TYPE_N5LZ4) return lz4_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
-       else if (type == BRICK_FILE_TYPE_N5ZSTD) return zstd_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness);
-       else if (type == BRICK_FILE_TYPE_N5BLOSC) return blosc_decompressor(out, in, out_size, in_size, true, w, h, d, nb, n5_w, n5_h, n5_d, endianness);
+       else if (type == BRICK_FILE_TYPE_N5LZ4) return lz4_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness, is_row_major);
+       else if (type == BRICK_FILE_TYPE_N5ZSTD) return zstd_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness, is_row_major);
+       else if (type == BRICK_FILE_TYPE_N5BLOSC) return blosc_decompressor(out, in, out_size, in_size, true, w, h, d, nb, n5_w, n5_h, n5_d, endianness, is_row_major);
 
 	   return false;
    }
@@ -1467,16 +1471,43 @@ z
            }
        }
    }
-    
-    bool TextureBrick::raw_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
+
+   template <typename T>
+   void convertColumnMajorToRowMajor(T* array, size_t dim1, size_t dim2, size_t dim3) {
+       std::vector<T> tempArray(dim1 * dim2 * dim3);
+
+       for (size_t k = 0; k < dim3; ++k) {
+           for (size_t j = 0; j < dim2; ++j) {
+               for (size_t i = 0; i < dim1; ++i) {
+                   tempArray[i * dim2 * dim3 + j * dim3 + k] = array[k * dim1 * dim2 + j * dim1 + i];
+               }
+           }
+       }
+
+       // Copy the converted result back into the original array
+       std::copy(tempArray.begin(), tempArray.end(), array);
+   }
+
+    bool TextureBrick::raw_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
     {
-        if (!isn5)
+        if (!ischunked)
             memcpy(out, in, in_size);
         else
         {
             size_t n5out_size = nb * n5_w * n5_h * n5_d;
             if (n5out_size <= 0 || n5out_size != in_size)
                 return false;
+
+            if (!is_row_major) {
+                if (nb == 2)
+                    convertColumnMajorToRowMajor((unsigned short*)in, n5_w, n5_h, n5_d);
+                else if (nb == 4)
+                    convertColumnMajorToRowMajor((unsigned int*)in, n5_w, n5_h, n5_d);
+                else if (nb == 8)
+                    convertColumnMajorToRowMajor((unsigned long*)in, n5_w, n5_h, n5_d);
+                else
+                    convertColumnMajorToRowMajor(in, n5_w, n5_h, n5_d);
+            }
             
             if (n5out_size != out_size)
             {
@@ -1505,11 +1536,11 @@ z
                 if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                 {
                     if (nb == 2)
-                        switchEndianness((unsigned short*)out, out_size);
+                        switchEndianness((unsigned short*)out, out_size / nb);
                     else if (nb == 4)
-                        switchEndianness((unsigned int*)out, out_size);
+                        switchEndianness((unsigned int*)out, out_size / nb);
                     else if (nb == 8)
-                        switchEndianness((unsigned long*)out, out_size);
+                        switchEndianness((unsigned long*)out, out_size / nb);
                     //for (int i = 0; i < out_size - 1; i += 2)
                     //    swap(out[i], out[i + 1]);
                 }
@@ -1578,7 +1609,7 @@ z
 	   return true;
    }
 
-   bool TextureBrick::zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
+   bool TextureBrick::zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool ischunked, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
    {
 	   try
 	   {
@@ -1587,7 +1618,7 @@ z
 		   zInfo.total_in = 0;
 		   zInfo.next_in = (Bytef*)in;
 
-		   if (isn5)
+		   if (ischunked)
 		   {
                zInfo.avail_out = nb * n5_w * n5_h * n5_d;
                if (zInfo.avail_out <= 0)
@@ -1616,6 +1647,21 @@ z
 			   inflateEnd(&zInfo);
 			   if (nErr != Z_STREAM_END)
 				   return false;
+
+               if (!is_row_major) {
+                   char* src = use_buf ? buf : out;
+                   int ww = use_buf ? n5_w : w;
+                   int hh = use_buf ? n5_h : h;
+                   int dd = use_buf ? n5_d : d;
+                   if (nb == 2)
+                       convertColumnMajorToRowMajor((unsigned short*)src, ww, hh, dd);
+                   else if (nb == 4)
+                       convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
+                   else if (nb == 8)
+                       convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                   else
+                       convertColumnMajorToRowMajor(src, ww, hh, dd);
+               }
                
                if (use_buf)
                {
@@ -1641,11 +1687,11 @@ z
                    if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                    {
                        if (nb == 2)
-                           switchEndianness((unsigned short*)out, out_size);
+                           switchEndianness((unsigned short*)out, out_size / nb);
                        else if (nb == 4)
-                           switchEndianness((unsigned int*)out, out_size);
+                           switchEndianness((unsigned int*)out, out_size / nb);
                        else if (nb == 8)
-                           switchEndianness((unsigned long*)out, out_size);
+                           switchEndianness((unsigned long*)out, out_size / nb);
                        //for (int i = 0; i < out_size - 1; i += 2)
                        //    swap(out[i], out[i + 1]);
                    }
@@ -1693,7 +1739,7 @@ z
    }
 
 
-   bool TextureBrick::lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
+   bool TextureBrick::lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
    {
        /*
        LZ4F_dctx* dctx = nullptr;
@@ -1705,7 +1751,7 @@ z
            }
        }
        */
-       if (!isn5)
+       if (!ischunked)
        {
            /*
            size_t ret = LZ4F_decompress(dctx, out, &out_size, in, &in_size, NULL);
@@ -1741,6 +1787,21 @@ z
            const int decompressed_size = LZ4_decompress_safe(in, lz4_out, in_size, n5out_size);
            if (decompressed_size != n5out_size || decompressed_size < 0)
                return false;
+
+           if (!is_row_major) {
+               char* src = use_buf ? buf : out;
+               int ww = use_buf ? n5_w : w;
+               int hh = use_buf ? n5_h : h;
+               int dd = use_buf ? n5_d : d;
+               if (nb == 2)
+                   convertColumnMajorToRowMajor((unsigned short*)src, ww, hh, dd);
+               else if (nb == 4)
+                   convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
+               else if (nb == 8)
+                   convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+               else
+                   convertColumnMajorToRowMajor(src, ww, hh, dd);
+           }
            
            if (use_buf)
            {
@@ -1766,11 +1827,11 @@ z
                if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                {
                    if (nb == 2)
-                       switchEndianness((unsigned short*)out, out_size);
+                       switchEndianness((unsigned short*)out, out_size / nb);
                    else if (nb == 4)
-                       switchEndianness((unsigned int*)out, out_size);
+                       switchEndianness((unsigned int*)out, out_size / nb);
                    else if (nb == 8)
-                       switchEndianness((unsigned long*)out, out_size);
+                       switchEndianness((unsigned long*)out, out_size / nb);
                    //for (int i = 0; i < out_size - 1; i += 2)
                    //    swap(out[i], out[i + 1]);
                }
@@ -1782,29 +1843,25 @@ z
 	   return true;
    }
    
-   bool TextureBrick::zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness)
+   bool TextureBrick::zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
    {
-       if (!isn5)
+       if (!ischunked)
        {
            std::vector<char> decompressedData;
            try {
-               // Create an input stream from the compressed data
-               boost::iostreams::array_source compressedSource(in, in_size);
-               boost::iostreams::filtering_istream in;
-               in.push(boost::iostreams::zstd_decompressor());
-               in.push(compressedSource);
-
-               // Read directly from the decompression stream into the output buffer
-               size_t bytesRead = 0;
-               while (in && bytesRead < out_size) {
-                   in.read(out + bytesRead, out_size - bytesRead);
-                   bytesRead += in.gcount();  // Increment by the number of bytes read in the last read operation
+               unsigned long long decompressedSize = ZSTD_getFrameContentSize(in, in_size);
+               if (decompressedSize == ZSTD_CONTENTSIZE_ERROR) {
+                   throw std::runtime_error("Not a valid zstd compressed frame");
                }
-
-               // Check if the decompression was successful and fits within the output buffer
-               if (in.bad() || bytesRead > out_size) {
-                   std::cerr << "Decompression error or output buffer too small." << std::endl;
-                   return false;
+               if (decompressedSize == ZSTD_CONTENTSIZE_UNKNOWN) {
+                   throw std::runtime_error("Original size unknown");
+               }
+               if (out_size < decompressedSize) {
+                   throw std::runtime_error("Original size is larger than the output array");
+               }
+               size_t result = ZSTD_decompress(out, out_size, in, in_size);
+               if (ZSTD_isError(result)) {
+                   throw std::runtime_error(ZSTD_getErrorName(result));
                }
            }
            catch (const std::exception & e) {
@@ -1826,28 +1883,39 @@ z
            char* zstd_out = use_buf ? buf : out;
 
            try {
-               // Create an input stream from the compressed data
-               boost::iostreams::array_source compressedSource(in, in_size);
-               boost::iostreams::filtering_istream in;
-               in.push(boost::iostreams::zstd_decompressor());
-               in.push(compressedSource);
-
-               // Read directly from the decompression stream into the output buffer
-               size_t bytesRead = 0;
-               while (in && bytesRead < n5out_size) {
-                   in.read(zstd_out + bytesRead, n5out_size - bytesRead);
-                   bytesRead += in.gcount();  // Increment by the number of bytes read in the last read operation
+               unsigned long long decompressedSize = ZSTD_getFrameContentSize(in, in_size);
+               if (decompressedSize == ZSTD_CONTENTSIZE_ERROR) {
+                   throw std::runtime_error("Not a valid zstd compressed frame");
                }
-
-               // Check if the decompression was successful and fits within the output buffer
-               if (in.bad() || bytesRead > n5out_size) {
-                   std::cerr << "Decompression error or output buffer too small." << std::endl;
-                   return false;
+               if (decompressedSize == ZSTD_CONTENTSIZE_UNKNOWN) {
+                   throw std::runtime_error("Original size unknown");
+               }
+               if (n5out_size < decompressedSize) {
+                   throw std::runtime_error("Original size is larger than the output array");
+               }
+               size_t result = ZSTD_decompress(zstd_out, n5out_size, in, in_size);
+               if (ZSTD_isError(result)) {
+                   throw std::runtime_error(ZSTD_getErrorName(result));
                }
            }
            catch (const std::exception & e) {
                std::cerr << "Decompression error: " << e.what() << std::endl;
                return false;
+           }
+
+           if (!is_row_major) {
+               char* src = use_buf ? buf : out;
+               int ww = use_buf ? n5_w : w;
+               int hh = use_buf ? n5_h : h;
+               int dd = use_buf ? n5_d : d;
+               if (nb == 2)
+                   convertColumnMajorToRowMajor((unsigned short*)src, ww, hh, dd);
+               else if (nb == 4)
+                   convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
+               else if (nb == 8)
+                   convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+               else
+                   convertColumnMajorToRowMajor(src, ww, hh, dd);
            }
 
            if (use_buf)
@@ -1874,11 +1942,11 @@ z
                if ( (e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
                {
                    if (nb == 2)
-                       switchEndianness((unsigned short*)out, out_size);
+                       switchEndianness((unsigned short*)out, out_size / nb);
                    else if (nb == 4)
-                       switchEndianness((unsigned int*)out, out_size);
+                       switchEndianness((unsigned int*)out, out_size / nb);
                    else if (nb == 8)
-                       switchEndianness((unsigned long*)out, out_size);
+                       switchEndianness((unsigned long*)out, out_size / nb);
                    //for (int i = 0; i < out_size - 1; i += 2)
                    //    swap(out[i], out[i + 1]);
                }
@@ -1888,7 +1956,7 @@ z
        return true;
    }
     
-    bool TextureBrick::blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness)
+    bool TextureBrick::blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
     {
         blosc2_dparams params;
         params.nthreads = 1;
@@ -1909,6 +1977,21 @@ z
             int decompressed_size2 = blosc2_decompress_ctx(ctx, in, in_size, buf, nbytes);
             if (decompressed_size2 < 0 || n5_w < w || n5_h < h || n5_d < d)
                 return false;
+
+            if (!is_row_major) {
+                char* src = buf;
+                int ww = n5_w;
+                int hh = n5_h;
+                int dd = n5_d;
+                if (nb == 2)
+                    convertColumnMajorToRowMajor((unsigned short*)src, ww, hh, dd);
+                else if (nb == 4)
+                    convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
+                else if (nb == 8)
+                    convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                else
+                    convertColumnMajorToRowMajor(src, ww, hh, dd);
+            }
             
             char* src = buf;
             char* dst = out;
@@ -1926,17 +2009,17 @@ z
             delete[] buf;
         }
         
-        if (isn5 && nb >= 2)
+        if (ischunked && nb >= 2)
         {
             char e = check_machine_endian();
             if ((e == 'L' && endianness == BRICK_ENDIAN_BIG) || (e == 'B' && endianness == BRICK_ENDIAN_LITTLE))
             {
                 if (nb == 2)
-                    switchEndianness((unsigned short*)out, out_size);
+                    switchEndianness((unsigned short*)out, out_size / nb);
                 else if (nb == 4)
-                    switchEndianness((unsigned int*)out, out_size);
+                    switchEndianness((unsigned int*)out, out_size / nb);
                 else if (nb == 8)
-                    switchEndianness((unsigned long*)out, out_size);
+                    switchEndianness((unsigned long*)out, out_size / nb);
                 //for (int i = 0; i < out_size - 1; i += 2)
                 //    swap(out[i], out[i + 1]);
             }

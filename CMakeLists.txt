@@ -364,6 +364,22 @@ mark_as_advanced(BLOSC_LIBRARIES)
 message(BLOSC_INCLUDE_DIR="${BLOSC_INCLUDE_DIR}")
 message(BLOSC_LIBRARIES="${BLOSC_LIBRARIES}")
 
+#zstd
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+  find_path(ZSTD_INCLUDE_DIR NAMES zstd.h)
+  find_library(ZSTD_LIBRARY NAMES zstd)
+  include(FindPackageHandleStandardArgs)
+  FIND_PACKAGE_HANDLE_STANDARD_ARGS(
+        ZSTD DEFAULT_MSG
+        ZSTD_LIBRARY ZSTD_INCLUDE_DIR)
+
+  mark_as_advanced(ZSTD_INCLUDE_DIR ZSTD_LIBRARY)
+  include_directories(${ZSTD_INCLUDE_DIR})
+else()
+  find_package(ZSTD REQUIRED)
+  include_directories(${ZSTD_INCLUDE_DIR})
+endif()
+
 #freetype
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/freetype/include)
 if (WIN32)
@@ -683,6 +699,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	   ${BZIP2_LIBRARIES}
 	   ${LZ4_LIBRARIES}
 	   ${BLOSC_LIBRARIES}
+	   ${ZSTD_LIBRARIES}
 	   ${Vulkan_LIBRARY}
 	   ${SPIRV_LIBRARIES})
 	target_link_libraries(VVDViewer
@@ -708,6 +725,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   ${LZ4_LIBRARIES}
 	   ${PNG_LIBRARIES}
 	   ${BLOSC_LIBRARIES}
+	   ${ZSTD_LIBRARIES}
        ${Vulkan_LIBRARY}
        ${SPIRV_LIBRARIES})
 	target_link_libraries(VVDViewer
@@ -732,6 +750,7 @@ else()
 	   ${LZ4_LIBRARIES}
 	   ${PNG_LIBRARIES}
 	   ${BLOSC_LIBRARIES}
+	   ${ZSTD_LIBRARIES}
        ${Vulkan_LIBRARY}
        ${SPIRV_LIBRARIES}
 	   ${GTK3_LIBRARIES}

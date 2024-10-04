@@ -570,6 +570,23 @@ void VolumeData::FlipHorizontally()
 				}, t*linenum/nthreads, (t+1)==nthreads ? linenum : (t+1)*linenum/nthreads, t));
 			}
 			std::for_each(threads.begin(),threads.end(),[](std::thread& x){x.join();});
+		} else if (nrrd->type == nrrdTypeFloat) {
+			float* data = (float*)nrrd->data;
+			for (size_t t = 0; t < nthreads; t++)
+			{
+				threads[t] = std::thread(std::bind(
+					[&](const size_t bi, const size_t ei, const size_t t)
+				{
+					for (size_t i = bi; i < ei; i++)
+					{
+						size_t baseid = i * w;
+						for (size_t j = 0; j < w / 2; j++) {
+							swap(data[baseid + w - j - 1], data[baseid + j]);
+						}
+					}
+				}, t * linenum / nthreads, (t + 1) == nthreads ? linenum : (t + 1) * linenum / nthreads, t));
+			}
+			std::for_each(threads.begin(), threads.end(), [](std::thread& x) {x.join(); });
 		}
 	}
 
@@ -694,6 +711,24 @@ void VolumeData::FlipVertically()
 							swap(data[baseid + (h - y - 1)*w], data[baseid + y * w]);
 					}
 				}, t*d / nthreads, (t + 1) == nthreads ? d : (t + 1)*d / nthreads, t));
+			}
+			std::for_each(threads.begin(), threads.end(), [](std::thread& x) {x.join(); });
+		}
+		else if (nrrd->type == nrrdTypeFloat) {
+			float* data = (float*)nrrd->data;
+			for (size_t t = 0; t < nthreads; t++)
+			{
+				threads[t] = std::thread(std::bind(
+					[&](const size_t bi, const size_t ei, const size_t t)
+				{
+					for (size_t z = bi; z < ei; z++)
+						for (size_t x = 0; x < w; x++)
+						{
+							size_t baseid = z * w * h + x;
+							for (size_t y = 0; y < h / 2; y++)
+								swap(data[baseid + (h - y - 1) * w], data[baseid + y * w]);
+						}
+				}, t * d / nthreads, (t + 1) == nthreads ? d : (t + 1) * d / nthreads, t));
 			}
 			std::for_each(threads.begin(), threads.end(), [](std::thread& x) {x.join(); });
 		}
@@ -1021,6 +1056,19 @@ void VolumeData::AddEmptyData(int bits,
 		}
 		memset((void*)val16, 0, sizeof(uint16)*nx*ny*nz);
 		nrrdWrap(nv, val16, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
+	}
+	else if (bits == 32)
+	{
+		unsigned long long mem_size = (unsigned long long)nx *
+			(unsigned long long)ny * (unsigned long long)nz;
+		float* val32 = new (std::nothrow) float[mem_size];
+		if (!val32)
+		{
+			wxMessageBox("Not enough memory. Please save project and restart.");
+			return;
+		}
+		memset((void*)val32, 0, sizeof(float) * nx * ny * nz);
+		nrrdWrap(nv, val32, nrrdTypeFloat, 3, (size_t)nx, (size_t)ny, (size_t)nz);
 	}
 	nrrdAxisInfoSet(nv, nrrdAxisInfoSpacing, spcx, spcy, spcz);
 	nrrdAxisInfoSet(nv, nrrdAxisInfoMax, spcx*nx, spcy*ny, spcz*nz);
@@ -1596,6 +1644,18 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 			}
 			return normalize ? double(old_value)*m_scalar_scale/65535.0 : double(old_value);
 		}
+		else if (bits == nrrdTypeFloat)
+		{
+			uint64_t index = (nx) * (ny) * (kk)+(nx) * (jj)+(ii);
+			float old_value = ((float*)(data->data))[index];
+			if (m_colormap_mode == 3)
+			{
+				int combined_seg_id = IsROICombined((int)old_value);
+				if (combined_seg_id > 0)
+					old_value = (float)combined_seg_id;
+			}
+			return normalize ? double(old_value) * m_scalar_scale : double(old_value);
+		}
 	}
 	else
 	{
@@ -1607,7 +1667,7 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 			if (combined_seg_id > 0)
 				rval = (uint16)combined_seg_id;
 		}
-		if (bits == nrrdTypeUShort && normalize)
+		if ((bits == nrrdTypeUShort || bits == nrrdTypeFloat) && normalize)
 			rval *= m_scalar_scale;
 		return rval;
 	}
@@ -1758,6 +1818,134 @@ double VolumeData::GetTransferedValue(int i, int j, int k)
 		}
 		return new_value;
 	}
+	else if (bits == nrrdTypeUShort)
+	{
+		uint64_t index = nx*ny*kk + nx*jj + ii;
+		double old_value;
+		if (!m_tex->isBrxml())
+		{
+			if (!data->data) return 0.0;
+			uint64_t index = nx*ny*kk + nx*jj + ii;
+			old_value = (double)((uint16*)(data->data))[index];
+		}
+		else
+			old_value = m_tex->get_brick_original_value(ii, jj, kk, false);
+
+		double gm = 0.0;
+		double new_value = double(old_value)*m_scalar_scale/65535.0;
+		if (m_vr->get_inversion())
+			new_value = 1.0-new_value;
+		if (ii>0 && ii<nx-1 &&
+			jj>0 && jj<ny-1 &&
+			kk>0 && kk<nz-1)
+		{
+			if (!m_tex->isBrxml())
+			{
+				v1 = ((uint16*)(data->data))[nx*ny*kk + nx*jj + ii-1];
+				v2 = ((uint16*)(data->data))[nx*ny*kk + nx*jj + ii+1];
+				v3 = ((uint16*)(data->data))[nx*ny*kk + nx*(jj-1) + ii];
+				v4 = ((uint16*)(data->data))[nx*ny*kk + nx*(jj+1) + ii];
+				v5 = ((uint16*)(data->data))[nx*ny*(kk-1) + nx*jj + ii];
+				v6 = ((uint16*)(data->data))[nx*ny*(kk+1) + nx*jj + ii];
+			}
+			else
+			{
+				v1 = m_tex->get_brick_original_value(ii-1, jj, kk, false);
+				v2 = m_tex->get_brick_original_value(ii+1, jj, kk, false);
+				v3 = m_tex->get_brick_original_value(ii, jj-1, kk, false);
+				v4 = m_tex->get_brick_original_value(ii, jj+1, kk, false);
+				v5 = m_tex->get_brick_original_value(ii, jj, kk-1, false);
+				v6 = m_tex->get_brick_original_value(ii, jj, kk+1, false);
+			}
+			double normal_x, normal_y, normal_z;
+			normal_x = (v2 - v1)*m_scalar_scale/65535.0;
+			normal_y = (v4 - v3)*m_scalar_scale/65535.0;
+			normal_z = (v6 - v5)*m_scalar_scale/65535.0;
+			gm = sqrt(normal_x*normal_x + normal_y*normal_y + normal_z*normal_z)*0.53;
+		}
+		if (new_value<m_lo_thresh-m_sw ||
+			new_value>m_hi_thresh+m_sw ||
+			gm<m_gm_thresh)
+			new_value = 0.0;
+		else
+		{
+			double gamma = 1.0 / m_gamma3d;
+			new_value = (new_value<m_lo_thresh?
+				(m_sw-m_lo_thresh+new_value)/m_sw:
+			(new_value>m_hi_thresh?
+				(m_sw-new_value+m_hi_thresh)/m_sw:1.0))
+				*new_value;
+			new_value = pow(Clamp(new_value/m_offset,
+				gamma<1.0?-(gamma-1.0)*0.00001:0.0,
+				gamma>1.0?0.9999:1.0), gamma);
+			new_value *= m_alpha;
+		}
+		return new_value;
+	}
+	else if (bits == nrrdTypeUShort)
+	{
+		uint64_t index = nx * ny * kk + nx * jj + ii;
+		double old_value;
+		if (!m_tex->isBrxml())
+		{
+			if (!data->data) return 0.0;
+			uint64_t index = nx * ny * kk + nx * jj + ii;
+			old_value = (double)((float*)(data->data))[index];
+		}
+		else
+			old_value = m_tex->get_brick_original_value(ii, jj, kk, false);
+
+		double gm = 0.0;
+		double new_value = double(old_value) * m_scalar_scale / 65535.0;
+		if (m_vr->get_inversion())
+			new_value = 1.0 - new_value;
+		if (ii > 0 && ii < nx - 1 &&
+			jj>0 && jj < ny - 1 &&
+			kk>0 && kk < nz - 1)
+		{
+			if (!m_tex->isBrxml())
+			{
+				v1 = ((float*)(data->data))[nx * ny * kk + nx * jj + ii - 1];
+				v2 = ((float*)(data->data))[nx * ny * kk + nx * jj + ii + 1];
+				v3 = ((float*)(data->data))[nx * ny * kk + nx * (jj - 1) + ii];
+				v4 = ((float*)(data->data))[nx * ny * kk + nx * (jj + 1) + ii];
+				v5 = ((float*)(data->data))[nx * ny * (kk - 1) + nx * jj + ii];
+				v6 = ((float*)(data->data))[nx * ny * (kk + 1) + nx * jj + ii];
+			}
+			else
+			{
+				v1 = m_tex->get_brick_original_value(ii - 1, jj, kk, false);
+				v2 = m_tex->get_brick_original_value(ii + 1, jj, kk, false);
+				v3 = m_tex->get_brick_original_value(ii, jj - 1, kk, false);
+				v4 = m_tex->get_brick_original_value(ii, jj + 1, kk, false);
+				v5 = m_tex->get_brick_original_value(ii, jj, kk - 1, false);
+				v6 = m_tex->get_brick_original_value(ii, jj, kk + 1, false);
+			}
+			double normal_x, normal_y, normal_z;
+			normal_x = (v2 - v1) * m_scalar_scale;
+			normal_y = (v4 - v3) * m_scalar_scale;
+			normal_z = (v6 - v5) * m_scalar_scale;
+			gm = sqrt(normal_x * normal_x + normal_y * normal_y + normal_z * normal_z) * 0.53;
+		}
+		if (new_value<m_lo_thresh - m_sw ||
+			new_value>m_hi_thresh + m_sw ||
+			gm < m_gm_thresh)
+			new_value = 0.0;
+		else
+		{
+			double gamma = 1.0 / m_gamma3d;
+			new_value = (new_value < m_lo_thresh ?
+				(m_sw - m_lo_thresh + new_value) / m_sw :
+				(new_value > m_hi_thresh ?
+				(m_sw - new_value + m_hi_thresh) / m_sw : 1.0))
+				* new_value;
+			new_value = pow(Clamp(new_value / m_offset,
+				gamma < 1.0 ? -(gamma - 1.0) * 0.00001 : 0.0,
+				gamma>1.0 ? 0.9999 : 1.0), gamma);
+			new_value *= m_alpha;
+		}
+		return new_value;
+	}
 
 	return 0.0;
 }
@@ -1795,6 +1983,12 @@ int VolumeData::GetLabellValue(int i, int j, int k)
 	{
 		uint64_t index = (nx) * (ny) * (kk)+(nx) * (jj)+(ii);
 		uint16 old_value = ((uint32*)(data->data))[index];
+		return int(old_value);
+	}
+	else if (bits == nrrdTypeFloat)
+	{
+		uint64_t index = (nx) * (ny) * (kk)+(nx) * (jj)+(ii);
+		float old_value = ((float*)(data->data))[index];
 		return int(old_value);
 	}
 
@@ -1918,7 +2112,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
 
 					//process the data
-					int bits = data->type==nrrdTypeUShort?16:8;
+					int bits = vlnrrd->getBytesPerSample() * 8;
 
 					//clipping planes
 					vector<Plane*> *planes = m_vr->get_planes();
@@ -2004,6 +2198,46 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						}
 						nrrdWrap(baked_data, val16, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
 					}
+					else if (bits == 32)
+					{
+						unsigned long long mem_size = (unsigned long long)nx *
+							(unsigned long long)ny * (unsigned long long)nz;
+						float* val32 = new (std::nothrow) float[mem_size];
+						if (!val32)
+						{
+							wxMessageBox("Not enough memory. Please save project and restart.");
+							return;
+						}
+						//transfer function
+						for (int i = 0; i < nx; i++)
+						{
+							prg_diag->Update(95 * (i + 1) / nx);
+							for (int j = 0; j < ny; j++)
+								for (int k = 0; k < nz; k++)
+								{
+									int index = nx * ny * k + nx * j + i;
+									bool clipped = false;
+									Point p(double(i + sx) / double(w),
+										double(j + sy) / double(h),
+										double(k + sz) / double(d));
+									for (int pi = 0; pi < 6; ++pi)
+									{
+										if ((*planes)[pi] &&
+											(*planes)[pi]->eval_point(p) < 0.0)
+										{
+											val32[index] = 0;
+											clipped = true;
+										}
+									}
+									if (!clipped)
+									{
+										double new_value = GetTransferedValue(i + sx, j + sy, k + sz);
+										val32[index] = float(new_value);
+									}
+								}
+						}
+						nrrdWrap(baked_data, val32, nrrdTypeFloat, 3, (size_t)nx, (size_t)ny, (size_t)nz);
+					}
 					nrrdAxisInfoSet(baked_data, nrrdAxisInfoSpacing, spcx, spcy, spcz);
 					nrrdAxisInfoSet(baked_data, nrrdAxisInfoMax, spcx*nx, spcy*ny, spcz*nz);
 					nrrdAxisInfoSet(baked_data, nrrdAxisInfoMin, 0.0, 0.0, 0.0);
@@ -2038,7 +2272,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                         Nrrd* baked_data = nrrdNew();
                         
                         //process the data
-                        int bits = data->type==nrrdTypeUShort?16:8;
+                        int bits = vlnrrd->getBytesPerSample() * 8;
                         
                         //clipping planes
                         vector<Plane*> *planes = m_vr->get_planes();
@@ -2125,6 +2359,46 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                             }
                             nrrdWrap(baked_data, val16, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
                         }
+						else if (bits == 32)
+						{
+							unsigned long long mem_size = (unsigned long long)nx *
+								(unsigned long long)ny * (unsigned long long)nz;
+							float* val32 = new (std::nothrow) float[mem_size];
+							if (!val32)
+							{
+								wxMessageBox("Not enough memory. Please save project and restart.");
+								return;
+							}
+							//transfer function
+							for (int i = 0; i < nx; i++)
+							{
+								prg_diag->Update(95 * (i + 1) / nx);
+								for (int j = 0; j < ny; j++)
+									for (int k = 0; k < nz; k++)
+									{
+										int index = nx * ny * k + nx * j + i;
+										bool clipped = false;
+										Point p(double(i + sx) / double(w),
+											double(j + sy) / double(h),
+											double(k + sz) / double(d));
+										for (int pi = 0; pi < 6; ++pi)
+										{
+											if ((*planes)[pi] &&
+												(*planes)[pi]->eval_point(p) < 0.0)
+											{
+												val32[index] = 0;
+												clipped = true;
+											}
+										}
+										if (!clipped && (mskdata == NULL || mskdata[index] >= 128))
+										{
+											double new_value = GetOriginalValue(i + sx, j + sy, k + sz);
+											val32[index] = float(new_value);
+										}
+									}
+							}
+							nrrdWrap(baked_data, val32, nrrdTypeFloat, 3, (size_t)nx, (size_t)ny, (size_t)nz);
+						}
                         nrrdAxisInfoSet(baked_data, nrrdAxisInfoSpacing, spcx, spcy, spcz);
                         nrrdAxisInfoSet(baked_data, nrrdAxisInfoMax, spcx*nx, spcy*ny, spcz*nz);
                         nrrdAxisInfoSet(baked_data, nrrdAxisInfoMin, 0.0, 0.0, 0.0);
@@ -2574,8 +2848,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 			
 			void *origdata = main->getNrrd()->data;
 			
-			if (main->getNrrd()->type == nrrdTypeUShort || main->getNrrd()->type == nrrdTypeShort)
-				data_size *= 2;
+			data_size *= main->getBytesPerSample();
 			void *tmpdata = new unsigned char[data_size];
 			memset(tmpdata, 0, data_size);
 			
@@ -2657,6 +2930,27 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 
 					memset(tmpdata, 0, data_size);
 					
+					segcount++;
+					prog_diag->Update(100 * segcount / segnum);
+				}
+			}
+			else if (main->getNrrd()->type == nrrdTypeFloat) {
+				float* src = (float*)origdata;
+				float* tar = (float*)tmpdata;
+				for (cite = segs.begin(); cite != segs.end(); ++cite)
+				{
+					wxString fname = dir + wxString::Format("%05d", cite->first) + "_" + m_name;
+					size_t segsize = cite->second.size();
+					for (size_t i = 0; i < segsize; i++)
+						tar[cite->second[i]] = src[cite->second[i]];
+
+					writer->SetData(main);
+					writer->SetSpacings(spcx, spcy, spcz);
+					writer->SetCompression(compress);
+					writer->Save(fname.ToStdWstring(), mode);
+
+					memset(tmpdata, 0, data_size);
+
 					segcount++;
 					prog_diag->Update(100 * segcount / segnum);
 				}
@@ -3073,13 +3367,14 @@ void VolumeData::Calculate(int type, VolumeData *vd_a, VolumeData *vd_b, VolumeD
 				Nrrd* nrrd_data = m_tex->get_nrrd(0)->getNrrd();
 				uint8* val8nr = (uint8*)nrrd_data->data;
 				int max_val = 255;
-				int bytes = 1;
-				if (nrrd_data->type == nrrdTypeUShort) bytes = 2;
+				int bytes = m_tex->get_nrrd(0)->getBytesPerSample();
 				unsigned long long mem_size = (unsigned long long)m_res_x * (unsigned long long)m_res_y * (unsigned long long)m_res_z * bytes;
 				if (nrrd_data->type == nrrdTypeUChar)
 					max_val = *std::max_element(val8nr, val8nr + mem_size);
 				else if (nrrd_data->type == nrrdTypeUShort)
-					max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / 2);
+					max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / bytes);
+				else if (nrrd_data->type == nrrdTypeFloat)
+					max_val = *std::max_element((float*)val8nr, (float*)val8nr + mem_size / bytes);
 				SetMaxValue(max_val);
 			}
 		}
@@ -3094,13 +3389,14 @@ void VolumeData::Calculate(int type, VolumeData *vd_a, VolumeData *vd_b, VolumeD
 				Nrrd* nrrd_data = m_tex->get_nrrd(0)->getNrrd();
 				uint8* val8nr = (uint8*)nrrd_data->data;
 				int max_val = 255;
-				int bytes = 1;
-				if (nrrd_data->type == nrrdTypeUShort) bytes = 2;
+				int bytes = m_tex->get_nrrd(0)->getBytesPerSample();
 				unsigned long long mem_size = (unsigned long long)m_res_x * (unsigned long long)m_res_y * (unsigned long long)m_res_z * bytes;
 				if (nrrd_data->type == nrrdTypeUChar)
 					max_val = *std::max_element(val8nr, val8nr + mem_size);
 				else if (nrrd_data->type == nrrdTypeUShort)
-					max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / 2);
+					max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / bytes);
+				else if (nrrd_data->type == nrrdTypeFloat)
+					max_val = *std::max_element((float*)val8nr, (float*)val8nr + mem_size / bytes);
 				SetMaxValue(max_val);
 			}
 		}
@@ -4029,14 +4325,16 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t dst_datasize, bool interpolation)
 {
 	if (!src) return nullptr;
 
-	int bits = 0;
+	int bytes = 0;
 	int nx, ny, nz;
 	double spcx, spcy, spcz;
 
 	if (src->type == nrrdTypeChar || src->type == nrrdTypeUChar)
-		bits = 1;
+		bytes = 1;
 	else if(src->type == nrrdTypeShort || src->type == nrrdTypeUShort)
-		bits = 2;
+		bytes = 2;
+	else if (src->type == nrrdTypeFloat)
+		bytes = 4;
 
 	size_t dim = src->dim;
 
@@ -4066,7 +4364,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t dst_datasize, bool interpolation)
 	for (size_t p = 0; p < 3; p++)
 		sc1[p] = sspc[p] / maxspc;
 	
-	size_t src_datasize = ssize[0] * ssize[1] * ssize[2] * bits;
+	size_t src_datasize = ssize[0] * ssize[1] * ssize[2] * bytes;
 
 	if (src_datasize < dst_datasize)
 		return nullptr;
@@ -4077,7 +4375,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t dst_datasize, bool interpolation)
 		double dny = ssize[1] * sc1[1];
 		double dnz = ssize[2] * sc1[2];
 
-		double sc2 = cbrt(dst_datasize / (dnx * dny * dnz * bits));
+		double sc2 = cbrt(dst_datasize / (dnx * dny * dnz * bytes));
 
 		nx = (size_t)(dnx * sc2);
 		ny = (size_t)(dny * sc2);
@@ -4118,12 +4416,14 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 {
 	if (!src) return nullptr;
 
-	int bits = 0;
+	int bytes = 0;
 
 	if (src->type == nrrdTypeChar || src->type == nrrdTypeUChar)
-		bits = 1;
+		bytes = 1;
 	else if (src->type == nrrdTypeShort || src->type == nrrdTypeUShort)
-		bits = 2;
+		bytes = 2;
+	else if (src->type == nrrdTypeFloat)
+		bytes = 4;
 
 	size_t dim = src->dim;
 
@@ -4149,7 +4449,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 	double spcz = sspc[2] * ssize[2] / nz;
 
 	Nrrd* nv = nrrdNew();
-	if (bits == 1)
+	if (bytes == 1)
 	{
 		unsigned long long mem_size = (unsigned long long)nx *
 			(unsigned long long)ny * (unsigned long long)nz;
@@ -4162,7 +4462,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 		memset((void*)val8, 0, sizeof(uint8) * nx * ny * nz);
 		nrrdWrap(nv, val8, nrrdTypeUChar, 3, (size_t)nx, (size_t)ny, (size_t)nz);
 	}
-	else if (bits == 2)
+	else if (bytes == 2)
 	{
 		unsigned long long mem_size = (unsigned long long)nx *
 			(unsigned long long)ny * (unsigned long long)nz;
@@ -4174,6 +4474,19 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 		}
 		memset((void*)val16, 0, sizeof(uint16) * nx * ny * nz);
 		nrrdWrap(nv, val16, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
+	}
+	else if (bytes == 4)
+	{
+		unsigned long long mem_size = (unsigned long long)nx *
+			(unsigned long long)ny * (unsigned long long)nz;
+		float* val32 = new (std::nothrow) float[mem_size];
+		if (!val32)
+		{
+			wxMessageBox("Not enough memory. Please save project and restart.");
+			return nullptr;
+		}
+		memset((void*)val32, 0, sizeof(float) * nx * ny * nz);
+		nrrdWrap(nv, val32, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
 	}
 	nrrdAxisInfoSet(nv, nrrdAxisInfoSpacing, spcx, spcy, spcz);
 	nrrdAxisInfoSet(nv, nrrdAxisInfoMax, spcx * nx, spcy * ny, spcz * nz);
@@ -4274,6 +4587,8 @@ wxThread::ExitCode NrrdScaleThread::Entry()
 		bits = 1;
 	else if (m_src->type == nrrdTypeShort || m_src->type == nrrdTypeUShort)
 		bits = 2;
+	else if (m_src->type == nrrdTypeFloat)
+		bits = 4;
 
 	size_t dim = m_src->dim;
 
@@ -4416,6 +4731,58 @@ wxThread::ExitCode NrrdScaleThread::Entry()
 				}
 			}
 		}
+		else if (bits == 4)
+		{
+			float* data = (float*)m_src->data;
+			float* dst_data = (float*)m_dst->data;
+			for (int z = m_zst; z < m_zed; z++)
+			{
+				for (int y = 0; y < ny; y++)
+				{
+					for (int x = 0; x < nx; x++)
+					{
+						double dx = x * scx;
+						double dy = y * scy;
+						double dz = z * scz;
+
+						size_t ix = (size_t)dx;
+						size_t iy = (size_t)dy;
+						size_t iz = (size_t)dz;
+
+						dx = dx - ix;
+						dy = dy - iy;
+						dz = dz - iz;
+
+						size_t id = iz * ssize[1] * ssize[0] + iy * ssize[0] + ix;
+
+						size_t iddx = (x == nx - 1) ? 0 : 1;
+						size_t iddy = (y == ny - 1) ? 0 : ssize[0];
+						size_t iddz = (z == m_zed - 1) ? 0 : ssize[1] * ssize[0];
+
+						float c000 = data[id];
+						float c100 = data[id + iddx];
+						float c010 = data[id + iddy];
+						float c110 = data[id + iddy + iddx];
+						float c001 = data[id + iddz];
+						float c101 = data[id + iddz + iddx];
+						float c011 = data[id + iddz + iddy];
+						float c111 = data[id + iddz + iddy + iddx];
+
+						float c00 = c000 * (1 - dx) + c100 * dx;
+						float c01 = c001 * (1 - dx) + c101 * dx;
+						float c10 = c010 * (1 - dx) + c110 * dx;
+						float c11 = c011 * (1 - dx) + c111 * dx;
+
+						float c0 = c00 * (1 - dy) + c10 * dy;
+						float c1 = c01 * (1 - dy) + c11 * dy;
+
+						float c = c0 * (1 - dz) + c1 * dz;
+
+						dst_data[z * ny * nx + y * nx + x] = c;
+					}
+				}
+			}
+		}
 	}
 	else {
 		if (bits == 1)
@@ -4464,6 +4831,31 @@ wxThread::ExitCode NrrdScaleThread::Entry()
 						size_t id = iz * ssize[1] * ssize[0] + iy * ssize[0] + ix;
 
 						dst_data[z * ny * nx + y * nx + x] = (uint16)data[id];
+					}
+				}
+			}
+		}
+		else if (bits == 4)
+		{
+			float* data = (float*)m_src->data;
+			float* dst_data = (float*)m_dst->data;
+			for (int z = m_zst; z < m_zed; z++)
+			{
+				for (int y = 0; y < ny; y++)
+				{
+					for (int x = 0; x < nx; x++)
+					{
+						double dx = x * scx;
+						double dy = y * scy;
+						double dz = z * scz;
+
+						size_t ix = (size_t)round(dx);
+						size_t iy = (size_t)round(dy);
+						size_t iz = (size_t)round(dz);
+
+						size_t id = iz * ssize[1] * ssize[0] + iy * ssize[0] + ix;
+
+						dst_data[z * ny * nx + y * nx + x] = data[id];
 					}
 				}
 			}
@@ -7325,7 +7717,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
     
     wxString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
 	
-	if (!wxFileExists(pathname) && suffix != ".n5fs_ch" && suffix != ".n5")
+	if (!wxFileExists(pathname) && suffix != ".n5fs_ch" && suffix != ".n5" && suffix != ".zarr" && suffix != ".zfs_ch")
 	{
 		pathname = SearchProjectPath(filename);
 		if (!wxFileExists(pathname))
@@ -7558,19 +7950,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 			{
 				if (ch_datasize == 0)
 				{
-					switch (data->getNrrd()->type)
-					{
-					case nrrdTypeUChar:
-					case nrrdTypeChar:
-						bytes = 1;
-						break;
-					case nrrdTypeUShort:
-					case nrrdTypeShort:
-						bytes = 2;
-						break;
-					default:
-						bytes = 0;
-					}
+					bytes = data->getBytesPerSample();
 					if (ch_num >= 0)
 						ch_datasize = (datasize * bytes) / (3ULL + bytes);
 					else
@@ -8482,7 +8862,7 @@ wxThread::ExitCode VolumeDecompressorThread::Entry()
 		{
 			size_t bsize = (size_t)(q.b->nx()) * (size_t)(q.b->ny()) * (size_t)(q.b->nz()) * (size_t)(q.b->nb(0));
 			char* result = new char[bsize];
-			if (TextureBrick::decompress_brick(result, q.in_data, bsize, q.in_size, q.finfo->type, q.b->nx(), q.b->ny(), q.b->nz(), q.b->nb(0), q.finfo->blosc_blocksize_x, q.finfo->blosc_blocksize_y, q.finfo->blosc_blocksize_z))
+			if (TextureBrick::decompress_brick(result, q.in_data, bsize, q.in_size, q.finfo->type, q.b->nx(), q.b->ny(), q.b->nz(), q.b->nb(0), q.finfo->blosc_blocksize_x, q.finfo->blosc_blocksize_y, q.finfo->blosc_blocksize_z, q.finfo->endianness, q.finfo->is_row_major))
 			{
 				m_vl->ms_pThreadCS->Enter();
 

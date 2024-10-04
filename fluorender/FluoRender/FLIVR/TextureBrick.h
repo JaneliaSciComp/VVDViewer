@@ -118,6 +118,13 @@ namespace FLIVR {
 					case nrrdTypeFloat:
 						delete[] static_cast<float*>(m_nrrd->data);
 						break;
+					case nrrdTypeLLong:
+					case nrrdTypeULLong:
+						delete[] static_cast<unsigned long long*>(m_nrrd->data);
+						break;
+					case nrrdTypeDouble:
+						delete[] static_cast<double*>(m_nrrd->data);
+						break;
 					default:
 						delete[] m_nrrd->data;
 					}
@@ -147,6 +154,11 @@ namespace FLIVR {
 					case nrrdTypeFloat:
 						ret = 4;
 						break;
+					case nrrdTypeLLong:
+					case nrrdTypeULLong:
+					case nrrdTypeDouble:
+						ret = 8;
+						break;
 					default:
 						ret = 0;
 					}
@@ -156,6 +168,13 @@ namespace FLIVR {
 		}
 
 		Nrrd* getNrrd() { return m_nrrd; }
+
+		int getNrrdDataType() 
+		{
+			if (m_nrrd)
+				return m_nrrd->type;
+			return nrrdTypeUnknown;
+		}
 
 		Nrrd* getNrrdDeepCopy()
 		{
@@ -194,8 +213,15 @@ namespace FLIVR {
 			case nrrdTypeUInt:
 				output->data = new unsigned int[voxelnum];
 				break;
+			case nrrdTypeLLong:
+			case nrrdTypeULLong:
+				output->data = new unsigned long long[voxelnum];
+				break;
 			case nrrdTypeFloat:
 				output->data = new float[voxelnum];
+				break;
+			case nrrdTypeDouble:
+				output->data = new double[voxelnum];
 				break;
 			default:
 				nrrdNix(output);
@@ -262,6 +288,13 @@ namespace FLIVR {
             case nrrdTypeFloat:
                 ret = ((float *)m_nrrd->data)[idx];
                 break;
+			case nrrdTypeLLong:
+			case nrrdTypeULLong:
+				ret = (float)(((unsigned long long*)m_nrrd->data)[idx]);
+				break;
+			case nrrdTypeDouble:
+				ret = (float)((double*)m_nrrd->data)[idx];
+				break;
             }
             
             return ret;
@@ -287,6 +320,13 @@ namespace FLIVR {
 				break;
 			case nrrdTypeFloat:
 				((float*)m_nrrd->data)[idx] = value;
+				break;
+			case nrrdTypeLLong:
+			case nrrdTypeULLong:
+				((unsigned long long*)m_nrrd->data)[idx] = (unsigned long long)value;
+				break;
+			case nrrdTypeDouble:
+				((double*)m_nrrd->data)[idx] = (double)value;
 				break;
 			}
 		}
@@ -339,9 +379,10 @@ namespace FLIVR {
             blosc_suffle = 0;
             isn5 = false;
 			endianness = BRICK_ENDIAN_DEFAULT;
+			is_row_major = true;
             isvalid = true;
 		}
-		FileLocInfo(std::wstring filename_, int offset_, int datasize_, int type_, bool isurl_, bool isn5_, int bblocksize_x_ = 0, int bblocksize_y_ = 0, int bblocksize_z_ = 0, int bclevel_ = 0, int bctype_ = 0, int bsuffle_ = 0, int endianness_ = 0)
+		FileLocInfo(std::wstring filename_, int offset_, int datasize_, int type_, bool isurl_, bool isn5_, int bblocksize_x_ = 0, int bblocksize_y_ = 0, int bblocksize_z_ = 0, int bclevel_ = 0, int bctype_ = 0, int bsuffle_ = 0, int endianness_ = 0, bool is_row_major_ = true)
 		{
 			filename = filename_;
 			offset = offset_;
@@ -361,6 +402,7 @@ namespace FLIVR {
             blosc_ctype = bctype_;
             blosc_suffle = bsuffle_;
 			endianness = endianness_;
+			is_row_major = is_row_major_;
             isvalid = true;
 		}
 		FileLocInfo(const FileLocInfo &copy)
@@ -381,6 +423,7 @@ namespace FLIVR {
             blosc_ctype = copy.blosc_ctype;
             blosc_suffle = copy.blosc_suffle;
 			endianness = copy.endianness;
+			is_row_major = copy.is_row_major;
             isvalid = copy.isvalid;
 		}
 
@@ -402,6 +445,7 @@ namespace FLIVR {
         int blosc_suffle;
 
 		int endianness;
+		int is_row_major;
         
         bool isvalid;
 	};
@@ -645,14 +689,14 @@ namespace FLIVR {
 		void set_brkdata(const std::shared_ptr<VL_Array> &brkdata) {brkdata_ = brkdata;}
 		void set_brkdata(void *brkdata, size_t size) {brkdata_ = std::make_shared<VL_Array>((char *)brkdata, size);}
 		static bool read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, wxThread *th=NULL);
-		static bool decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
-        static bool raw_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+		static bool decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
+        static bool raw_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool ischunked = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
 		static bool jpeg_decompressor(char *out, char* in, size_t out_size, size_t in_size);
-		static bool zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+		static bool zlib_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool ischunked = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
 		static bool h265_decompressor(char *out, char* in, size_t out_size, size_t in_size, int w, int h);
-		static bool lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
-		static bool zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5 = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
-        static bool blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool isn5, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT);
+		static bool lz4_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
+		static bool zstd_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
+        static bool blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
 		static void delete_all_cache_files();
         static char check_machine_endian();
 

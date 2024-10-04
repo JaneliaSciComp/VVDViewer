@@ -1431,7 +1431,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				}
 			}
 		}
-        if (suffix==".n5" || suffix==".json" || suffix==".xml")
+        else if (suffix==".n5" || suffix==".json" || suffix==".xml")
         {
             vector<wstring> n5paths;
             BRKXMLReader::GetN5ChannelPaths(files[j].ToStdWstring(), n5paths);

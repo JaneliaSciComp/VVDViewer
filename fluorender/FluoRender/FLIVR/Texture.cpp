@@ -208,6 +208,11 @@ namespace FLIVR
 			unsigned short old_value = ((unsigned short*)(d_ptr))[index];
 			rval = normalize ? double(old_value)/65535.0 : double(old_value);
 		}
+		else if (bits == nrrdTypeFloat)
+		{
+			float old_value = ((float*)(d_ptr))[index];
+			rval = double(old_value);
+		}
 		
 //		if (tmp_load)
 //			b->freeBrkData();
@@ -528,16 +533,7 @@ namespace FLIVR
 		
 		int numc = gm_nrrd ? 2 : 1;
 		int numb[2];
-		if (nv_nrrd)
-		{
-			if (nv_nrrd->type == nrrdTypeChar ||
-				nv_nrrd->type == nrrdTypeUChar)
-				numb[0] = 1;
-			else
-				numb[0] = 2;
-		}
-		else
-			numb[0] = 0;
+		numb[0] = nv_vlnrrd->getBytesPerSample();
 		numb[1] = gm_nrrd ? 1 : 0;
 
 		BBox bb(Point(0,0,0), Point(1,1,1)); 

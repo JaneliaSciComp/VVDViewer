@@ -46,6 +46,7 @@
 #define CompressorIDKey "id"
 #define ZarrDataTypeKey "dtype"
 #define OrderKey "order"
+#define AxesKey "axes"
 #define ShapeKey "shape"
 
 using namespace std;
@@ -103,6 +104,7 @@ public:
 	vector<double> m_downsampling_factors;
 
 	bool m_is_big_endian;
+	bool m_is_row_major;
     
     struct BloscParam {
         int blocksize;
@@ -321,6 +323,7 @@ private:
         int blosc_suffle;
 		int nrrd_type;
 		int endianness;
+		bool is_row_major;
 	};
 	vector<LevelInfo> m_pyramid;
 

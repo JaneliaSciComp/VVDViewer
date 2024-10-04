@@ -20,6 +20,38 @@ using namespace std;
 
 class VRenderView;
 
+class EXPORT_API vpTextCtrl : public wxTextCtrl
+{
+public:
+	vpTextCtrl(wxWindow* frame,
+		wxWindow* parent,
+		wxWindowID id,
+		const wxString& text = wxT(""),
+		const wxPoint& pos = wxDefaultPosition,
+		const wxSize& size = wxDefaultSize,
+		long style = 0,
+		const wxValidator& valid = wxDefaultValidator);
+	~vpTextCtrl();
+
+private:
+	wxWindow* m_frame;
+	wxButton* m_dummy;
+	long m_style;
+
+private:
+	void OnSetChildFocus(wxChildFocusEvent& event);
+	void OnSetFocus(wxFocusEvent& event);
+	void OnKillFocus(wxFocusEvent& event);
+
+	void OnKeyDown(wxKeyEvent& event);
+	void OnKeyUp(wxKeyEvent& event);
+
+	void OnText(wxCommandEvent& event);
+	void OnEnter(wxCommandEvent& event);
+
+	DECLARE_EVENT_TABLE()
+};
+
 class EXPORT_API VPropView: public wxPanel
 {
 	enum
@@ -38,6 +70,8 @@ class EXPORT_API VPropView: public wxPanel
 		ID_SampleText,
 		ID_BoundarySldr,
 		ID_BoundaryText,
+		ID_MaxText,
+		ID_MinText,
 		ID_GammaSldr,
 		ID_GammaText,
 		ID_ContrastSldr,
@@ -115,6 +149,8 @@ public:
 	void HideUIsROI();
 	void UpdateUIsROI();
 
+	void UpdateMaxValue();
+
 private:
 	wxWindow* m_frame;
 	VolumeData* m_vd;
@@ -125,12 +161,16 @@ private:
 	DataGroup* m_group;
 	VRenderView* m_vrv;
 	double m_max_val;
+	bool m_is_float;
 
 	wxBoxSizer* m_sizer_sl_righ;
 	wxBoxSizer* m_sizer_r5;
 	wxBoxSizer* m_sizer_r6;
 
 	//1st line
+	//wxTextCtrl* m_min_text;
+	wxBoxSizer* m_sizer_0;
+	wxTextCtrl* m_max_text;
 	//gamma
 	wxSlider *m_gamma_sldr;
 	wxTextCtrl *m_gamma_text;
@@ -233,6 +273,7 @@ private:
 	void GetSettings();
 	bool SetSpacings();
 
+	void OnEnterInMaxText(wxCommandEvent& event);
 	//1
 	void OnGammaChange(wxScrollEvent &event);
 	void OnGammaText(wxCommandEvent &event);

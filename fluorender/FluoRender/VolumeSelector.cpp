@@ -896,6 +896,15 @@ void VolumeSelector::CompExportMultiChann(bool select)
 								value = (unsigned char)((double)(((unsigned short*)data_mvd)[index]) *
 								m_vd->GetScalarScale() / 255.0);
 						}
+						else if (nrrd_mvd->type == nrrdTypeFloat)
+						{
+							if (select)
+								value = (unsigned char)((double)(((float*)data_mvd)[index]) *
+									m_vd->GetScalarScale() * double(data_mvd_mask[index]));
+							else
+								value = (unsigned char)((double)(((float*)data_mvd)[index]) *
+									m_vd->GetScalarScale() * 255.0);
+						}
 						data_vd[index] = value;
 					}
 				}
@@ -1043,6 +1052,16 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 							value = double(((unsigned short*)data_mvd)[index]) *
 							m_vd->GetScalarScale() / 65535.0;
 					}
+					else if (nrrd_mvd->type == nrrdTypeFloat)
+					{
+						if (select)
+							value = double(((float*)data_mvd)[index]) *
+							m_vd->GetScalarScale() *
+							double(data_mvd_mask[index]) / 255.0;
+						else
+							value = double(((float*)data_mvd)[index]) *
+							m_vd->GetScalarScale();
+					}
 					double hue = HueCalculation(hmode, value_label);
 					Color color(HSVColor(hue, 1.0, 1.0));
 					//color
@@ -1164,6 +1183,10 @@ int VolumeSelector::ProcessSel(double thresh)
 					value = double(((unsigned short*)data_mvd)[index]) *
 					m_vd->GetScalarScale() *
 					double(data_mvd_mask[index]) / 16581375.0;
+				else if (nrrd_mvd->type == nrrdTypeFloat)
+					value = double(((float*)data_mvd)[index]) *
+					m_vd->GetScalarScale() *
+					double(data_mvd_mask[index]) / 255.0;
 				if (value > thresh)
 				{
 					w = value>0.5?1.0:-16.0*value*value*value + 12.0*value*value;
@@ -1234,6 +1257,8 @@ void VolumeSelector::GenerateAnnotations(bool use_sel)
 		mul = 255.0;
 	else if (m_vd->GetTexture()->get_nrrd_raw(0)->type == nrrdTypeUShort)
 		mul = 65535.0;
+	else if (m_vd->GetTexture()->get_nrrd_raw(0)->type == nrrdTypeFloat)
+		mul = 1.0;
 	double total_int = 0.0;
 
 	unordered_map <unsigned int, Component> :: const_iterator comp_iter;
@@ -1432,6 +1457,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		vd_new->GetResolution(res_x, res_y, res_z);
 		int bytes = 1;
 		if (nrrd_new->type == nrrdTypeUShort) bytes = 2;
+		else if (nrrd_new->type == nrrdTypeFloat) bytes = 4;
 		unsigned long long mem_size = (unsigned long long)res_x*
 			(unsigned long long)res_y*(unsigned long long)res_z*(unsigned long long)bytes;
 
@@ -1454,7 +1480,9 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 			if (nrrd_new->type == nrrdTypeUChar)
 				max_val = *std::max_element(val8nr, val8nr+mem_size);
 			else if (nrrd_new->type == nrrdTypeUShort)
-				max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr+mem_size/2);
+				max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr+mem_size / bytes);
+			else if (nrrd_new->type == nrrdTypeFloat)
+				max_val = *std::max_element((float*)val8nr, (float*)val8nr + mem_size / bytes);
 			vd_new->SetMaxValue(max_val);
 		}
 
@@ -1868,6 +1896,8 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
         mul = 255.0;
     else if (m_vd->GetTexture()->get_nrrd_raw(0)->type == nrrdTypeUShort)
         mul = 65535.0;
+	else if (m_vd->GetTexture()->get_nrrd_raw(0)->type == nrrdTypeFloat)
+		mul = 1.0;
     double total_int = 0.0;
 
     int count = 0;
