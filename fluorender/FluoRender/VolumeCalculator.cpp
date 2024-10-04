@@ -155,6 +155,8 @@ void VolumeCalculator::CreateVolumeResult1()
 	   bits = 8;
    else if (nrrd_a->type == nrrdTypeUShort)
 	   bits = 16;
+   else if (nrrd_a->type == nrrdTypeFloat)
+       bits = 32;
 
    m_vd_r = new VolumeData();
    m_vd_r->AddEmptyData(bits,
@@ -213,6 +215,8 @@ void VolumeCalculator::CreateVolumeResult2()
 	   bits = 8;
    else if (nrrd_a->type == nrrdTypeUShort)
 	   bits = 16;
+   else if (nrrd_a->type == nrrdTypeFloat)
+       bits = 32;
 
    int res_x, res_y, res_z;
    double spc_x, spc_y, spc_z;
@@ -288,6 +292,8 @@ void VolumeCalculator::CreateVolumeResult3()
         bits = 8;
     else if (nrrd_a->type == nrrdTypeUShort)
         bits = 16;
+    else if (nrrd_a->type == nrrdTypeFloat)
+        bits = 32;
 
     int res_x, res_y, res_z;
     double spc_x, spc_y, spc_z;
@@ -377,6 +383,8 @@ void VolumeCalculator::FillHoles(double thresh)
                value_a = ((unsigned char*)data_a)[index];
             else if (nrrd_a->type == nrrdTypeUShort)
                value_a = (unsigned char)((double)(((unsigned short*)data_a)[index])*m_vd_a->GetScalarScale()/257.0);
+            else if (nrrd_a->type == nrrdTypeFloat)
+                value_a = (unsigned char)((double)(((float*)data_a)[index]) * m_vd_a->GetScalarScale() * 255.0);
             if (value_a > thresh*255)
             {
                bbox.extend(Point(i, j, k));

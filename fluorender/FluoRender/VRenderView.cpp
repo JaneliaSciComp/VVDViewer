@@ -3986,6 +3986,8 @@ void VRenderVulkanView::CalculateSingle(int type, wxString prev_group, bool add)
 					vd->SetSyncR(vd_a->GetSyncR());
 					vd->SetSyncG(vd_a->GetSyncG());
 					vd->SetSyncB(vd_a->GetSyncB());
+					vd->SetMaxValue(vd_a->GetMaxValue());
+					vd->SetScalarScale(vd_a->GetScalarScale());
 				}
 
 				if (add)

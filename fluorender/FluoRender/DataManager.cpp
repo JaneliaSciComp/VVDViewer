@@ -1022,7 +1022,7 @@ void VolumeData::AddEmptyData(int bits,
 	int nx, int ny, int nz,
 	double spcx, double spcy, double spcz)
 {
-	if (bits!=8 && bits!=16)
+	if (bits!=8 && bits!=16 && bits!=32)
 		return;
 
 	if (m_vr)
@@ -1665,7 +1665,7 @@ double VolumeData::GetOriginalValue(int i, int j, int k, bool normalize)
 		{
 			int combined_seg_id = IsROICombined((int)rval);
 			if (combined_seg_id > 0)
-				rval = (uint16)combined_seg_id;
+				rval = combined_seg_id;
 		}
 		if ((bits == nrrdTypeUShort || bits == nrrdTypeFloat) && normalize)
 			rval *= m_scalar_scale;
@@ -1818,71 +1818,7 @@ double VolumeData::GetTransferedValue(int i, int j, int k)
 		}
 		return new_value;
 	}
-	else if (bits == nrrdTypeUShort)
-	{
-		uint64_t index = nx*ny*kk + nx*jj + ii;
-		double old_value;
-		if (!m_tex->isBrxml())
-		{
-			if (!data->data) return 0.0;
-			uint64_t index = nx*ny*kk + nx*jj + ii;
-			old_value = (double)((uint16*)(data->data))[index];
-		}
-		else
-			old_value = m_tex->get_brick_original_value(ii, jj, kk, false);
-
-		double gm = 0.0;
-		double new_value = double(old_value)*m_scalar_scale/65535.0;
-		if (m_vr->get_inversion())
-			new_value = 1.0-new_value;
-		if (ii>0 && ii<nx-1 &&
-			jj>0 && jj<ny-1 &&
-			kk>0 && kk<nz-1)
-		{
-			if (!m_tex->isBrxml())
-			{
-				v1 = ((uint16*)(data->data))[nx*ny*kk + nx*jj + ii-1];
-				v2 = ((uint16*)(data->data))[nx*ny*kk + nx*jj + ii+1];
-				v3 = ((uint16*)(data->data))[nx*ny*kk + nx*(jj-1) + ii];
-				v4 = ((uint16*)(data->data))[nx*ny*kk + nx*(jj+1) + ii];
-				v5 = ((uint16*)(data->data))[nx*ny*(kk-1) + nx*jj + ii];
-				v6 = ((uint16*)(data->data))[nx*ny*(kk+1) + nx*jj + ii];
-			}
-			else
-			{
-				v1 = m_tex->get_brick_original_value(ii-1, jj, kk, false);
-				v2 = m_tex->get_brick_original_value(ii+1, jj, kk, false);
-				v3 = m_tex->get_brick_original_value(ii, jj-1, kk, false);
-				v4 = m_tex->get_brick_original_value(ii, jj+1, kk, false);
-				v5 = m_tex->get_brick_original_value(ii, jj, kk-1, false);
-				v6 = m_tex->get_brick_original_value(ii, jj, kk+1, false);
-			}
-			double normal_x, normal_y, normal_z;
-			normal_x = (v2 - v1)*m_scalar_scale/65535.0;
-			normal_y = (v4 - v3)*m_scalar_scale/65535.0;
-			normal_z = (v6 - v5)*m_scalar_scale/65535.0;
-			gm = sqrt(normal_x*normal_x + normal_y*normal_y + normal_z*normal_z)*0.53;
-		}
-		if (new_value<m_lo_thresh-m_sw ||
-			new_value>m_hi_thresh+m_sw ||
-			gm<m_gm_thresh)
-			new_value = 0.0;
-		else
-		{
-			double gamma = 1.0 / m_gamma3d;
-			new_value = (new_value<m_lo_thresh?
-				(m_sw-m_lo_thresh+new_value)/m_sw:
-			(new_value>m_hi_thresh?
-				(m_sw-new_value+m_hi_thresh)/m_sw:1.0))
-				*new_value;
-			new_value = pow(Clamp(new_value/m_offset,
-				gamma<1.0?-(gamma-1.0)*0.00001:0.0,
-				gamma>1.0?0.9999:1.0), gamma);
-			new_value *= m_alpha;
-		}
-		return new_value;
-	}
-	else if (bits == nrrdTypeUShort)
+	else if (bits == nrrdTypeFloat)
 	{
 		uint64_t index = nx * ny * kk + nx * jj + ii;
 		double old_value;
@@ -4486,7 +4422,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 			return nullptr;
 		}
 		memset((void*)val32, 0, sizeof(float) * nx * ny * nz);
-		nrrdWrap(nv, val32, nrrdTypeUShort, 3, (size_t)nx, (size_t)ny, (size_t)nz);
+		nrrdWrap(nv, val32, nrrdTypeFloat, 3, (size_t)nx, (size_t)ny, (size_t)nz);
 	}
 	nrrdAxisInfoSet(nv, nrrdAxisInfoSpacing, spcx, spcy, spcz);
 	nrrdAxisInfoSet(nv, nrrdAxisInfoMax, spcx * nx, spcy * ny, spcz * nz);

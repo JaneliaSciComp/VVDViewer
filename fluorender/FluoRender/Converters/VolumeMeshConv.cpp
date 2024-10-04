@@ -386,7 +386,7 @@ double VolumeMeshConv::GetValue(int x, int y, int z)
 	}
 	else if (nrrd->type == nrrdTypeFloat)
 	{
-		value = ((unsigned short*)nrrd->data)[index];
+		value = ((float*)nrrd->data)[index];
 		value /= m_vol_max;
 		if (m_use_transfer)
 		{
