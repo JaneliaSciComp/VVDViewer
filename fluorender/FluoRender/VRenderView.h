@@ -836,6 +836,9 @@ public:
     //use absolute value for segmentation
     bool m_use_absolute_value;
 
+	int m_peeling_layer_progress;
+	int m_mesh_rendering_progress;
+
 	shared_ptr<VVulkan> m_vulkan;
 	std::shared_ptr<Vulkan2dRender> m_v2drender;
 
@@ -1251,7 +1254,7 @@ private:
 	void Draw();//draw volumes only
 	void DrawDP();//draw volumes and meshes with depth peeling
 	//mesh and volume
-	void DrawMeshes(const std::unique_ptr<
+	bool DrawMeshes(const std::unique_ptr<
 		vks::VFrameBuffer>& framebuf,
 		bool clear_framebuf,
 		int peel=0,

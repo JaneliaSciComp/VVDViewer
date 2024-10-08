@@ -720,7 +720,9 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
     m_undo_keydown(false),
     m_redo_keydown(false),
     m_use_fog_mesh(false),
-    m_use_absolute_value(false)
+    m_use_absolute_value(false),
+	m_peeling_layer_progress(0),
+	m_mesh_rendering_progress(0)
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
@@ -1414,9 +1416,12 @@ void VRenderVulkanView::Draw()
 
 //draw meshes
 //peel==true -- depth peeling
-void VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& framebuf, bool clear_framebuf, int peel, const std::shared_ptr<vks::VTexture> depth_tex)
+bool VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& framebuf, bool clear_framebuf, int peel, const std::shared_ptr<vks::VTexture> depth_tex)
 {
-	for (int i=0 ; i<(int)m_layer_list.size() ; i++)
+	int count = 0;
+	if (TextureRenderer::get_mem_swap() && m_mesh_rendering_progress > 0)
+		clear_framebuf = false;
+	for (int i=0; i<(int)m_layer_list.size() ; i++)
 	{
 		if (!m_layer_list[i])
 			continue;
@@ -1425,6 +1430,10 @@ void VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 			MeshData* md = (MeshData*)m_layer_list[i];
 			if (md && md->GetDisp())
 			{
+				count++;
+				if (TextureRenderer::get_mem_swap() && count <= m_mesh_rendering_progress)
+					continue;
+
                 bool cur_draw_bounds = false;
                 if (m_capture)
                 {
@@ -1438,9 +1447,17 @@ void VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 				md->SetDevice(m_vulkan->devices[0]);
 				md->Draw(framebuf, clear_framebuf, peel);
 				clear_framebuf = false;
+
+				m_mesh_rendering_progress++;
                 
                 if (m_capture)
                     md->SetDrawBounds(cur_draw_bounds);
+			}
+			if (TextureRenderer::get_mem_swap())
+			{
+				uint32_t rn_time = GET_TICK_COUNT();
+				if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
+					return false;
 			}
 		}
 		else if (m_layer_list[i]->IsA() == 6)
@@ -1453,6 +1470,10 @@ void VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 					MeshData* md = group->GetMeshData(j);
 					if (md && md->GetDisp())
 					{
+						count++;
+						if (TextureRenderer::get_mem_swap() && count <= m_mesh_rendering_progress)
+							continue;
+
                         bool cur_draw_bounds = false;
                         if (m_capture)
                         {
@@ -1466,14 +1487,26 @@ void VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 						md->SetDevice(m_vulkan->devices[0]);
 						md->Draw(framebuf, clear_framebuf, peel);
 						clear_framebuf = false;
+
+						m_mesh_rendering_progress++;
                         
                         if (m_capture)
                             md->SetDrawBounds(cur_draw_bounds);
 					}
+					if (TextureRenderer::get_mem_swap())
+					{
+						uint32_t rn_time = GET_TICK_COUNT();
+						if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
+							return false;
+					}
 				}
 			}
 		}
+		
 	}
+
+	m_mesh_rendering_progress = 0;
+	return true;
 }
 
 //draw volumes
@@ -1500,6 +1533,14 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		m_updating = false;
 		m_force_clear = false;
 
+		if (TextureRenderer::get_mem_swap())
+		{
+			//set start time for the texture renderer
+			TextureRenderer::set_st_time(GET_TICK_COUNT());
+
+			TextureRenderer::set_interactive(m_interactive);
+		}
+
 		VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
 		if (vr_frame &&
 			vr_frame->GetSettingDlg() &&
@@ -1525,6 +1566,10 @@ void VRenderVulkanView::DrawVolumes(int peel)
 				m_dp_fbo_list.clear();
 				m_dp_ctex_list.clear();
 				m_dp_tex_list.clear();
+
+				m_finished_peeling_layer = 0;
+				m_mesh_rendering_progress = 0;
+				m_peeling_layer_progress = 0;
 			}
 
 			if (m_dp_fbo_list.size() < peeling_layers)
@@ -1534,7 +1579,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 				m_dp_tex_list.resize(peeling_layers);
 			}
 
-			for (int i = 0; i < peeling_layers; i++)
+			for (int i = m_finished_peeling_layer; i < peeling_layers; i++)
 			{
 				if (!m_dp_fbo_list[i])
 				{
@@ -1558,15 +1603,21 @@ void VRenderVulkanView::DrawVolumes(int peel)
 					m_dp_fbo_list[i]->addAttachment(m_dp_tex_list[i]);
 				}
 
+				bool finished = false;
 				if (i==0)
 				{
-					DrawMeshes(m_dp_fbo_list[i], true, 0);
+					finished = DrawMeshes(m_dp_fbo_list[i], true, 0);
 				}
 				else
 				{
 					m_msh_dp_fr_tex = m_dp_tex_list[i - 1];
-					DrawMeshes(m_dp_fbo_list[i], true, 1, m_dp_tex_list[i-1]);
+					finished = DrawMeshes(m_dp_fbo_list[i], true, 1, m_dp_tex_list[i-1]);
 				}
+
+				if (finished)
+					m_finished_peeling_layer = i + 1;
+				else
+					break;
 			}
 
 			//combine result images of mesh renderer
@@ -1579,7 +1630,9 @@ void VRenderVulkanView::DrawVolumes(int peel)
 					1,
 					0,
 					m_fbo_final->attachments[0]->is_swapchain_images);
-			for (int i = peeling_layers-1; i >= 0; i--)
+			int layers = m_finished_peeling_layer - 1;
+			if (layers < 0) layers = 0;
+			for (int i = layers; i >= 0; i--)
 			{
 				Vulkan2dRender::V2DRenderParams param;
 				param.pipeline = pl;
@@ -1604,19 +1657,17 @@ void VRenderVulkanView::DrawVolumes(int peel)
 				m_md_pop_list[0]->GetShadowParams(darkness);
 				DrawOLShadowsMesh(m_dp_tex_list[0], (float)darkness);
 			}
+
+			if (TextureRenderer::get_total_brick_num() == 0 && TextureRenderer::get_mem_swap() && m_finished_peeling_layer >= peeling_layers)
+			{
+				TextureRenderer::set_done_update_loop(true);
+			}
 		}
 
 		//setup
 		PopVolumeList();
 
 		vector<VolumeData*> quota_vd_list;
-		if (TextureRenderer::get_mem_swap())
-		{
-			//set start time for the texture renderer
-			TextureRenderer::set_st_time(GET_TICK_COUNT());
-
-			TextureRenderer::set_interactive(m_interactive);
-		}
 
 		//handle intermixing modes
 		if (m_vol_method == VOL_METHOD_MULTI)
@@ -1927,9 +1978,9 @@ void VRenderVulkanView::DrawVolumesDP()
 		{
 			if (s == 0 || (TextureRenderer::get_mem_swap() && TextureRenderer::get_total_brick_num() > 0)) ClearFinalBuffer();
 
+			int dptexnum = peeling_layers > 0 ? peeling_layers : 1;
 			if (m_finished_peeling_layer == 0 && TextureRenderer::get_cur_brick_num() == 0 && m_md_pop_list.size() > 0)
 			{
-				int dptexnum = peeling_layers > 0 ? peeling_layers : 1;
 				if (m_resize)
 				{
 					m_dp_fbo_list.clear();
@@ -1944,7 +1995,7 @@ void VRenderVulkanView::DrawVolumesDP()
 					m_dp_tex_list.resize(dptexnum);
 				}
 
-				for (int i = 0; i < dptexnum; i++)
+				for (int i = m_peeling_layer_progress; i < dptexnum; i++)
 				{
 					if (!m_dp_fbo_list[i])
 					{
@@ -1968,17 +2019,26 @@ void VRenderVulkanView::DrawVolumesDP()
 						m_dp_fbo_list[i]->addAttachment(m_dp_tex_list[i]);
 					}
 
+					bool finished = false;
 					if (i == 0)
 					{
-						DrawMeshes(m_dp_fbo_list[i], true, 0);
+						finished = DrawMeshes(m_dp_fbo_list[i], true, 0);
 					}
 					else
 					{
 						m_msh_dp_fr_tex = m_dp_tex_list[i - 1];
-						DrawMeshes(m_dp_fbo_list[i], true, 1, m_dp_tex_list[i - 1]);
+						finished = DrawMeshes(m_dp_fbo_list[i], true, 1, m_dp_tex_list[i - 1]);
 					}
+
+					if (finished)
+						m_peeling_layer_progress = i + 1;
+					else
+						break;
 				}
 			}
+
+			if (m_peeling_layer_progress < dptexnum)
+				break;
 
 			int peel = 0;
 			if (m_dp_tex_list.size() >= peeling_layers && !m_dp_tex_list.empty() && m_md_pop_list.size() > 0)
@@ -2163,10 +2223,13 @@ void VRenderVulkanView::DrawVolumesDP()
 				m_v2drender->render(m_fbo_temp_restore, params);
 			}
 
-			if (TextureRenderer::get_mem_swap() && TextureRenderer::get_total_brick_num() > 0)
+			if (TextureRenderer::get_mem_swap()/* && TextureRenderer::get_total_brick_num() > 0*/)
 			{
 				unsigned int rn_time = GET_TICK_COUNT();
 				TextureRenderer::set_consumed_time(rn_time - TextureRenderer::get_st_time());
+
+				if (TextureRenderer::get_total_brick_num() == 0 && m_peeling_layer_progress >= dptexnum)
+					TextureRenderer::set_done_update_loop(true);
 
 				if (TextureRenderer::get_start_update_loop() && !TextureRenderer::get_done_update_loop())
 					break;
@@ -14311,8 +14374,11 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 
 	//st_time = milliseconds_now();
 
-	if (reset_peeling_layer)
+	if (reset_peeling_layer) {
 		m_finished_peeling_layer = 0;
+		m_peeling_layer_progress = 0;
+		m_mesh_rendering_progress = 0;
+	}
 
 	SetSortBricks();
 
@@ -14938,6 +15004,11 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 			TextureRenderer::set_update_loop();
 			TextureRenderer::set_total_brick_num(total_num);
 			TextureRenderer::reset_done_current_chan();
+		}
+		else if (m_md_pop_list.size() > 0)
+		{
+			TextureRenderer::set_update_loop();
+			TextureRenderer::set_total_brick_num(0);
 		}
 		else
 			TextureRenderer::set_total_brick_num(0);
