@@ -183,6 +183,7 @@ class EXPORT_API VRenderFrame: public wxFrame
 		ID_OpenVolume,
 		ID_DownloadVolume,
 		ID_OpenMesh,
+		ID_OpenURL,
 		//Mesh
 		//Mesh\Create
 		ID_Create,
@@ -596,6 +597,8 @@ private:
 
 	void OnSaveProject(wxCommandEvent& WXUNUSED(event));
 	void OnOpenProject(wxCommandEvent& WXUNUSED(event));
+
+	void OnOpenURL(wxCommandEvent& WXUNUSED(event));
 
 	void OnSettings(wxCommandEvent& WXUNUSED(event));
 	void OnPaintTool(wxCommandEvent& WXUNUSED(event));

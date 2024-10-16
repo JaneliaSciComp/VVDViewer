@@ -14526,13 +14526,16 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 							if ((*bricks2)[j]->get_priority()>0 ||
 								!vd->GetVR()->test_against_view_clip((*bricks2)[j]->bbox(), (*bricks2)[j]->tbox(), (*bricks2)[j]->dbox(), m_persp) ||
                                 !tex->GetFileName((*bricks2)[j]->getID()) ||
-                                !tex->GetFileName((*bricks2)[j]->getID())->isvalid)
+                                (!tex->GetFileName((*bricks2)[j]->getID())->isvalid && !tex->GetFileName((*bricks2)[j]->getID())->isurl))
 							{
 								(*bricks2)[j]->set_disp(false);
 								continue;
 							}
-							else
+							else {
 								(*bricks2)[j]->set_disp(true);
+								if (tex->GetFileName((*bricks2)[j]->getID()) && !tex->GetFileName((*bricks2)[j]->getID())->isvalid && tex->GetFileName((*bricks2)[j]->getID())->isurl)
+									tex->GetFileName((*bricks2)[j]->getID())->isvalid = true;
+							}
 							if (m_draw_mask && tex->nmask() != -1 && vd->GetMaskHideMode() == VOL_MASK_HIDE_NONE)
                             {
                                 total_num++;
@@ -14574,13 +14577,17 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 						(*bricks)[j]->set_drawn(false);
 						if ((*bricks)[j]->get_priority()>0 ||
 							!vd->GetVR()->test_against_view_clip((*bricks)[j]->bbox(), (*bricks)[j]->tbox(), (*bricks)[j]->dbox(), m_persp) ||
-                            (tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || !tex->GetFileName((*bricks)[j]->getID())->isvalid)) )
+                            (tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || (!tex->GetFileName((*bricks)[j]->getID())->isvalid && !tex->GetFileName((*bricks)[j]->getID())->isurl))) )
 						{
 							(*bricks)[j]->set_disp(false);
 							continue;
 						}
 						else
+						{
 							(*bricks)[j]->set_disp(true);
+							if (tex->isBrxml() && tex->GetFileName((*bricks)[j]->getID()) && !tex->GetFileName((*bricks)[j]->getID())->isvalid && tex->GetFileName((*bricks)[j]->getID())->isurl)
+								tex->GetFileName((*bricks)[j]->getID())->isvalid = true;
+						}
 						total_num++;
 						num_chan++;
 						if (vd->GetShadow())

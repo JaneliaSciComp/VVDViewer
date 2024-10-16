@@ -7,6 +7,7 @@
 #include <FLIVR/Transform.h>
 #include <tinyxml2.h>
 #include <memory>
+#include <iomanip>
 
 #include <json.hpp>
 
@@ -36,10 +37,21 @@
 #define BloscCompressionKey "cname"
 #define BloscShuffleKey "shuffle"
 
+#define BioformatsKey "bioformats2raw.layout"
 #define MultiScalesKey "multiscales"
 #define CoordinateTransformationsKey "coordinateTransformations"
 #define DatasetsKey "datasets"
 #define PathKey "path"
+#define LabelsKey "labels"
+
+#define OmeroKey "omero"
+#define ChannelsKey "channels"
+#define ColorKey "color"
+#define WindowKey "window"
+#define MaxKey "max"
+#define MinKey "min"
+#define StartKey "start"
+#define EndKey "end"
 
 #define ChunksKey "chunks"
 #define CompressorKey "compressor"
@@ -263,6 +275,33 @@ public:
             ret = m_chan_names[i];
         return ret;
     }
+
+	bool getChannelColor(int c, double& r, double& g, double& b)
+	{
+		bool ret = false;
+		if (c >= 0 && c < m_chan_cols.size()) {
+			string col_str = m_chan_cols[c];
+
+			int ir, ig, ib;
+			sscanf(col_str.c_str(), "%02x%02x%02x", &ir, &ig, &ib);
+
+			r = ir / 255.0;
+			g = ig / 255.0;
+			b = ib / 255.0;
+
+			if (ir >= 0 && ir <= 255 && ig >= 0 && ig <= 255 && ib >= 0 && ib <= 255)
+				ret = true;
+		}
+		return ret;
+	}
+
+	double getChannelOffset(int i)
+	{
+		double ret = -1.0;
+		if (i >= 0 && i < m_chan_offsets.size())
+			ret = m_chan_offsets[i];
+		return ret;
+	}
     
     FLIVR::Transform GetBDVTransform(int setup = -1, int timepoint = -1);
     
@@ -386,6 +425,9 @@ private:
 	wstring m_metadata_id;
     
     vector<wstring> m_chan_names;
+	vector<string> m_chan_cols;
+	vector<double> m_chan_maxs;
+	vector<double> m_chan_offsets;
     
     wstring m_bdv_metadata_path;
     int m_bdv_setup_id;
@@ -404,7 +446,7 @@ private:
     void ReadBDVViewRegistrations(tinyxml2::XMLDocument& xXmlDocument, vector<vector<FLIVR::Transform>> &transforms);
     void ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, int f, int c, vector<double> pix_res);
 
-	void ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, int f, int c, vector<double> pix_res);
+	void ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, vector<double> pix_res);
 
 	void Clear();
 };

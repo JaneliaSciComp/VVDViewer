@@ -74,6 +74,7 @@ BEGIN_EVENT_TABLE(VRenderFrame, wxFrame)
 	EVT_MENU(ID_CreateCone, VRenderFrame::OnCreateCone)
 	EVT_MENU(ID_SaveProject, VRenderFrame::OnSaveProject)
 	EVT_MENU(ID_OpenProject, VRenderFrame::OnOpenProject)
+	EVT_MENU(ID_OpenURL, VRenderFrame::OnOpenURL)
 	EVT_MENU(ID_Settings, VRenderFrame::OnSettings)
 	EVT_MENU(ID_PaintTool, VRenderFrame::OnPaintTool)
 	EVT_MENU(ID_NoiseCancelling, VRenderFrame::OnNoiseCancelling)
@@ -764,6 +765,8 @@ VRenderFrame::VRenderFrame(
 	m = new wxMenuItem(m_top_file,ID_SaveProject, wxT("&Save Project"));
 	m->SetBitmap(wxGetBitmapFromMemory(icon_save_project_mini));
 	m_top_file->Append(m);
+	m = new wxMenuItem(m_top_file, ID_OpenURL, wxT("Open &URL"));
+	m_top_file->Append(m);
 	m_top_file->Append(wxID_SEPARATOR);
 	wxMenuItem *quit = new wxMenuItem(m_top_file, wxID_EXIT);
 	quit->SetBitmap(wxArtProvider::GetBitmap(wxART_QUIT));
@@ -1415,20 +1418,33 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				wxString key = std::filesystem::relative(p, root);
 				list.Add(key);
 			}
-			DatasetSelectionDialog dsdlg(this, wxID_ANY, files[j], list, wxDefaultPosition, wxSize(500, 600));
-			if (dsdlg.ShowModal() == wxID_OK)
+			if (zpaths.size() >= 2)
 			{
-				for (int i = 0; i < dsdlg.GetDatasetNum(); i++)
+				DatasetSelectionDialog dsdlg(this, wxID_ANY, files[j], list, wxDefaultPosition, wxSize(500, 600));
+				if (dsdlg.ShowModal() == wxID_OK)
 				{
-					if (dsdlg.isDatasetSelected(i))
+					for (int i = 0; i < dsdlg.GetDatasetNum(); i++)
 					{
-						tmpfiles.Add(zpaths[i] + L".zfs_ch");
-						if (suffix == ".zattrs")
-							metadatafiles.Add(files[j]);
-						else
-							metadatafiles.Add(wxEmptyString);
+						if (dsdlg.isDatasetSelected(i))
+						{
+							tmpfiles.Add(zpaths[i] + L".zfs_ch");
+							if (suffix == ".zattrs")
+								metadatafiles.Add(files[j]);
+							else
+								metadatafiles.Add(wxEmptyString);
+						}
 					}
 				}
+			}
+			else
+			{
+				wxString wx_zpath = zpaths[0];
+				wxString suffix2 = wx_zpath.Mid(wx_zpath.Find('.', true)).MakeLower();
+				if (suffix2 == ".zarr")
+					tmpfiles.Add(zpaths[0]);
+				else
+					tmpfiles.Add(zpaths[0] + L".zfs_ch");
+				metadatafiles.Add(wxEmptyString);
 			}
 		}
         else if (suffix==".n5" || suffix==".json" || suffix==".xml")
@@ -3644,6 +3660,35 @@ void VRenderFrame::OnOpenProject(wxCommandEvent& WXUNUSED(event))
 	}
 
 	delete fopendlg;
+}
+
+void VRenderFrame::OnOpenURL(wxCommandEvent& WXUNUSED(event))
+{
+	if (m_setting_dlg)
+	{
+		m_compression = m_setting_dlg->GetRealtimeCompress();
+		m_skip_brick = m_setting_dlg->GetSkipBricks();
+	}
+
+	wxTextEntryDialog urlDialog(this, "Enter URL:", "URL Input");
+
+	if (urlDialog.ShowModal() == wxID_OK)
+	{
+		wxString url = urlDialog.GetValue();
+
+		VRenderView* vrv = GetView(0);
+
+		wxArrayString paths;
+		paths.Add(url);
+		LoadVolumes(paths, vrv);
+
+		if (m_setting_dlg)
+		{
+			m_setting_dlg->SetRealtimeCompress(m_compression);
+			m_setting_dlg->SetSkipBricks(m_skip_brick);
+			m_setting_dlg->UpdateUI();
+		}
+	}
 }
 
 void VRenderFrame::SaveProject(wxString& filename)

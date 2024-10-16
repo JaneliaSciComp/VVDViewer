@@ -15,6 +15,10 @@
 #include <boost/lexical_cast.hpp>
 #include "boost/filesystem.hpp"
 
+#include <wx/url.h>
+#include <wx/file.h>
+#include <wx/stdpaths.h>
+
 namespace fs = std::filesystem;
 
 using namespace boost::filesystem;
@@ -34,6 +38,111 @@ template <typename _T> inline void SafeDelete(_T* &p)
 		delete (p);
 		(p) = NULL;
 	}
+}
+
+// Write callback function for handling data received from libcurl
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    std::ofstream* outputFile = static_cast<std::ofstream*>(userp);
+    size_t totalSize = size * nmemb;
+    outputFile->write(static_cast<char*>(contents), totalSize);
+    return totalSize;
+}
+
+bool DownloadFile(std::string& url)
+{
+    CURL* curl;
+    CURLcode res;
+
+    // Initialize a curl session
+    curl = curl_easy_init();
+    if (curl)
+    {
+        wxString pathname = url;
+#ifdef _WIN32
+        wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "\\" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
+#else
+        wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "/" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
+#endif
+        std::ofstream outputFile(tmpfname.ToStdString(), std::ios::binary);
+        if (!outputFile.is_open())
+        {
+            std::cerr << "Could not open file to write: " << tmpfname.ToStdString() << std::endl;
+            return false;
+        }
+
+        // Set URL for curl
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+        // Set write callback function
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+
+        // Set user data for the callback function
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &outputFile);
+
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+
+        // Perform the file download
+        res = curl_easy_perform(curl);
+
+        // Cleanup curl session
+        curl_easy_cleanup(curl);
+
+        // Close the output file
+        outputFile.close();
+
+        // Check if download was successful
+        if (res != CURLE_OK)
+        {
+            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            return false;
+        }
+
+        std::cout << "Download succeeded: " << tmpfname.ToStdString() << std::endl;
+
+        url = tmpfname.ToStdString();
+
+        return true;
+    }
+    return false;
+}
+
+bool DownloadToCurrentDir(wxString& filename)
+{
+    wxString pathname = filename;
+    wxURL url(pathname);
+    //if (!url.IsOk())
+    //    return false;
+    url.GetProtocol().SetTimeout(10);
+    wxString suffix = pathname.Mid(pathname.Find('.', true)).MakeLower();
+    if (url.GetError() != wxURL_NOERR)
+        return false;
+    wxInputStream* in = url.GetInputStream();
+    if (!in || !in->IsOk()) return false;
+#define DOWNLOAD_BUFSIZE 8192
+    unsigned char buffer[DOWNLOAD_BUFSIZE];
+    size_t count = -1;
+    wxMemoryBuffer mem_buf;
+    while (!in->Eof() && count != 0)
+    {
+        in->Read(buffer, DOWNLOAD_BUFSIZE - 1);
+        count = in->LastRead();
+        if (count > 0) mem_buf.AppendData(buffer, count);
+    }
+
+#ifdef _WIN32
+    wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "\\" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
+#else
+    wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "/" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
+#endif
+
+    wxFile of(tmpfname, wxFile::write);
+    of.Write(mem_buf.GetData(), mem_buf.GetDataLen());
+    of.Close();
+
+    filename = tmpfname;
+
+    return true;
 }
 
 BRKXMLReader::BRKXMLReader()
@@ -127,12 +236,21 @@ void BRKXMLReader::SetFile(string &file)
 #endif
       m_data_name = m_path_name.substr(m_path_name.find_last_of(slash)+1);
 	  m_dir_name = m_path_name.substr(0, m_path_name.find_last_of(slash)+1);
+
+      size_t ext_pos = m_path_name.find_last_of(L".");
+      wstring ext = m_path_name.substr(ext_pos + 1);
+      transform(ext.begin(), ext.end(), ext.begin(), towlower);
+
+      if (ext == L"zarr")
+          m_dir_name = m_path_name + slash;
+      else if (ext == L"zfs_ch") {
+          m_data_name = m_path_name.substr(0, ext_pos);
+          m_data_name = m_data_name.substr(m_data_name.find_last_of(slash) + 1);
+          m_dir_name = m_path_name.substr(0, ext_pos) + slash;
+      }
        
        if (m_dir_name.size() > 1)
        {
-           size_t ext_pos = m_path_name.find_last_of(L".");
-           wstring ext = m_path_name.substr(ext_pos+1);
-           transform(ext.begin(), ext.end(), ext.begin(), towlower);
            if (ext == L"json" || ext == L"n5fs_ch") {
                m_data_name = m_dir_name.substr(m_dir_name.substr(0, m_dir_name.size() - 1).find_last_of(slash)+1);
            }
@@ -155,12 +273,21 @@ void BRKXMLReader::SetFile(wstring &file)
 #endif
    m_data_name = m_path_name.substr(m_path_name.find_last_of(slash)+1);
    m_dir_name = m_path_name.substr(0, m_path_name.find_last_of(slash)+1);
+
+   size_t ext_pos = m_path_name.find_last_of(L".");
+   wstring ext = m_path_name.substr(ext_pos + 1);
+   transform(ext.begin(), ext.end(), ext.begin(), towlower);
+
+   if (ext == L"zarr")
+       m_dir_name = m_path_name + slash;
+   else if (ext == L"zfs_ch") {
+       m_data_name = m_path_name.substr(0, ext_pos);
+       m_data_name = m_data_name.substr(m_data_name.find_last_of(slash) + 1);
+       m_dir_name = m_path_name.substr(0, ext_pos) + slash;
+   }
     
     if (m_dir_name.size() > 1)
     {
-        size_t ext_pos = m_path_name.find_last_of(L".");
-        wstring ext = m_path_name.substr(ext_pos+1);
-        transform(ext.begin(), ext.end(), ext.begin(), towlower);
         if (ext == L"json" || ext == L"n5fs_ch") {
             m_data_name = m_dir_name.substr(m_dir_name.substr(0, m_dir_name.size() - 1).find_last_of(slash)+1);
         }
@@ -992,7 +1119,8 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 
 	if(get_max)
 	{
-		if(m_pyramid[m_cur_level].bit_depth == 8) m_max_value = 255.0;
+        if (c >= 0 && c < m_chan_maxs.size() && m_chan_maxs[c] > 0.0) m_max_value = m_chan_maxs[c];
+		else if(m_pyramid[m_cur_level].bit_depth == 8) m_max_value = 255.0;
 		else if(m_pyramid[m_cur_level].bit_depth == 16) m_max_value = 65535.0;
         else if(m_pyramid[m_cur_level].nrrd_type == nrrdTypeInt || m_pyramid[m_cur_level].nrrd_type == nrrdTypeUInt) m_max_value = 100000.0;
         else if (m_pyramid[m_cur_level].nrrd_type == nrrdTypeFloat || m_pyramid[m_cur_level].nrrd_type == nrrdTypeDouble) {
@@ -1278,6 +1406,12 @@ void BRKXMLReader::SetInfo()
 
 void BRKXMLReader::loadFSZarr()
 {
+#ifdef _WIN32
+    wchar_t slash = L'\\';
+#else
+    wchar_t slash = L'/';
+#endif
+
     size_t ext_pos = m_path_name.find_last_of(L".");
     wstring ext = m_path_name.substr(ext_pos + 1);
     transform(ext.begin(), ext.end(), ext.begin(), towlower);
@@ -1287,60 +1421,70 @@ void BRKXMLReader::loadFSZarr()
     boost::filesystem::path root_path(m_dir_name);
 
     vector<double> pix_res(3, 1.0);
-    bool pix_res_found = false;
+
     auto root_attrpath = root_path / ".zattrs";
-    std::ifstream ifs(root_attrpath.string());
-    if (ifs.is_open()) {
-        auto jf = json::parse(ifs);
-        if (!jf.is_null() && jf.contains(MultiScalesKey) &&
-            jf[MultiScalesKey].contains(CoordinateTransformationsKey) &&
-            jf[MultiScalesKey][CoordinateTransformationsKey].contains(ScaleKey)) {
-            pix_res = jf[MultiScalesKey][CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
-            pix_res_found = true;
+
+    if (!exists(root_attrpath)) {
+        string wxpath = root_attrpath.generic_string();
+        if (DownloadFile(wxpath)) {
+            m_isURL = true;
+            root_attrpath = wxpath;
         }
     }
 
-    directory_iterator end_itr; // default construction yields past-the-end
-    vector<wstring> ch_dirs;
-    if (file_path.extension() == ".zfs_ch") {
-        ch_dirs.push_back(file_path.stem().wstring());
+    vector<string> ch_colors;
+    vector<double> ch_maxs;
+    vector<double> ch_offsets;
+
+    std::ifstream ifs(root_attrpath.string());
+    if (ifs.is_open()) {
+        auto jf = json::parse(ifs);
+        if (!jf.is_null()) {
+            if (jf.contains(MultiScalesKey) && jf[MultiScalesKey][0].contains(CoordinateTransformationsKey)) {
+                for (auto& elem : jf[MultiScalesKey][0][CoordinateTransformationsKey]) {
+                    if (elem.contains(ScaleKey)) {
+                        pix_res = elem[ScaleKey].get<vector<double>>();
+                        reverse(pix_res.begin(), pix_res.end());
+                    }
+                }
+            }
+            if (jf.contains(OmeroKey) && jf[OmeroKey].contains(ChannelsKey)) {
+                for (auto& elem : jf[OmeroKey][ChannelsKey]) {
+                    if (elem.contains(ColorKey)) {
+                        string rgb_str = elem[ColorKey].get<string>();
+                        ch_colors.push_back(rgb_str);
+                    }
+                    if (elem.contains(WindowKey) && elem[WindowKey].contains(MaxKey)) {
+                        double max_val = elem[WindowKey][MaxKey].get<double>();
+                        if (max_val > 0.0) {
+                            ch_maxs.push_back(max_val);
+                            if (elem.contains(WindowKey) && elem[WindowKey].contains(EndKey)) {
+                                double end_val = elem[WindowKey][EndKey].get<double>();
+                                if (end_val <= max_val)
+                                    ch_offsets.push_back(end_val/max_val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    if (ch_dirs.empty())
+    ReadResolutionPyramidFromSingleZarrDataset(m_dir_name, pix_res);
+
+    vector<wstring> ch_dirs;
+    if (m_imageinfo.nChannel > 1) {
+        for (int c = 0; c < m_imageinfo.nChannel; c++)
+            ch_dirs.push_back(L"_Ch" + to_wstring(c));
+    }
+    else
         ch_dirs.push_back(L"");
 
-    if (ch_dirs.empty())
-    {
-        m_error_msg = L"Error (N5 Reader): No channel exists.";
-        return;
-    }
-
-    sort(ch_dirs.begin(), ch_dirs.end(),
-        [](const wstring& x, const wstring& y) { return WSTOI(x.substr(1)) < WSTOI(y.substr(1)); });
-
     m_chan_names = ch_dirs;
+    m_chan_cols = ch_colors;
+    m_chan_maxs = ch_maxs;
+    m_chan_offsets = ch_offsets;
 
-    vector<vector<wstring>> relpaths;
-    for (int i = 0; i < ch_dirs.size(); i++) {
-		vector<double> ch_pix_res = pix_res;
-		if (!pix_res_found) {
-			auto attrpath = root_path / ch_dirs[i] / ".zattrs";
-			std::ifstream ifs(attrpath.string());
-			if (ifs.is_open()) {
-				auto jf = json::parse(ifs);
-                if (!jf.is_null() && jf.contains(MultiScalesKey) &&
-                    jf[MultiScalesKey].contains(CoordinateTransformationsKey) &&
-                    jf[MultiScalesKey][CoordinateTransformationsKey].contains(ScaleKey)) {
-                    ch_pix_res = jf[MultiScalesKey][CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
-                }
-			}
-		}
-		boost::filesystem::path pyramid_abs_path = root_path / ch_dirs[i];
-		ReadResolutionPyramidFromSingleZarrDataset(pyramid_abs_path.wstring(), 0, i, ch_pix_res);
-    }
-
-    m_imageinfo.nFrame = 1;
-    m_imageinfo.nChannel = ch_dirs.size();
     m_imageinfo.copyableLv = m_pyramid.size() - 1;
 
     m_time_num = m_imageinfo.nFrame;
@@ -1534,7 +1678,7 @@ void BRKXMLReader::loadFSN5()
 
 }
 
-void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, int f, int c, vector<double> pix_res)
+void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, vector<double> pix_res)
 {
 #ifdef _WIN32
     wchar_t slash = L'\\';
@@ -1552,14 +1696,34 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
     vector<vector<double>> pix_res_array;
 
     auto root_attrpath = root_path / ".zattrs";
+
+    bool is_url = false;
+
+    if (!exists(root_attrpath)) {
+        string wxpath = root_attrpath.generic_string();
+        if (DownloadFile(wxpath)) {
+            is_url = true;
+        }
+        root_attrpath = wxpath;
+    }
+
     std::ifstream ifs(root_attrpath.string());
     if (ifs.is_open()) {
         auto jf = json::parse(ifs);
-        if (!jf.is_null() && jf.contains(MultiScalesKey) && jf[MultiScalesKey].contains(DatasetsKey)) {
-            for (auto& elem : jf[MultiScalesKey][DatasetsKey]) {
-                if (elem.contains(PathKey) && elem.contains(CoordinateTransformationsKey) && elem[CoordinateTransformationsKey].contains(ScaleKey)) {
-                    scale_dirs.push_back(elem[PathKey]);
-                    vector<double> p_res = jf[CoordinateTransformationsKey][ScaleKey].get<vector<double>>();
+        if (!jf.is_null() && jf.contains(MultiScalesKey) && jf[MultiScalesKey][0].contains(DatasetsKey)) {
+            for (auto& elem : jf[MultiScalesKey][0][DatasetsKey]) {
+                if (elem.contains(PathKey)) {
+                    string path_val = elem[PathKey].get<string>();
+                    scale_dirs.push_back(s2ws(path_val));
+                    vector<double> p_res(3, -1.0);
+                    if (elem.contains(CoordinateTransformationsKey)) {
+                        for (auto& tr_elem : elem[CoordinateTransformationsKey]) {
+                            if (tr_elem.contains(ScaleKey)) {
+                                p_res = tr_elem[ScaleKey].get<vector<double>>();
+                                reverse(p_res.begin(), p_res.end());
+                            }
+                        }
+                    }
                     pix_res_array.push_back(p_res);
                 }
             }
@@ -1567,22 +1731,14 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
     }
     
     if (scale_dirs.empty()) {
-        std::regex scdir_pattern("^s\\d+$");
-        for (directory_iterator itr(root_path); itr != end_itr; ++itr)
-        {
-            if (is_directory(itr->status()))
-            {
-                if (regex_match(itr->path().filename().string(), scdir_pattern)) {
-                    scale_dirs.push_back(itr->path().filename().wstring());
-                    vector<double> p_res = vector<double>(3, -1.0);
-                    pix_res_array.push_back(p_res);
-                }
-            }
-        }
-    }
-
-    if (scale_dirs.empty()) {
         auto metadata_path = root_path / ".zarray";
+        if (is_url) {
+            string wxpath = metadata_path.generic_string();
+            if (DownloadFile(wxpath)) {
+                is_url = true;
+            }
+            metadata_path = wxpath;
+        }
         if (boost::filesystem::exists(metadata_path)) {
             scale_dirs.push_back(L".");
             vector<double> p_res = vector<double>(3, -1.0);
@@ -1600,185 +1756,218 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
     int orgd = 0;
     if (m_pyramid.size() < scale_dirs.size())
         m_pyramid.resize(scale_dirs.size());
+
     for (int j = 0; j < scale_dirs.size(); j++) {
         auto attrpath = root_path / scale_dirs[j] / ".zarray";
+        if (is_url) {
+            if (scale_dirs[j] == ".")
+                attrpath = root_path / ".zarray";
+            string wxpath = attrpath.generic_string();
+            if (DownloadFile(wxpath)) {
+                is_url = true;
+            }
+            attrpath = wxpath;
+        }
         DatasetAttributes* attr = parseDatasetMetadataZarr(attrpath.wstring());
 
-        LevelInfo& lvinfo = m_pyramid[j];
-        if (c == 0 && f == 0) {
-            lvinfo.endianness = attr->m_is_big_endian ? BRICK_ENDIAN_BIG : BRICK_ENDIAN_LITTLE;
-            lvinfo.is_row_major = attr->m_is_row_major;
-
-            lvinfo.imageW = attr->m_dimensions[2];
-
-            lvinfo.imageH = attr->m_dimensions[1];
-
-            lvinfo.imageD = attr->m_dimensions[0];
-
-            if (c == 0 && j == 0) {
-                orgw = lvinfo.imageW;
-                orgh = lvinfo.imageH;
-                orgd = lvinfo.imageD;
+        if (j == 0) {
+            if (attr->m_dimensions.size() >= 4)
+                m_imageinfo.nChannel = attr->m_dimensions[3];
+            if (attr->m_dimensions.size() >= 5)
+                m_imageinfo.nFrame = attr->m_dimensions[4];
+            if (attr->m_dimensions.size() <= 3) {
+                m_imageinfo.nFrame = 1;
+                m_imageinfo.nChannel = 1;
             }
-
-            lvinfo.file_type = attr->m_compression;
-            lvinfo.blosc_ctype = attr->m_blosc_param.ctype;
-            lvinfo.blosc_clevel = attr->m_blosc_param.clevel;
-            lvinfo.blosc_suffle = attr->m_blosc_param.suffle;
-            lvinfo.blosc_blocksize = attr->m_blosc_param.blocksize;
-
-            if (pix_res_array[j][0] > 0.0)
-                lvinfo.xspc = pix_res[0] * pix_res_array[j][0];
-            else
-                lvinfo.xspc = pix_res[0] / ((double)lvinfo.imageW / orgw);
-
-            if (pix_res_array[j][1] > 0.0)
-                lvinfo.yspc = pix_res[1] * pix_res_array[j][1];
-            else
-                lvinfo.yspc = pix_res[1] / ((double)lvinfo.imageH / orgh);
-
-            if (pix_res_array[j][2] > 0.0)
-                lvinfo.zspc = pix_res[2] * pix_res_array[j][2];
-            else
-                lvinfo.zspc = pix_res[2] / ((double)lvinfo.imageD / orgd);
-
-            if (attr->m_dataType == nrrdTypeChar || attr->m_dataType == nrrdTypeUChar)
-                lvinfo.bit_depth = 8;
-            else if (attr->m_dataType == nrrdTypeShort || attr->m_dataType == nrrdTypeUShort)
-                lvinfo.bit_depth = 16;
-            else if (attr->m_dataType == nrrdTypeInt || attr->m_dataType == nrrdTypeUInt || attr->m_dataType == nrrdTypeFloat)
-                lvinfo.bit_depth = 32;
-            else if (attr->m_dataType == nrrdTypeDouble)
-                lvinfo.bit_depth = 64;
-
-            lvinfo.nrrd_type = attr->m_dataType;
-
-            lvinfo.brick_baseW = attr->m_blockSize[0];
-
-            lvinfo.brick_baseH = attr->m_blockSize[1];
-
-            lvinfo.brick_baseD = attr->m_blockSize[2];
-
-            vector<wstring> lvpaths;
-            int ii, jj, kk;
-            int mx, my, mz, mx2, my2, mz2, ox, oy, oz;
-            double tx0, ty0, tz0, tx1, ty1, tz1;
-            double bx1, by1, bz1;
-            double dx0, dy0, dz0, dx1, dy1, dz1;
-            const int overlapx = 0;
-            const int overlapy = 0;
-            const int overlapz = 0;
-            size_t count = 0;
-            size_t zcount = 0;
-            for (kk = 0; kk < lvinfo.imageD; kk += lvinfo.brick_baseD)
-            {
-                if (kk) kk -= overlapz;
-                size_t ycount = 0;
-                for (jj = 0; jj < lvinfo.imageH; jj += lvinfo.brick_baseH)
-                {
-                    if (jj) jj -= overlapy;
-                    size_t xcount = 0;
-                    for (ii = 0; ii < lvinfo.imageW; ii += lvinfo.brick_baseW)
-                    {
-                        BrickInfo* binfo = new BrickInfo();
-
-                        if (ii) ii -= overlapx;
-                        mx = min(lvinfo.brick_baseW, lvinfo.imageW - ii);
-                        my = min(lvinfo.brick_baseH, lvinfo.imageH - jj);
-                        mz = min(lvinfo.brick_baseD, lvinfo.imageD - kk);
-
-                        mx2 = mx;
-                        my2 = my;
-                        mz2 = mz;
-
-                        // Compute Texture Box.
-                        tx0 = ii ? ((mx2 - mx + overlapx / 2.0) / mx2) : 0.0;
-                        ty0 = jj ? ((my2 - my + overlapy / 2.0) / my2) : 0.0;
-                        tz0 = kk ? ((mz2 - mz + overlapz / 2.0) / mz2) : 0.0;
-
-                        tx1 = 1.0 - overlapx / 2.0 / mx2;
-                        if (mx < lvinfo.brick_baseW) tx1 = 1.0;
-                        if (lvinfo.imageW - ii == lvinfo.brick_baseW) tx1 = 1.0;
-
-                        ty1 = 1.0 - overlapy / 2.0 / my2;
-                        if (my < lvinfo.brick_baseH) ty1 = 1.0;
-                        if (lvinfo.imageH - jj == lvinfo.brick_baseH) ty1 = 1.0;
-
-                        tz1 = 1.0 - overlapz / 2.0 / mz2;
-                        if (mz < lvinfo.brick_baseD) tz1 = 1.0;
-                        if (lvinfo.imageD - kk == lvinfo.brick_baseD) tz1 = 1.0;
-
-                        binfo->tx0 = tx0;
-                        binfo->ty0 = ty0;
-                        binfo->tz0 = tz0;
-                        binfo->tx1 = tx1;
-                        binfo->ty1 = ty1;
-                        binfo->tz1 = tz1;
-
-                        // Compute BBox.
-                        bx1 = min((ii + lvinfo.brick_baseW - overlapx / 2.0) / (double)lvinfo.imageW, 1.0);
-                        if (lvinfo.imageW - ii == lvinfo.brick_baseW) bx1 = 1.0;
-
-                        by1 = min((jj + lvinfo.brick_baseH - overlapy / 2.0) / (double)lvinfo.imageH, 1.0);
-                        if (lvinfo.imageH - jj == lvinfo.brick_baseH) by1 = 1.0;
-
-                        bz1 = min((kk + lvinfo.brick_baseD - overlapz / 2.0) / (double)lvinfo.imageD, 1.0);
-                        if (lvinfo.imageD - kk == lvinfo.brick_baseD) bz1 = 1.0;
-
-                        binfo->bx0 = ii == 0 ? 0 : (ii + overlapx / 2.0) / (double)lvinfo.imageW;
-                        binfo->by0 = jj == 0 ? 0 : (jj + overlapy / 2.0) / (double)lvinfo.imageH;
-                        binfo->bz0 = kk == 0 ? 0 : (kk + overlapz / 2.0) / (double)lvinfo.imageD;
-                        binfo->bx1 = bx1;
-                        binfo->by1 = by1;
-                        binfo->bz1 = bz1;
-
-                        ox = ii - (mx2 - mx);
-                        oy = jj - (my2 - my);
-                        oz = kk - (mz2 - mz);
-
-                        binfo->id = count++;
-                        binfo->x_start = ox;
-                        binfo->y_start = oy;
-                        binfo->z_start = oz;
-                        binfo->x_size = mx2;
-                        binfo->y_size = my2;
-                        binfo->z_size = mz2;
-
-                        binfo->fsize = 0;
-                        binfo->offset = 0;
-
-                        if (count > lvinfo.bricks.size())
-                            lvinfo.bricks.resize(count, NULL);
-
-                        lvinfo.bricks[binfo->id] = binfo;
-
-                        wstringstream wss;
-                        //wss << xcount << slash << ycount << slash << zcount;
-                        wss << zcount << slash << ycount << slash << xcount;
-                        lvpaths.push_back(wss.str());
-
-                        xcount++;
-                    }
-                    ycount++;
-                }
-                zcount++;
-            }
-            relpaths.push_back(lvpaths);
         }
 
-        if (f + 1 > lvinfo.filename.size())
-            lvinfo.filename.resize(f + 1);
-        if (c + 1 > lvinfo.filename[f].size())
-            lvinfo.filename[f].resize(c + 1);
-        if (relpaths[j].size() > lvinfo.filename[f][c].size())
-            lvinfo.filename[f][c].resize(relpaths[j].size(), NULL);
+        LevelInfo& lvinfo = m_pyramid[j];
 
-        for (int pid = 0; pid < relpaths[j].size(); pid++)
+		lvinfo.endianness = attr->m_is_big_endian ? BRICK_ENDIAN_BIG : BRICK_ENDIAN_LITTLE;
+		lvinfo.is_row_major = attr->m_is_row_major;
+
+		lvinfo.imageW = attr->m_dimensions[0];
+
+		lvinfo.imageH = attr->m_dimensions[1];
+
+		lvinfo.imageD = attr->m_dimensions[2];
+
+		if (j == 0) {
+			orgw = lvinfo.imageW;
+			orgh = lvinfo.imageH;
+			orgd = lvinfo.imageD;
+		}
+
+		lvinfo.file_type = attr->m_compression;
+		lvinfo.blosc_ctype = attr->m_blosc_param.ctype;
+		lvinfo.blosc_clevel = attr->m_blosc_param.clevel;
+		lvinfo.blosc_suffle = attr->m_blosc_param.suffle;
+		lvinfo.blosc_blocksize = attr->m_blosc_param.blocksize;
+
+		if (pix_res_array[j][0] > 0.0)
+			lvinfo.xspc = pix_res[0] * pix_res_array[j][0];
+		else
+			lvinfo.xspc = pix_res[0] / ((double)lvinfo.imageW / orgw);
+
+		if (pix_res_array[j][1] > 0.0)
+			lvinfo.yspc = pix_res[1] * pix_res_array[j][1];
+		else
+			lvinfo.yspc = pix_res[1] / ((double)lvinfo.imageH / orgh);
+
+		if (pix_res_array[j][2] > 0.0)
+			lvinfo.zspc = pix_res[2] * pix_res_array[j][2];
+		else
+			lvinfo.zspc = pix_res[2] / ((double)lvinfo.imageD / orgd);
+
+		if (attr->m_dataType == nrrdTypeChar || attr->m_dataType == nrrdTypeUChar)
+			lvinfo.bit_depth = 8;
+		else if (attr->m_dataType == nrrdTypeShort || attr->m_dataType == nrrdTypeUShort)
+			lvinfo.bit_depth = 16;
+		else if (attr->m_dataType == nrrdTypeInt || attr->m_dataType == nrrdTypeUInt || attr->m_dataType == nrrdTypeFloat)
+			lvinfo.bit_depth = 32;
+		else if (attr->m_dataType == nrrdTypeDouble)
+			lvinfo.bit_depth = 64;
+
+		lvinfo.nrrd_type = attr->m_dataType;
+
+		lvinfo.brick_baseW = attr->m_blockSize[0];
+
+		lvinfo.brick_baseH = attr->m_blockSize[1];
+
+		lvinfo.brick_baseD = attr->m_blockSize[2];
+
+		vector<wstring> lvpaths;
+		int ii, jj, kk;
+		int mx, my, mz, mx2, my2, mz2, ox, oy, oz;
+		double tx0, ty0, tz0, tx1, ty1, tz1;
+		double bx1, by1, bz1;
+		double dx0, dy0, dz0, dx1, dy1, dz1;
+		const int overlapx = 0;
+		const int overlapy = 0;
+		const int overlapz = 0;
+		size_t count = 0;
+		size_t zcount = 0;
+		for (kk = 0; kk < lvinfo.imageD; kk += lvinfo.brick_baseD)
+		{
+			if (kk) kk -= overlapz;
+			size_t ycount = 0;
+			for (jj = 0; jj < lvinfo.imageH; jj += lvinfo.brick_baseH)
+			{
+				if (jj) jj -= overlapy;
+				size_t xcount = 0;
+				for (ii = 0; ii < lvinfo.imageW; ii += lvinfo.brick_baseW)
+				{
+					BrickInfo* binfo = new BrickInfo();
+
+					if (ii) ii -= overlapx;
+					mx = min(lvinfo.brick_baseW, lvinfo.imageW - ii);
+					my = min(lvinfo.brick_baseH, lvinfo.imageH - jj);
+					mz = min(lvinfo.brick_baseD, lvinfo.imageD - kk);
+
+					mx2 = mx;
+					my2 = my;
+					mz2 = mz;
+
+					// Compute Texture Box.
+					tx0 = ii ? ((mx2 - mx + overlapx / 2.0) / mx2) : 0.0;
+					ty0 = jj ? ((my2 - my + overlapy / 2.0) / my2) : 0.0;
+					tz0 = kk ? ((mz2 - mz + overlapz / 2.0) / mz2) : 0.0;
+
+					tx1 = 1.0 - overlapx / 2.0 / mx2;
+					if (mx < lvinfo.brick_baseW) tx1 = 1.0;
+					if (lvinfo.imageW - ii == lvinfo.brick_baseW) tx1 = 1.0;
+
+					ty1 = 1.0 - overlapy / 2.0 / my2;
+					if (my < lvinfo.brick_baseH) ty1 = 1.0;
+					if (lvinfo.imageH - jj == lvinfo.brick_baseH) ty1 = 1.0;
+
+					tz1 = 1.0 - overlapz / 2.0 / mz2;
+					if (mz < lvinfo.brick_baseD) tz1 = 1.0;
+					if (lvinfo.imageD - kk == lvinfo.brick_baseD) tz1 = 1.0;
+
+					binfo->tx0 = tx0;
+					binfo->ty0 = ty0;
+					binfo->tz0 = tz0;
+					binfo->tx1 = tx1;
+					binfo->ty1 = ty1;
+					binfo->tz1 = tz1;
+
+					// Compute BBox.
+					bx1 = min((ii + lvinfo.brick_baseW - overlapx / 2.0) / (double)lvinfo.imageW, 1.0);
+					if (lvinfo.imageW - ii == lvinfo.brick_baseW) bx1 = 1.0;
+
+					by1 = min((jj + lvinfo.brick_baseH - overlapy / 2.0) / (double)lvinfo.imageH, 1.0);
+					if (lvinfo.imageH - jj == lvinfo.brick_baseH) by1 = 1.0;
+
+					bz1 = min((kk + lvinfo.brick_baseD - overlapz / 2.0) / (double)lvinfo.imageD, 1.0);
+					if (lvinfo.imageD - kk == lvinfo.brick_baseD) bz1 = 1.0;
+
+					binfo->bx0 = ii == 0 ? 0 : (ii + overlapx / 2.0) / (double)lvinfo.imageW;
+					binfo->by0 = jj == 0 ? 0 : (jj + overlapy / 2.0) / (double)lvinfo.imageH;
+					binfo->bz0 = kk == 0 ? 0 : (kk + overlapz / 2.0) / (double)lvinfo.imageD;
+					binfo->bx1 = bx1;
+					binfo->by1 = by1;
+					binfo->bz1 = bz1;
+
+					ox = ii - (mx2 - mx);
+					oy = jj - (my2 - my);
+					oz = kk - (mz2 - mz);
+
+					binfo->id = count++;
+					binfo->x_start = ox;
+					binfo->y_start = oy;
+					binfo->z_start = oz;
+					binfo->x_size = mx2;
+					binfo->y_size = my2;
+					binfo->z_size = mz2;
+
+					binfo->fsize = 0;
+					binfo->offset = 0;
+
+					if (count > lvinfo.bricks.size())
+						lvinfo.bricks.resize(count, NULL);
+
+					lvinfo.bricks[binfo->id] = binfo;
+
+					wstringstream wss;
+					//wss << xcount << slash << ycount << slash << zcount;
+					wss << zcount << slash << ycount << slash << xcount;
+					lvpaths.push_back(wss.str());
+
+					xcount++;
+				}
+				ycount++;
+			}
+			zcount++;
+		}
+		relpaths.push_back(lvpaths);
+
+        if (m_imageinfo.nFrame > lvinfo.filename.size())
+            lvinfo.filename.resize(m_imageinfo.nFrame);
+        for (int f = 0; f < lvinfo.filename.size(); f++) 
         {
-            boost::filesystem::path br_file_path(root_path / scale_dirs[j] / relpaths[j][pid]);
-            FLIVR::FileLocInfo* fi = nullptr;
-            fi = new FLIVR::FileLocInfo(br_file_path.wstring(), 0, 0, lvinfo.file_type, false, false, lvinfo.brick_baseW, lvinfo.brick_baseH, lvinfo.brick_baseD, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle, lvinfo.endianness, lvinfo.is_row_major);
-            lvinfo.filename[f][c][pid] = fi;
+            if (m_imageinfo.nChannel > lvinfo.filename[f].size())
+                lvinfo.filename[f].resize(m_imageinfo.nChannel);
+            for (int c = 0; c < lvinfo.filename[f].size(); c++)
+            {
+                if (relpaths[j].size() > lvinfo.filename[f][c].size())
+                    lvinfo.filename[f][c].resize(relpaths[j].size(), NULL);
+
+                for (int pid = 0; pid < relpaths[j].size(); pid++)
+                {
+                    boost::filesystem::path br_file_path(root_path);
+                    if (!is_url || scale_dirs[j] != ".")
+                        br_file_path = br_file_path / scale_dirs[j];
+                    if (attr->m_dimensions.size() >= 5)
+                        br_file_path = br_file_path / to_string(f);
+                    if (attr->m_dimensions.size() >= 4)
+                        br_file_path = br_file_path / to_string(c);
+                    br_file_path = br_file_path / relpaths[j][pid];
+                    FLIVR::FileLocInfo* fi = nullptr;
+                    fi = new FLIVR::FileLocInfo(is_url ? br_file_path.generic_wstring() : br_file_path.wstring(), 0, 0, lvinfo.file_type, is_url, false, lvinfo.brick_baseW, lvinfo.brick_baseH, lvinfo.brick_baseD, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle, lvinfo.endianness, lvinfo.is_row_major);
+                    lvinfo.filename[f][c][pid] = fi;
+                }
+            }
         }
 
         delete attr;
@@ -2039,10 +2228,10 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
     size_t ext_pos = zarr_path.find_last_of(L".");
     wstring ext = zarr_path.substr(ext_pos + 1);
     transform(ext.begin(), ext.end(), ext.begin(), towlower);
-    wstring dir_name = zarr_path.substr(0, zarr_path.find_last_of(slash) + 1);
+    wstring dir_name = zarr_path.substr(0, zarr_path.find_last_of(L"/\\") + 1);
 
     if (dir_name.size() > 1 && ext == L"zarr")
-        dir_name = zarr_path + slash;
+        dir_name = zarr_path;
 
 
     boost::filesystem::path file_path(zarr_path);
@@ -2054,47 +2243,111 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
     if (output.size() > 0)
         output.clear();
 
+    bool skip = false;
     std::regex pattern(R"((^|\bs)\d+$)");
 
-    fs::recursive_directory_iterator ite(root_path.string());
-    for (const auto& entry : ite) {
-        try {
-            if (fs::is_directory(entry.status())) {
-                if (std::regex_match(entry.path().filename().string(), pattern)) {
-                    ite.disable_recursion_pending();
-                    continue;
-                }
+    if (!exists(dir_name)) {
+        slash = L'/';
+        auto root_attrpath = root_path / ".zattrs";
+        string wxpath = root_attrpath.generic_string();
+        if (DownloadFile(wxpath)) {
 
-                auto attrpath = entry.path() / ".zattrs";
-                std::ifstream ifs(attrpath.string());
-                if (ifs.is_open()) {
-                    auto jf = json::parse(ifs);
-                    if (!jf.is_null() && jf.contains(MultiScalesKey)) {
+            bool bioformats = false;
+            std::ifstream root_ifs(wxpath);
+            if (root_ifs.is_open()) {
+                auto jf = json::parse(root_ifs);
+                if (!jf.is_null() && jf.contains(BioformatsKey)) {
+                    bioformats = true;
+                }
+            }
+            if (bioformats) {
+                int ch = 0;
+                bool end = false;
+                string str_path;
+                do {
+                    auto ch_attrs_path = root_path / to_string(ch) / ".zattrs";
+                    str_path = ch_attrs_path.generic_string();
+                    end = DownloadFile(str_path);
+                    try {
+                        std::ifstream ch_ifs(str_path);
+                        if (ch_ifs.is_open()) {
+                            auto jf = json::parse(ch_ifs);
+                            if (jf.is_null())
+                                end = false;
+                        }
+                    }
+                    catch (...) {
+                        end = false;
+                    }
+                    if (end) {
+                        auto ch_dir_path = root_path / to_string(ch);
+                        output.push_back(ch_dir_path.generic_wstring());
+                    }
+                    ch++;
+                } while (end);
+
+                skip = true;
+                slash = L'/';
+                dir_name = dir_name + slash;
+            }
+            else {
+                output.push_back(root_path.wstring());
+                skip = true;
+                slash = L'/';
+                dir_name = dir_name + slash;
+            }
+        }
+    }
+    
+    if (!skip) {
+        auto root_attrpath = root_path / ".zattrs";
+        std::ifstream root_ifs(root_attrpath.string());
+        if (root_ifs.is_open()) {
+            auto jf = json::parse(root_ifs);
+            if (!jf.is_null() && jf.contains(MultiScalesKey)) {
+                output.push_back(root_path.wstring());
+                skip = true;
+            }
+        }
+        auto root_arraypath = root_path / ".zarray";
+        if (exists(root_arraypath)) {
+            output.push_back(root_path.wstring());
+            skip = true;
+        }
+    }
+
+    if (!skip) {
+        fs::recursive_directory_iterator ite(root_path.string());
+        for (const auto& entry : ite) {
+            try {
+                if (fs::is_directory(entry.status())) {
+                    auto attrpath = entry.path() / ".zattrs";
+                    std::ifstream ifs(attrpath.string());
+                    if (ifs.is_open()) {
+                        auto jf = json::parse(ifs);
+                        if (!jf.is_null()) {
+                            if (jf.contains(MultiScalesKey)) {
+                                output.push_back(entry.path());
+                                ite.disable_recursion_pending();
+                                continue;
+                            }
+                            if (jf.contains(LabelsKey)) {
+                                ite.disable_recursion_pending();
+                                continue;
+                            }
+                        }
+                    }
+                    auto arraypath = entry.path() / ".zarray";
+                    if (exists(arraypath)) {
                         output.push_back(entry.path());
                         ite.disable_recursion_pending();
                         continue;
                     }
                 }
-
-                for (const auto& sub_entry : fs::directory_iterator(entry.path())) {
-                    try {
-                        if (fs::is_directory(sub_entry.status())) {
-                            std::string dir_name = sub_entry.path().filename().string();
-                            if (std::regex_match(dir_name, pattern)) {
-                                output.push_back(entry.path());
-                                ite.disable_recursion_pending();
-                                break;
-                            }
-                        }
-                    }
-                    catch (const fs::filesystem_error & ex) {
-                        std::cerr << "Error: " << ex.what() << std::endl;
-                    }
-                }
             }
-        }
-        catch (const fs::filesystem_error & ex) {
-            std::cerr << "Error: " << ex.what() << std::endl;
+            catch (const fs::filesystem_error & ex) {
+                std::cerr << "Error: " << ex.what() << std::endl;
+            }
         }
     }
 
@@ -2193,6 +2446,7 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
     DatasetAttributes* ret = new DatasetAttributes();
 
     ret->m_dimensions = jf[ShapeKey].get<vector<long>>();
+    reverse(ret->m_dimensions.begin(), ret->m_dimensions.end());
 
     string str = jf[ZarrDataTypeKey].get<string>();
     ret->m_is_big_endian = (str[0] == '>');
@@ -2235,6 +2489,7 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
     }
 
     ret->m_blockSize = jf[ChunksKey].get<vector<int>>();
+    reverse(ret->m_blockSize.begin(), ret->m_blockSize.end());
 
     ret->m_pix_res = vector<double>(3, -1.0);
     

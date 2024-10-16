@@ -8002,14 +8002,23 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 			}
              */
             
-            if (type == LOAD_TYPE_BRKXML && vd->GetMaxValue() == 65535)
+            if (type == LOAD_TYPE_BRKXML)
             {
-                vd->SetOffset(4096.0/65535.0);
+				double ch_offset = ((BRKXMLReader*)reader)->getChannelOffset(i);
+				if(ch_offset > 0.0)
+					vd->SetOffset(ch_offset);
+				else if (vd->GetMaxValue() == 65535)
+					vd->SetOffset(4096.0/65535.0);
             }
 
 			//get excitation wavelength
 			double wavelength = reader->GetExcitationWavelength(i);
-			if (wavelength > 0.0) {
+			double rr, gg, bb;
+			if (type == LOAD_TYPE_BRKXML && ((BRKXMLReader*)reader)->getChannelColor(i, rr, gg, bb)) {
+				FLIVR::Color vcolor = Color(rr, gg, bb);
+				vd->SetColor(vcolor);
+			}
+			else if (wavelength > 0.0) {
 				FLIVR::Color col = GetWavelengthColor(wavelength);
 				vd->SetColor(col);
 			}
@@ -10457,14 +10466,23 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             }
              */
             
-            if (type == LOAD_TYPE_BRKXML && vd->GetMaxValue() == 65535)
-            {
-                vd->SetOffset(4096.0/65535.0);
-            }
+			if (type == LOAD_TYPE_BRKXML)
+			{
+				double ch_offset = ((BRKXMLReader*)reader)->getChannelOffset(i);
+				if (ch_offset > 0.0)
+					vd->SetOffset(ch_offset);
+				else if (vd->GetMaxValue() == 65535)
+					vd->SetOffset(4096.0 / 65535.0);
+			}
             
             //get excitation wavelength
             double wavelength = reader->GetExcitationWavelength(i);
-            if (wavelength > 0.0) {
+			double rr, gg, bb;
+			if (type == LOAD_TYPE_BRKXML && ((BRKXMLReader*)reader)->getChannelColor(i, rr, gg, bb)) {
+				FLIVR::Color vcolor = Color(rr, gg, bb);
+				vd->SetColor(vcolor);
+			}
+            else if (wavelength > 0.0) {
                 FLIVR::Color col = m_pdl->m_dm->GetWavelengthColor(wavelength);
                 vd->SetColor(col);
             }

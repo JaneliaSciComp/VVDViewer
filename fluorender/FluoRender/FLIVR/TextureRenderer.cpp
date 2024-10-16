@@ -1965,7 +1965,7 @@ namespace FLIVR
 					if (updated)
 						*updated = true;
 				}
-				else if (!interactive_)
+				else if (!interactive_ && tex_->GetFileName(brick->getID())->isvalid)
 				{
 					if (ms_pThreadCS)
 						ms_pThreadCS->Leave();
@@ -2042,7 +2042,7 @@ namespace FLIVR
 		if (mem_swap_ &&
 			start_update_loop_ &&
 			!done_update_loop_ &&
-			set_drawn && (result || interactive_))
+			set_drawn && (result || interactive_ || !tex_->GetFileName(brick->getID())->isvalid))
 		{
 			if (!brick->drawn(mode))
 			{

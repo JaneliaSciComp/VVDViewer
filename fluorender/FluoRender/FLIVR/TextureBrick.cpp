@@ -1313,6 +1313,7 @@ z
 			   }
 			   else
 			   {
+                   cerr << "curl failed to load " << ws2s(finfo->filename) << endl;
 				   if(wxFileExists(cfname)) wxRemoveFile(cfname);
 				   return false;
 			   }
@@ -1958,7 +1959,7 @@ z
     
     bool TextureBrick::blosc_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
     {
-        blosc2_dparams params;
+        blosc2_dparams params = { 0 };
         params.nthreads = 1;
         params.schunk = NULL;
         
