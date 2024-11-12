@@ -87,8 +87,11 @@ namespace vks
 
 	void VulkanDevice::clear_tex_pool() 
 	{
+		for (int j = int(tex_pool.size() - 1); j >= 0; j--)
+			available_mem += tex_pool[j].tex->memsize / 1.04e6;
 		tex_pool.clear();
-		available_mem = mem_limit;
+
+		//available_mem = mem_limit;
 	}
 
 	bool VulkanDevice::return_brick(const TexParam &texp)

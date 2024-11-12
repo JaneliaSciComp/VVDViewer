@@ -71,6 +71,8 @@ namespace FLIVR
 		MeshRenderer(GLMmodel* data);
 		MeshRenderer(MeshRenderer&);
 		~MeshRenderer();
+
+		void ReleaseVertexBuffers();
         
         void set_model(GLMmodel* data);
         void init_palette();

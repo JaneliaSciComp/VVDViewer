@@ -5661,11 +5661,15 @@ GLMmodel* MeshData::GetMesh()
 void MeshData::SetDisp(bool disp)
 {
 	m_disp = disp;
+	if (!m_disp && GetMR())
+		GetMR()->ReleaseVertexBuffers();
 }
 
 void MeshData::ToggleDisp()
 {
 	m_disp = !m_disp;
+	if (!m_disp && GetMR())
+		GetMR()->ReleaseVertexBuffers();
 }
 
 bool MeshData::GetDisp()

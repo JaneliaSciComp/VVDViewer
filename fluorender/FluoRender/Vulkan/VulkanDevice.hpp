@@ -584,6 +584,25 @@ namespace vks
 			return buffer->bind();
 		}
 
+		VkResult createBufferInPool(VkBufferUsageFlags usageFlags, VkMemoryPropertyFlags memoryPropertyFlags, vks::Buffer* buffer, VkDeviceSize size, void* data = nullptr)
+		{
+			VkResult result = createBuffer(usageFlags, memoryPropertyFlags, buffer, size, data);
+			buffer->in_pool = true;
+			available_mem -= buffer->size / 1.04e6;
+
+			return result;
+		}
+
+		void destroyBufferInPool(vks::Buffer* buffer)
+		{
+			if (!buffer)
+				return;
+			
+			buffer->destroy();
+			if (buffer->in_pool)
+				available_mem += buffer->size / 1.04e6;
+		}
+
 		/**
 		* Copy buffer data from src to dst using VkCmdCopyBuffer
 		* 

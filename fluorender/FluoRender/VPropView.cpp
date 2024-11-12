@@ -257,21 +257,11 @@ wxPanel(parent, id, pos, size,style, name),
 	int spc_formsize = 50;
 	int sb_formsize = 55;
 #else
-	int spc_formsize = 60;
-	int sb_formsize = 80;
+	int spc_formsize = 50;
+	int sb_formsize = 60;
 #endif
 
-	//1st line
-	m_sizer_0 = new wxBoxSizer(wxHORIZONTAL);
-	st = new wxStaticText(this, 0, ":Max Value",
-		wxDefaultPosition, wxSize(110, 20));
-	m_max_text = new vpTextCtrl(m_frame, this, ID_MaxText, "1.00",
-		wxDefaultPosition, wxSize(col2_text_w, 20), wxTE_PROCESS_ENTER, vald_fp2);
-	m_sizer_0->AddStretchSpacer();
-	m_sizer_0->Add(5, 22, 0);
-	m_sizer_0->Add(m_max_text, 0, wxALIGN_CENTER);
-	m_sizer_0->Add(st, 0, wxALIGN_CENTER);
-	
+	//1st line	
 	//gamma
 	st = new wxStaticText(this, 0, ":Gamma",
 		wxDefaultPosition, wxSize(110, 20));
@@ -446,7 +436,6 @@ wxPanel(parent, id, pos, size,style, name),
 
 	//6th line
 	//left sliders
-	sizer_sl_left->Add(m_sizer_0, 0, wxEXPAND);
 	sizer_sl_left->Add(sizer_l1, 0, wxEXPAND);
 	sizer_sl_left->Add(sizer_l2, 0, wxEXPAND);
 	sizer_sl_left->Add(sizer_l3, 0, wxEXPAND);
@@ -466,6 +455,14 @@ wxPanel(parent, id, pos, size,style, name),
 	sizer_sliders->Add(m_sizer_sl_righ, 5, wxEXPAND);
 
 	//bottom line
+	st = new wxStaticText(this, 0, "Max Value:");
+	m_max_text = new vpTextCtrl(m_frame, this, ID_MaxText, "1.00",
+		wxDefaultPosition, wxSize(80, 20), wxTE_PROCESS_ENTER, vald_fp2);
+
+	sizer_b->Add(10, 5, 0);
+	sizer_b->Add(st, 0, wxALIGN_CENTER, 0);
+	sizer_b->Add(m_max_text, 0, wxALIGN_CENTER, 0);
+
 	//color
 	st = new wxStaticText(this, 0, "Color:");
 	m_color_text = new wxTextCtrl(this, ID_ColorText, "255 , 255 , 255",
@@ -485,22 +482,22 @@ wxPanel(parent, id, pos, size,style, name),
 	//spaceings
 	//x
 	st = new wxStaticText(this, 0, "X:");
-	m_space_x_text = new wxTextCtrl(this, ID_SpaceXText, "1.000000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
+	m_space_x_text = new wxTextCtrl(this, ID_SpaceXText, "1.000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
 	sizer_b->Add(10, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_x_text, 0, wxALIGN_CENTER);
 	//y
 	st = new wxStaticText(this, 0, "Y:");
-	m_space_y_text = new wxTextCtrl(this, ID_SpaceYText, "1.000000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
+	m_space_y_text = new wxTextCtrl(this, ID_SpaceYText, "1.000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
 	sizer_b->Add(5, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_y_text, 0, wxALIGN_CENTER);
 	//z
 	st = new wxStaticText(this, 0, "Z:");
-	m_space_z_text = new wxTextCtrl(this, ID_SpaceZText, "1.000000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
+	m_space_z_text = new wxTextCtrl(this, ID_SpaceZText, "1.000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
 	sizer_b->Add(5, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_z_text, 0, wxALIGN_CENTER);
@@ -511,7 +508,7 @@ wxPanel(parent, id, pos, size,style, name),
 	m_scale_te_chk = new wxCheckBox(this, ID_ScaleTextChk, "Text:",
 		wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
 	m_scale_text = new wxTextCtrl(this, ID_ScaleText, "",
-		wxDefaultPosition, wxSize(sb_formsize, 20), 0, vald_fp8);
+		wxDefaultPosition, wxSize(sb_formsize, 20), 0, vald_fp3);
 	m_scale_cmb = new wxComboBox(this, ID_ScaleCmb, "",
 		wxDefaultPosition, wxSize(unit_comb_w, 30), 0, NULL, wxCB_READONLY);
 	m_scale_cmb->Append("nm");
@@ -872,7 +869,7 @@ void VPropView::GetSettings()
 	//spacings
 	double spcx, spcy, spcz;
 	m_vd->GetSpacings(spcx, spcy, spcz, 0);
-	int pr = 6;
+	int pr = 3;
 /*	double minspclog10 = log10(min(min(spcx, spcy), spcz));
 	if (minspclog10 <= -2.0)
 		pr = 3 - ((int)minspclog10 + 1.0);
@@ -909,7 +906,7 @@ void VPropView::GetSettings()
 		{
 			m_scale_cmb->Select(vrv->m_glview->m_sb_unit);
 			dval = vrv->GetScaleBarLen();
-			m_scale_text->ChangeValue(wxString::Format("%.8f", dval));
+			m_scale_text->ChangeValue(wxString::Format("%.3f", dval));
 			bool scale_check = vrv->m_glview->m_disp_scale_bar;
 			m_scale_chk->SetValue(scale_check);
 			m_scale_te_chk->SetValue(vrv->m_glview->m_disp_scale_bar_text);

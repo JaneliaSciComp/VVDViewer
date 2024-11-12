@@ -162,12 +162,19 @@ namespace FLIVR
 				delete planes_[i];
 		}
 		
-		for (auto &vb : m_vertbufs)
-		{
-			vb.vertexBuffer.destroy();
-			vb.indexBuffer.destroy();
-		}
+		ReleaseVertexBuffers();
 	}
+	
+	void MeshRenderer::ReleaseVertexBuffers()
+	{
+		for (auto& vb : m_vertbufs)
+		{
+			device_->destroyBufferInPool(&vb.vertexBuffer);
+			device_->destroyBufferInPool(&vb.indexBuffer);
+		}
+		update_ = true;
+	}
+
 
 bool MeshRenderer::get_submesh_label_state(int id)
 {
@@ -2046,14 +2053,14 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
                     MeshVertexBuffers v;
                     if (!verts.empty() && !ids.empty())
                     {
-                        VK_CHECK_RESULT(device_->createBuffer(
+                        VK_CHECK_RESULT(device_->createBufferInPool(
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                             &v.vertexBuffer,
                             verts.size() * sizeof(float)));
                         device_->UploadData2Buffer(verts.data(), &v.vertexBuffer, 0, verts.size() * sizeof(float));
 
-                        VK_CHECK_RESULT(device_->createBuffer(
+                        VK_CHECK_RESULT(device_->createBufferInPool(
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                             &v.indexBuffer,
@@ -2072,14 +2079,14 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		MeshVertexBuffers v;
 		if (!verts.empty() && !ids.empty())
 		{
-			VK_CHECK_RESULT(device_->createBuffer(
+			VK_CHECK_RESULT(device_->createBufferInPool(
 				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				&v.vertexBuffer,
 				verts.size() * sizeof(float)));
 			device_->UploadData2Buffer(verts.data(), &v.vertexBuffer, 0, verts.size() * sizeof(float));
 
-			VK_CHECK_RESULT(device_->createBuffer(
+			VK_CHECK_RESULT(device_->createBufferInPool(
 				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				&v.indexBuffer,
@@ -2088,6 +2095,8 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		}
 		v.indexCount = ids.size();
 		m_vertbufs.push_back(v);
+
+		update_ = false;
 	}
 
 	void MeshRenderer::draw(const std::unique_ptr<vks::VFrameBuffer>& framebuf, bool clear_framebuf)
@@ -2099,8 +2108,11 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		if (update_)
 		{
 			update();
-			update_ = false;
 		}
+
+		bool destroy_buffers = false;
+		if (device_->available_mem < 0)
+			destroy_buffers = true;
 
 		bool tex = data_->hastexture || (data_->groups && data_->groups->next);
 
@@ -2341,6 +2353,10 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		// Submit to the queue
 		VK_CHECK_RESULT(vkQueueSubmit(device_->queue, 1, &submitInfo, VK_NULL_HANDLE));
 		
+		if (destroy_buffers) {
+			vkQueueWaitIdle(device_->queue);
+			ReleaseVertexBuffers();
+		}
 	}
 
 	void MeshRenderer::draw_wireframe(const std::unique_ptr<vks::VFrameBuffer>& framebuf, bool clear_framebuf)

@@ -1421,6 +1421,7 @@ bool VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 	int count = 0;
 	if (TextureRenderer::get_mem_swap() && m_mesh_rendering_progress > 0)
 		clear_framebuf = false;
+
 	for (int i=0; i<(int)m_layer_list.size() ; i++)
 	{
 		if (!m_layer_list[i])
@@ -1434,7 +1435,7 @@ bool VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
 				if (TextureRenderer::get_mem_swap() && count <= m_mesh_rendering_progress)
 					continue;
 
-                bool cur_draw_bounds = false;
+				bool cur_draw_bounds = false;
                 if (m_capture)
                 {
                     cur_draw_bounds = md->GetDrawBounds();
@@ -1986,6 +1987,7 @@ void VRenderVulkanView::DrawVolumesDP()
 					m_dp_fbo_list.clear();
 					m_dp_ctex_list.clear();
 					m_dp_tex_list.clear();
+					m_peeling_layer_progress = 0;
 				}
 
 				if (m_dp_fbo_list.size() < dptexnum)
