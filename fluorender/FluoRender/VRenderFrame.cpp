@@ -1415,7 +1415,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				std::filesystem::path root = root_path_wstr;
 				std::filesystem::path data_path = p;
 
-				wxString key = std::filesystem::relative(p, root);
+				wxString key(std::filesystem::relative(p, root));
 				list.Add(key);
 			}
 			if (zpaths.size() >= 2)
@@ -1473,7 +1473,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				std::filesystem::path root = root_path_wstr;
 				std::filesystem::path data_path = p;
 				
-				wxString key = std::filesystem::relative(p, root);
+				wxString key(std::filesystem::relative(p, root));
                 list.Add(key);
             }
             

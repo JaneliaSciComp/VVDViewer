@@ -376,8 +376,15 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   mark_as_advanced(ZSTD_INCLUDE_DIR ZSTD_LIBRARY)
   include_directories(${ZSTD_INCLUDE_DIR})
 else()
-  find_package(ZSTD REQUIRED)
-  include_directories(${ZSTD_INCLUDE_DIR})
+find_path(ZSTD_INCLUDE_DIR NAMES zstd.h)
+find_library(ZSTD_LIBRARY NAMES zstd)
+include(FindPackageHandleStandardArgs)
+FIND_PACKAGE_HANDLE_STANDARD_ARGS(
+	  ZSTD DEFAULT_MSG
+	  ZSTD_LIBRARY ZSTD_INCLUDE_DIR)
+
+mark_as_advanced(ZSTD_INCLUDE_DIR ZSTD_LIBRARY)
+include_directories(${ZSTD_INCLUDE_DIR})
 endif()
 
 #freetype
