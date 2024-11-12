@@ -1240,11 +1240,14 @@ namespace FLIVR
 		int bnum = bricks->size();
 		if (bnum <= 0) return NULL;
 
+		if (!this->data_[0])
+			return NULL;
+
 		size_t imageW=0, imageH=0, imageD=0;
 		get_dimensions(imageW, imageH, imageD, lv);
 		double xspc = 1.0, yspc = 1.0, zspc = 1.0;
 		get_spacings(xspc, yspc, zspc, lv);
-		size_t nbyte = nb_[0];
+		size_t nbyte = this->data_[0]->getBytesPerSample();
 		if (w == 0) w = imageW;
 		if (h == 0) h = imageH;
 		if (d == 0) d = imageD;

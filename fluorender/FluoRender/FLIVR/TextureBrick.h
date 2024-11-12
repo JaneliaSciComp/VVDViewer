@@ -137,31 +137,28 @@ namespace FLIVR {
 		int getBytesPerSample() {
 			int ret = 0;
 			if (m_nrrd) {
-				if (m_nrrd->data)
+				switch (m_nrrd->type)
 				{
-					switch (m_nrrd->type)
-					{
-					case nrrdTypeChar:
-					case nrrdTypeUChar:
-						ret = 1;
-						break;
-					case nrrdTypeShort:
-					case nrrdTypeUShort:
-						ret = 2;
-						break;
-					case nrrdTypeInt:
-					case nrrdTypeUInt:
-					case nrrdTypeFloat:
-						ret = 4;
-						break;
-					case nrrdTypeLLong:
-					case nrrdTypeULLong:
-					case nrrdTypeDouble:
-						ret = 8;
-						break;
-					default:
-						ret = 0;
-					}
+				case nrrdTypeChar:
+				case nrrdTypeUChar:
+					ret = 1;
+					break;
+				case nrrdTypeShort:
+				case nrrdTypeUShort:
+					ret = 2;
+					break;
+				case nrrdTypeInt:
+				case nrrdTypeUInt:
+				case nrrdTypeFloat:
+					ret = 4;
+					break;
+				case nrrdTypeLLong:
+				case nrrdTypeULLong:
+				case nrrdTypeDouble:
+					ret = 8;
+					break;
+				default:
+					ret = 0;
 				}
 			}
 			return ret;

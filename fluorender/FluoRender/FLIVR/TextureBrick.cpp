@@ -1133,6 +1133,10 @@ z
 	   char *tmp = NULL;
 	   size_t tmpsize;
 	   read_brick_without_decomp(tmp, tmpsize, &tmpinfo);
+
+       if (!tmp)
+           return result;
+
 	   if (finfo->type == BRICK_FILE_TYPE_RAW)
        {
            data = tmp;
@@ -1418,6 +1422,9 @@ z
 
    bool TextureBrick::decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
    {
+       if (!in || !out)
+           return false;
+
        if      (type == BRICK_FILE_TYPE_N5RAW) return raw_decompressor(out, in, out_size, in_size, true, nb, w, h, d, n5_w, n5_h, n5_d, endianness, is_row_major);
 	   else if (type == BRICK_FILE_TYPE_JPEG) return jpeg_decompressor(out, in, out_size, in_size);
 	   else if (type == BRICK_FILE_TYPE_ZLIB) return zlib_decompressor(out, in, out_size, in_size);

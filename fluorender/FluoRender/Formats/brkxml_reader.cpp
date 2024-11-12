@@ -518,6 +518,13 @@ void BRKXMLReader::ReadLevel(tinyxml2::XMLElement* lvNode, LevelInfo &lvinfo)
 
 	lvinfo.bit_depth = STOI(lvNode->Attribute("bitDepth"));
 
+    if (lvinfo.bit_depth == 8)
+        lvinfo.nrrd_type = nrrdTypeUChar;
+    else if (lvinfo.bit_depth == 16)
+        lvinfo.nrrd_type = nrrdTypeUShort;
+    else if (lvinfo.bit_depth == 32)
+        lvinfo.nrrd_type = nrrdTypeFloat;
+
 	if (lvNode->Attribute("FileType"))
 	{
 		strValue = lvNode->Attribute("FileType");
