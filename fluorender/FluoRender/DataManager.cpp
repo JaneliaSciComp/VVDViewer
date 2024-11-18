@@ -3598,6 +3598,13 @@ void VolumeData::GetMaterial(double &amb, double &diff, double &spec, double &sh
 	shine = m_mat_shine;
 }
 
+double VolumeData::GetLowShading()
+{
+	double amb, diff, spec, shine;
+	GetMaterial(amb, diff, spec, shine);
+	return amb;
+}
+
 void VolumeData::SetLowShading(double dVal)
 {
 	double amb, diff, spec, shine;

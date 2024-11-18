@@ -257,7 +257,7 @@ wxPanel(parent, id, pos, size,style, name),
 	int spc_formsize = 50;
 	int sb_formsize = 55;
 #else
-	int spc_formsize = 50;
+	int spc_formsize = 60;
 	int sb_formsize = 60;
 #endif
 
@@ -482,22 +482,22 @@ wxPanel(parent, id, pos, size,style, name),
 	//spaceings
 	//x
 	st = new wxStaticText(this, 0, "X:");
-	m_space_x_text = new wxTextCtrl(this, ID_SpaceXText, "1.000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
+	m_space_x_text = new wxTextCtrl(this, ID_SpaceXText, "1.000000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
 	sizer_b->Add(10, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_x_text, 0, wxALIGN_CENTER);
 	//y
 	st = new wxStaticText(this, 0, "Y:");
-	m_space_y_text = new wxTextCtrl(this, ID_SpaceYText, "1.000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
+	m_space_y_text = new wxTextCtrl(this, ID_SpaceYText, "1.000000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
 	sizer_b->Add(5, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_y_text, 0, wxALIGN_CENTER);
 	//z
 	st = new wxStaticText(this, 0, "Z:");
-	m_space_z_text = new wxTextCtrl(this, ID_SpaceZText, "1.000",
-		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp3);
+	m_space_z_text = new wxTextCtrl(this, ID_SpaceZText, "1.000000",
+		wxDefaultPosition, wxSize(spc_formsize, 20), 0, vald_fp6);
 	sizer_b->Add(5, 5, 0);
 	sizer_b->Add(st, 0, wxALIGN_CENTER);
 	sizer_b->Add(m_space_z_text, 0, wxALIGN_CENTER);
@@ -521,7 +521,7 @@ wxPanel(parent, id, pos, size,style, name),
 		wxDefaultPosition, wxSize(digit_comb_w, 30), 0, NULL, wxCB_READONLY);
 	for (int c = 0; c <= 8; c++)
 		m_scale_digit_cmb->Append(wxString::Format(wxT(" %i"), c));
-	m_scale_digit_cmb->Select(2);
+	m_scale_digit_cmb->Select(0);
 	
 	m_scale_lenfix_chk = new wxCheckBox(this, ID_ScaleLenFixChk, "Fix length:",
 		wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
@@ -644,6 +644,8 @@ void VPropView::GetSettings()
 	wxString str;
 	double dval = 0.0;
 	int ival = 0;
+
+	SetEvtHandlerEnabled(false);
 
 	//maximum value
 	m_max_val = m_vd->GetMaxValue();
@@ -848,6 +850,17 @@ void VPropView::GetSettings()
 	bool shading = m_vd->GetVR()->get_shading();
 	m_shading_enable_chk->SetValue(shading);
 
+	if (!alpha || !shading)
+	{
+		m_low_shading_sldr->Disable();
+		m_low_shading_text->Disable();
+	}
+	else
+	{
+		m_low_shading_sldr->Enable();
+		m_low_shading_text->Enable();
+	}
+
 	//shadow
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_shadow_text->GetValidator()))
 		vald_fp->SetRange(0.0, 100.0);
@@ -869,7 +882,7 @@ void VPropView::GetSettings()
 	//spacings
 	double spcx, spcy, spcz;
 	m_vd->GetSpacings(spcx, spcy, spcz, 0);
-	int pr = 3;
+	int pr = 6;
 /*	double minspclog10 = log10(min(min(spcx, spcy), spcz));
 	if (minspclog10 <= -2.0)
 		pr = 3 - ((int)minspclog10 + 1.0);
@@ -1098,6 +1111,8 @@ void VPropView::GetSettings()
 		m_depth_chk->SetValue(true);
 	else
 		m_depth_chk->SetValue(false);
+
+	SetEvtHandlerEnabled(true);
 
 	UpdateUIsROI();
 
@@ -1565,7 +1580,7 @@ void VPropView::OnLuminanceText(wxCommandEvent &event)
 	else
 	{
 		str.ToLong(&ival);
-		double val = double(ival) / m_max_val;
+		val = double(ival) / m_max_val;
 		m_luminance_sldr->SetValue(ival);
 	}
 
@@ -1836,8 +1851,11 @@ void VPropView::OnShadingEnable(wxCommandEvent &event)
 
 	if (shading)
 	{
-		m_low_shading_sldr->Enable();
-		m_low_shading_text->Enable();
+		if (m_vd && m_vd->GetEnableAlpha())
+		{
+			m_low_shading_sldr->Enable();
+			m_low_shading_text->Enable();
+		}
 	}
 	else
 	{

@@ -779,6 +779,8 @@ void ClippingView::GetSettings()
     if (planes->size()!=6)    //it has to be 6
         return;
 
+	SetEvtHandlerEnabled(false);
+
 	int resx_n, resy_n, resz_n;
     double bdw, bdh, bdd;
     resx_n = resy_n = resz_n = 0;
@@ -962,6 +964,8 @@ void ClippingView::GetSettings()
 	m_z2_clip_sldr->SetValue(val);
 	str = wxString::Format("%d", val);
 	m_z2_clip_text->ChangeValue(str);
+
+	SetEvtHandlerEnabled(true);
     
     VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
     if (vrender_frame)

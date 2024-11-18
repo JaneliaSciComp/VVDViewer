@@ -980,8 +980,23 @@ void RecorderDlg::InsertKey(int index, double duration, int interpolation)
 			interpolator->AddKey(flkey);
 
 			keycode.l2 = 0;
+			keycode.l2_name = "alpha_enable";
+			flkeyB = new FlKeyBoolean(keycode, vd->GetEnableAlpha());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
 			keycode.l2_name = "alpha";
 			flkey = new FlKeyDouble(keycode, vd->GetAlpha());
+			interpolator->AddKey(flkey);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "shading_enable";
+			flkeyB = new FlKeyBoolean(keycode, vd->GetShading());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "shading";
+			flkey = new FlKeyDouble(keycode, vd->GetLowShading());
 			interpolator->AddKey(flkey);
 
 			keycode.l2 = 0;
