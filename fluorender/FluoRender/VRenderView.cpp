@@ -707,7 +707,7 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_fix_sclbar(false),
 	m_fixed_sclbar_len(0.0),
 	m_fixed_sclbar_fac(0.0),
-	m_sclbar_digit(3),
+	m_sclbar_digit(0),
 	m_clear_final_buffer(false),
     m_refresh(false),
 	m_refresh_start_loop(false),
@@ -719,7 +719,7 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_ebd_run(true),
     m_undo_keydown(false),
     m_redo_keydown(false),
-    m_use_fog_mesh(false),
+    m_use_fog_mesh(true),
     m_use_absolute_value(false),
 	m_peeling_layer_progress(0),
 	m_mesh_rendering_progress(0)
@@ -7679,7 +7679,6 @@ void VRenderVulkanView::SetParams(double t)
 		//display
 		keycode.l2 = 0;
 		keycode.l2_name = "display";
-		bool bval;
 		if (interpolator->GetBoolean(keycode, t, bval))
 			vd->SetDisp(bval);
 
@@ -7760,9 +7759,24 @@ void VRenderVulkanView::SetParams(double t)
 			vd->SetLuminance(val);
 
 		keycode.l2 = 0;
+		keycode.l2_name = "alpha_enable";
+		if (interpolator->GetBoolean(keycode, t, bval))
+			vd->SetEnableAlpha(bval);
+
+		keycode.l2 = 0;
 		keycode.l2_name = "alpha";
 		if (interpolator->GetDouble(keycode, t, val))
 			vd->SetAlpha(val);
+
+		keycode.l2 = 0;
+		keycode.l2_name = "shading_enable";
+		if (interpolator->GetBoolean(keycode, t, bval))
+			vd->SetShading(bval);
+
+		keycode.l2 = 0;
+		keycode.l2_name = "shading";
+		if (interpolator->GetDouble(keycode, t, val))
+			vd->SetLowShading(val);
 
 		keycode.l2 = 0;
 		keycode.l2_name = "boundary";

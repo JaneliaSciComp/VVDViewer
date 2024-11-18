@@ -724,6 +724,8 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
    int ival = 0;
    bool bval = false;
 
+   SetEvtHandlerEnabled(false);
+
    //selection strength
    dval = vrv->GetBrushSclTranslate();
 	m_dft_scl_translate = dval;
@@ -814,6 +816,8 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
       m_eve_threshold_sldr->SetValue(int(m_dft_eve_thresh * m_max_value + 0.5));
       m_eve_threshold_text->ChangeValue(wxString::Format("%d", int(m_dft_eve_thresh * m_max_value + 0.5)));
    }
+
+   SetEvtHandlerEnabled(true);
 
 	UpdateUndoRedo();
 }

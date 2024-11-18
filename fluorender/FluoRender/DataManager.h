@@ -666,6 +666,7 @@ public:
 	bool GetShading();
 	void SetMaterial(double amb, double diff, double spec, double shine);
 	void GetMaterial(double& amb, double& diff, double& spec, double& shine);
+	double GetLowShading();
 	void SetLowShading(double dVal);
 	void SetHiShading(double dVal);
 	//shadow

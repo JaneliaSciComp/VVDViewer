@@ -2506,7 +2506,7 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
         cptype = jf[CompressorKey][CompressorIDKey].get<string>();
         if (cptype == "raw")
             ret->m_compression = 0;
-        else if (cptype == "gzip")
+        else if (cptype == "gzip" || cptype == "zlib")
             ret->m_compression = 1;
         else if (cptype == "bzip2")
             ret->m_compression = 2;
@@ -2672,7 +2672,7 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
         cptype = jf[CompressionKey][CompressionTypeKey].get<string>();
         if (cptype == "raw")
 			ret->m_compression = 0;
-        else if (cptype == "gzip")
+        else if (cptype == "gzip" || cptype == "zlib")
 			ret->m_compression = 1;
         else if (cptype == "bzip2")
 			ret->m_compression = 2;
