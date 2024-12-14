@@ -1767,7 +1767,7 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
     for (int j = 0; j < scale_dirs.size(); j++) {
         auto attrpath = root_path / scale_dirs[j] / ".zarray";
         if (is_url) {
-            if (scale_dirs[j] == ".")
+            if (scale_dirs[j] == L".")
                 attrpath = root_path / ".zarray";
             string wxpath = attrpath.generic_string();
             if (DownloadFile(wxpath)) {
@@ -1963,7 +1963,7 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
                 for (int pid = 0; pid < relpaths[j].size(); pid++)
                 {
                     boost::filesystem::path br_file_path(root_path);
-                    if (!is_url || scale_dirs[j] != ".")
+                    if (!is_url || scale_dirs[j] != L".")
                         br_file_path = br_file_path / scale_dirs[j];
                     if (attr->m_dimensions.size() >= 5)
                         br_file_path = br_file_path / to_string(f);
@@ -2334,7 +2334,7 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
                         auto jf = json::parse(ifs);
                         if (!jf.is_null()) {
                             if (jf.contains(MultiScalesKey)) {
-                                output.push_back(entry.path());
+                                output.push_back(entry.path().wstring());
                                 ite.disable_recursion_pending();
                                 continue;
                             }
@@ -2346,7 +2346,7 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
                     }
                     auto arraypath = entry.path() / ".zarray";
                     if (exists(arraypath)) {
-                        output.push_back(entry.path());
+                        output.push_back(entry.path().wstring());
                         ite.disable_recursion_pending();
                         continue;
                     }
@@ -2412,7 +2412,7 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
                         if (fs::is_directory(sub_entry.status())) {
                             std::string dir_name = sub_entry.path().filename().string();
                             if (std::regex_match(dir_name, pattern)) {
-                                output.push_back(entry.path());
+                                output.push_back(entry.path().wstring());
                                 ite.disable_recursion_pending();
                                 break;
                             }
