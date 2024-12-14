@@ -3464,6 +3464,20 @@ void VolumeData::ResetMaskColorSet()
 		m_vr->reset_mask_color_set();
 }
 
+void VolumeData::SetMaskAlpha(double alpha)
+{
+	if (m_vr)
+		m_vr->set_mask_alpha(alpha);
+}
+
+double VolumeData::GetMaskAlpha()
+{
+	if (m_vr)
+		return m_vr->get_mask_alpha();
+	else
+		return 1.0;
+}
+
 Color VolumeData::SetLuminance(double dVal)
 {
 	double h, s, v;
@@ -3904,10 +3918,10 @@ bool VolumeData::GetInterpolate()
 }
 
 void VolumeData::SetFog(bool use_fog,
-	double fog_intensity, double fog_start, double fog_end)
+	double fog_intensity, double fog_start, double fog_end, Color fog_col)
 {
 	if (m_vr)
-		m_vr->set_fog(use_fog, fog_intensity, fog_start, fog_end);
+		m_vr->set_fog(use_fog, fog_intensity, fog_start, fog_end, fog_col);
 }
 
 int VolumeData::GetLevelBySize(size_t size)
@@ -5476,10 +5490,10 @@ bool MeshData::GetLighting()
 
 //fog
 void MeshData::SetFog(bool bVal,
-	double fog_intensity, double fog_start, double fog_end)
+	double fog_intensity, double fog_start, double fog_end, Color fog_col)
 {
 	m_fog = bVal;
-	if (m_mr) m_mr->set_fog(m_fog, fog_intensity, fog_start, fog_end);
+	if (m_mr) m_mr->set_fog(m_fog, fog_intensity, fog_start, fog_end, fog_col);
 }
 
 bool MeshData::GetFog()

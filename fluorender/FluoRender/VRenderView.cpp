@@ -1443,7 +1443,7 @@ bool VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
                 }
                 
 				md->SetMatrices(m_mv_mat, m_proj_mat);
-				md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end);
+				md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 				md->SetDepthTex(depth_tex);
 				md->SetDevice(m_vulkan->devices[0]);
 				md->Draw(framebuf, clear_framebuf, peel);
@@ -1483,7 +1483,7 @@ bool VRenderVulkanView::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& fra
                         }
                         
 						md->SetMatrices(m_mv_mat, m_proj_mat);
-						md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end);
+						md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 						md->SetDepthTex(depth_tex);
 						md->SetDevice(m_vulkan->devices[0]);
 						md->Draw(framebuf, clear_framebuf, peel);
@@ -2592,7 +2592,7 @@ void VRenderVulkanView::DrawAnnotations()
                         
                         md->SetDepthTex(nullptr);
                         md->SetMatrices(m_mv_mat, m_proj_mat);
-                        md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end);
+                        md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
                         md->SetDevice(m_vulkan->devices[0]);
                         md->SetDrawBounds(false);
                         md->Draw(m_anno_fbo, true, 0);
@@ -4601,21 +4601,26 @@ void VRenderVulkanView::DrawVolumesComp(vector<VolumeData*> &list, bool mask, in
 			if ( vd->GetTexture() && (vd->GetTexture()->nmask()!=-1 || !vd->GetSharedMaskName().IsEmpty()) )
 			{
 				Color tmp_hdr;
+				Color tmp_brightness;
 				if (m_enhance_sel)
 				{
+					double mask_alpha = vd->GetMaskAlpha();
 					Color mask_color = vd->GetMaskColor();
 					double hdr_r = 0.0;
 					double hdr_g = 0.0;
 					double hdr_b = 0.0;
 					if (mask_color.r() > 0.0)
-						hdr_r = 0.4;
+						hdr_r = 0.4* mask_alpha;
 					if (mask_color.g() > 0.0)
-						hdr_g = 0.4;
+						hdr_g = 0.4 * mask_alpha;
 					if (mask_color.b() > 0.0)
-						hdr_b = 0.4;
+						hdr_b = 0.4 * mask_alpha;
 					Color hdr_color = Color(hdr_r, hdr_g, hdr_b);
 					tmp_hdr = vd->GetHdr();
 					vd->SetHdr(hdr_color);
+
+					tmp_brightness = vd->GetBrightness();
+					vd->SetBrightness(tmp_brightness* mask_alpha);
 				}
 
 				//wxString dbgstr = wxString::Format("Drawing Mask: duration %d\n", duration);
@@ -4631,7 +4636,11 @@ void VRenderVulkanView::DrawVolumesComp(vector<VolumeData*> &list, bool mask, in
 				vd->SetMaskMode(0);
 				m_vol_method = vol_method;
 
-				if (m_enhance_sel) vd->SetHdr(tmp_hdr);
+				if (m_enhance_sel)
+				{
+					vd->SetHdr(tmp_hdr);
+					vd->SetBrightness(tmp_brightness);
+				}
 			}
 		}
 		else
@@ -5003,7 +5012,7 @@ void VRenderVulkanView::DrawOVER(VolumeData* vd, std::unique_ptr<vks::VFrameBuff
 			vd->GetVR()->set_depth_peel(peel);
 		vd->SetStreamMode(0);
 		vd->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
-		vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+		vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 		VkClearColorValue clear_color = { 0.0, 0.0, 0.0, 0.0 };
 		vd->Draw(fb, clear, !m_persp, m_interactive, m_scale_factor, sampling_frq_fac, clear_color, ext_msk, ext_lbl);
 	}
@@ -5196,12 +5205,12 @@ void VRenderVulkanView::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffe
 		if (color_mode == 1)
 		{
 			vd->SetMode(3);
-			vd->SetFog(false, m_fog_intensity, m_fog_start, m_fog_end);
+			vd->SetFog(false, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 		}
 		else
 		{
 			vd->SetMode(1);
-			vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+			vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 		}
 		//turn off alpha
 		//if (color_mode == 1)
@@ -5375,7 +5384,7 @@ void VRenderVulkanView::DrawOLShading(VolumeData* vd, std::unique_ptr<vks::VFram
 	int colormode = vd->GetColormapMode();
 	vd->SetStreamMode(2);
 	vd->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
-	vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+	vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 	double sampling_frq_fac = 2 / min(m_ortho_right-m_ortho_left, m_ortho_top-m_ortho_bottom);
 	VkClearColorValue clear_color = { 1.0, 1.0, 1.0, 1.0 };
 	vd->Draw(m_fbo_ol1, true, !m_persp, m_interactive, m_scale_factor, sampling_frq_fac, clear_color);
@@ -5738,7 +5747,7 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 			TextureRenderer::set_update_order(0);
 			vd->GetTexture()->set_sort_bricks();
 			vd->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
-			vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+			vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 			vd->Draw(m_fbo_ol1, clear, !m_persp, m_interactive, m_scale_factor, sampling_frq_fac, clear_color);
 			//restore
 			vd->RestoreMode();
@@ -5787,7 +5796,7 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 				if (vr)
 				{
 					list[i]->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
-					list[i]->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+					list[i]->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 					m_mvr->add_vr(vr);
 					m_mvr->set_sampling_rate(vr->get_sampling_rate());
 					m_mvr->SetNoiseRed(vr->GetNoiseRed());
@@ -5933,7 +5942,7 @@ void VRenderVulkanView::DrawVolumesMulti(vector<VolumeData*> &list, int peel)
 			if (vr)
 			{
 				list[i]->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
-				list[i]->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end);
+				list[i]->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 				m_mvr->add_vr(vr);
 				if (!vrfirst) vrfirst = vr;
 				m_mvr->set_sampling_rate(vr->get_sampling_rate());
@@ -7792,6 +7801,11 @@ void VRenderVulkanView::SetParams(double t)
 		keycode.l2_name = "right_threshold";
 		if (interpolator->GetDouble(keycode, t, val))
 			vd->SetRightThresh(val);
+
+		keycode.l2 = 0;
+		keycode.l2_name = "inv";
+		if (interpolator->GetBoolean(keycode, t, bval))
+			vd->SetInvert(bval);
 	}
     
     for (int i=0; i<GetAllMeshNum(); i++)

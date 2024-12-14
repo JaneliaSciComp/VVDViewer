@@ -34,6 +34,7 @@
 #include "glm.h"
 #include "Plane.h"
 #include "BBox.h"
+#include "Color.h"
 #include "VVulkan.h"
 #include <vector>
 #include <unordered_set>
@@ -210,8 +211,10 @@ namespace FLIVR
 		{ light_ = val; }
 		bool get_lighting()
 		{ return light_; }
-		void set_fog(bool use_fog, double fog_intensity, double fog_start, double fog_end)
-		{ fog_ = use_fog; m_fog_intensity = fog_intensity; m_fog_start = fog_start; m_fog_end = fog_end; }
+		void set_fog(bool use_fog, double fog_intensity, double fog_start, double fog_end, Color fog_col)
+		{
+			fog_ = use_fog; m_fog_intensity = fog_intensity; m_fog_start = fog_start; m_fog_end = fog_end; m_fog_col = fog_col; 
+		}
 		bool get_fog()
 		{ return fog_; }
         void set_threshold(float th)
@@ -314,6 +317,7 @@ namespace FLIVR
 		double m_fog_intensity;
 		double m_fog_start;
 		double m_fog_end;
+		Color m_fog_col;
 		float alpha_;
         float threshold_;
 		//bool update

@@ -447,6 +447,7 @@ namespace FLIVR
 
 			//fog
 			frag_ubo.loc8_fog = { vr->m_fog_intensity, vr->m_fog_start, vr->m_fog_end, 0.0 };
+			frag_ubo.loc9_fog_col = { vr->m_fog_col.r(), vr->m_fog_col.g(), vr->m_fog_col.b(), 0.0 };
 
 			//set clipping planes
 			double abcd[4];

@@ -84,6 +84,8 @@ namespace FLIVR
 		Color get_mask_color();
 		bool get_mask_color_set() {return mask_color_set_; }
 		void reset_mask_color_set() {mask_color_set_ = false;}
+		void set_mask_alpha(double alpha);
+		double get_mask_alpha();
 		void set_mask_thresh(double thresh);
 		double get_mask_thresh();
 		void set_alpha(double alpha);
@@ -180,8 +182,10 @@ namespace FLIVR
 		{ m_mv_mat = mv_mat; m_proj_mat = proj_mat; m_tex_mat = tex_mat; }
 
 		//fog
-		void set_fog(bool use_fog, double fog_intensity, double fog_start, double fog_end)
-		{ m_use_fog = use_fog; m_fog_intensity = fog_intensity; m_fog_start = fog_start; m_fog_end = fog_end; }
+		void set_fog(bool use_fog, double fog_intensity, double fog_start, double fog_end, Color fog_col)
+		{
+			m_use_fog = use_fog; m_fog_intensity = fog_intensity; m_fog_start = fog_start; m_fog_end = fog_end; m_fog_col = fog_col;
+		}
 
 		bool test_against_view_clip(const BBox &bbox, const BBox &tbox, const BBox &dbox, bool persp);
 		void set_clip_quaternion(Quaternion q){ m_q_cl = q; }
@@ -232,6 +236,7 @@ namespace FLIVR
 		double hi_thresh_;
 		Color color_;
 		Color mask_color_;
+		double mask_alpha_;
 		bool mask_color_set_;
 		double mask_thresh_;
 		double alpha_;
@@ -290,6 +295,7 @@ namespace FLIVR
 		double m_fog_intensity;
 		double m_fog_start;
 		double m_fog_end;
+		Color m_fog_col;
         
         bool m_na_mode;
         

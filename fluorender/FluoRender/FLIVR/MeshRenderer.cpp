@@ -2196,7 +2196,10 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
         vubo.threshold = threshold_;
 
 		if (fog_)
+		{
 			fubo.loc8 = { m_fog_intensity, m_fog_start, m_fog_end, 0.0f };
+			fubo.loc9 = { m_fog_col.r(), m_fog_col.g(), m_fog_col.b(), 0.0f };
+		}
 
 		if (depth_peel_)
 			fubo.loc7 = { 1.0f / float(framebuf->w), 1.0f / float(framebuf->h), 0.0f, 0.0f };

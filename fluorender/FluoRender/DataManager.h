@@ -249,7 +249,7 @@ public:
 	//lighting
 	void SetLighting(bool bVal);
 	bool GetLighting();
-	void SetFog(bool bVal, double fog_intensity, double fog_start, double fog_end);
+	void SetFog(bool bVal, double fog_intensity, double fog_start, double fog_end, Color fog_col);
 	bool GetFog();
 	void SetMaterial(Color& amb, Color& diff, Color& spec, 
 		double shine = 30.0, double alpha = 1.0);
@@ -648,6 +648,8 @@ public:
 	Color GetMaskColor();
 	bool GetMaskColorSet();
 	void ResetMaskColorSet();
+	void SetMaskAlpha(double alpha);
+	double GetMaskAlpha();
 	Color SetLuminance(double dVal);
 	double GetLuminance();
 	void SetAlpha(double alpha);
@@ -781,7 +783,7 @@ public:
 	VolumeData* CopyLevel(int lv = -1);
 	bool isBrxml();
 
-	void SetFog(bool use_fog, double fog_intensity, double fog_start, double fog_end);
+	void SetFog(bool use_fog, double fog_intensity, double fog_start, double fog_end, Color fog_col);
 
 	void GenAllROINames() { if (m_vr) m_vr->gen_all_roi_names(); }
 	std::unordered_set<int> GetSelIDs() { return m_vr ? m_vr->get_sel_ids() : std::unordered_set<int>(); }

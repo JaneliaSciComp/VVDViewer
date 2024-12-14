@@ -91,6 +91,7 @@ namespace FLIVR
 		hi_thresh_(1.0),
 		color_(Color(1.0, 1.0, 1.0)),
 		mask_color_(Color(0.0, 1.0, 0.0)),
+		mask_alpha_(1.0),
 		mask_color_set_(false),
 		mask_thresh_(0.0),
 		alpha_(1.0),
@@ -451,6 +452,16 @@ namespace FLIVR
 	Color VolumeRenderer::get_mask_color()
 	{
 		return mask_color_;
+	}
+
+	void VolumeRenderer::set_mask_alpha(double alpha)
+	{
+		mask_alpha_ = alpha;
+	}
+
+	double VolumeRenderer::get_mask_alpha()
+	{
+		return mask_alpha_;
 	}
 
 	void VolumeRenderer::set_mask_thresh(double thresh)
@@ -2762,7 +2773,10 @@ namespace FLIVR
 
 		//fog
 		if (m_use_fog)
+		{
 			frag_ubo.loc8_fog = { m_fog_intensity, m_fog_start, m_fog_end, 0.0 };
+			frag_ubo.loc9_fog_col = { m_fog_col.r(), m_fog_col.g(), m_fog_col.b(), 0.0 };
+		}
 
 		//set clipping planes
 		double abcd[4];

@@ -164,6 +164,7 @@ namespace FLIVR
 	"	vec4 loc3;//(shine, alpha, 0, 0)\n" \
 	"	vec4 loc7;//(1/vx, 1/vy, 0, 0)\n" \
 	"	vec4 loc8;//(int, start, end, 0.0)\n" \
+	"	vec4 loc9;//(fog_r, fog_g, fog_b, 0.0)\n" \
 	"	vec4 loc10; //plane0\n" \
 	"	vec4 loc11; //plane1\n" \
 	"	vec4 loc12; //plane2\n" \
@@ -320,7 +321,7 @@ namespace FLIVR
     "   v.x = (fp.z-fp.w)/(fp.z-fp.y);\n" \
     "   v.x = 1.0-clamp(v.x, 0.0, 1.0);\n" \
     "   v.x = 1.0-exp(-pow(v.x*2.5, 2.0));\n" \
-    "   c.xyz = mix(c.xyz, vec3(0.0), v.x*fp.x); \n" \
+    "   c.xyz = mix(c.xyz, vec3(fubo.loc9.x, fubo.loc9.y, fubo.loc9.z), v.x*fp.x); \n" \
     "\n"
 
 #define MSH_FRAG_BODY_INT \

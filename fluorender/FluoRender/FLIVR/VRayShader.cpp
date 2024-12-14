@@ -89,6 +89,7 @@ namespace FLIVR
 	"	vec4 loc6;//(r, g, b, 0.0) or (1/vx, 1/vy, luminance, depth_mode)\n" \
 	"	vec4 loc7;//(1/vx, 1/vy, 1/sample_rate, highlight_thresh)\n" \
 	"	vec4 loc8;//(int, start, end, 0.0)\n" \
+	"	vec4 loc9;//(fog_r, fog_g, fog_b, 0.0)\n" \
 	"	vec4 loc10; //plane0\n" \
 	"	vec4 loc11; //plane1\n" \
 	"	vec4 loc12; //plane2\n" \
@@ -936,7 +937,7 @@ namespace FLIVR
 	"				tf_alp = pow(clamp(v.x/base.loc3.z,\n" \
 	"					base.loc3.x<1.0?-(base.loc3.x-1.0)*0.00001:0.0,\n" \
 	"					base.loc3.x>1.0?0.9999:1.0), base.loc3.x);\n" \
-	"				float alpha = tf_alp;\n" \
+	"				alpha = tf_alp;\n" \
 	"				c = vec4(vec3(alpha*tf_alp), alpha);\n" \
 	"			}\n" \
 	"\n"
@@ -954,7 +955,7 @@ namespace FLIVR
 	"			v.x = (fp.z-fp.w)/(fp.z-fp.y);\n" \
 	"			v.x = 1.0-clamp(v.x, 0.0, 1.0);\n" \
 	"			v.x = 1.0-exp(-pow(v.x*2.5, 2.0));\n" \
-	"			c.xyz = mix(c.xyz, vec3(0.0), v.x*fp.x); \n" \
+	"			c.xyz = mix(c.xyz, vec3(base.loc9.x, base.loc9.y, base.loc9.z) * alpha * tf_alp, v.x*fp.x); \n" \
 	"\n"
 
 #define VRAY_RASTER_BLEND \

@@ -3961,6 +3961,8 @@ void VRenderFrame::SaveProject(wxString& filename)
             fconfig.Write("na_mode", vd->GetNAMode());
             fconfig.Write("shared_mask", vd->GetSharedMaskName());
             fconfig.Write("shared_label", vd->GetSharedLabelName());
+
+			fconfig.Write("mask_alpha", vd->GetMaskAlpha());
 		}
 	}
 	//mesh
@@ -5440,6 +5442,10 @@ void VRenderFrame::SetVolumePropertiesFromProject(wxFileConfig &fconfig)
                             vd->SetSharedMaskName(str);
                         if (fconfig.Read("shared_label", &str))
                             vd->SetSharedLabelName(str);
+
+						//shaodw intensity
+						if (fconfig.Read("mask_alpha", &dval))
+							vd->SetMaskAlpha(dval);
                     }
                 }
             }

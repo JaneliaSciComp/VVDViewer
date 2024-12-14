@@ -89,6 +89,9 @@ public:
 		ID_EVEThresholdSldr,
 		ID_EVEThresholdText,
 		ID_EVEAnalyzeBtn,
+		//mask display alpha
+		ID_MaskAlphaSldr,
+		ID_MaskAlphaText,
 		//help
 		ID_HelpBtn,
 		//default
@@ -191,6 +194,8 @@ private:
 	int m_dft_eve_min_radius;
 	int m_dft_eve_max_radius;
 	double m_dft_eve_thresh;
+
+	int m_dft_mask_alpha;
     
     bool mask_undo_num_modified;
 	
@@ -263,6 +268,10 @@ private:
 	wxSlider* m_eve_threshold_sldr;
 	wxTextCtrl* m_eve_threshold_text;
 	wxButton* m_eve_analyze_btn;
+
+	wxSlider* m_mask_overlay_alpha_sldr;
+	wxTextCtrl* m_mask_overlay_alpha_text;
+
 	//help button
 	//wxButton* m_help_btn;
 
@@ -365,6 +374,9 @@ private:
 	void OnEVEThresholdChange(wxScrollEvent& event);
 	void OnEVEThresholdText(wxCommandEvent& event);
 	void OnEVEAnalyzeBtn(wxCommandEvent& event);
+	//mask display settings
+	void OnMaskAlphaChange(wxScrollEvent& event);
+	void OnMaskAlphaText(wxCommandEvent& event);
 	//help
 	void OnHelpBtn(wxCommandEvent& event);
 

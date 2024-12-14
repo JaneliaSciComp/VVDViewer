@@ -79,6 +79,9 @@ EVT_TEXT(ID_EVEMaxRadiusText, BrushToolDlg::OnEVEMaxRadiusText)
 EVT_COMMAND_SCROLL(ID_EVEThresholdSldr, BrushToolDlg::OnEVEThresholdChange)
 EVT_TEXT(ID_EVEThresholdText, BrushToolDlg::OnEVEThresholdText)
 EVT_BUTTON(ID_EVEAnalyzeBtn, BrushToolDlg::OnEVEAnalyzeBtn)
+//Mask Display
+EVT_COMMAND_SCROLL(ID_MaskAlphaSldr, BrushToolDlg::OnMaskAlphaChange)
+EVT_TEXT(ID_MaskAlphaText, BrushToolDlg::OnMaskAlphaText)
 
 //calculations
 //operands
@@ -332,6 +335,22 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	sizer2->Add(sizer2_6, 0, wxEXPAND);
 	sizer2->Add(sizer2_7, 0, wxEXPAND);
 
+    wxBoxSizer* sizer3 = new wxStaticBoxSizer(
+        new wxStaticBox(page, wxID_ANY, "Mask Display Settings"),
+        wxVERTICAL);
+    wxBoxSizer* sizer3_1 = new wxBoxSizer(wxHORIZONTAL);
+    st = new wxStaticText(page, 0, "Mask Intensity:",
+        wxDefaultPosition, wxSize(80, 20));
+    m_mask_overlay_alpha_sldr = new wxSlider(page, ID_MaskAlphaSldr, 255, 0, 255,
+        wxDefaultPosition, wxDefaultSize, wxSL_HORIZONTAL);
+    m_mask_overlay_alpha_text = new wxTextCtrl(page, ID_MaskAlphaText, "255",
+        wxDefaultPosition, wxSize(50 + size_fix_w, 20), 0, vald_int);
+    sizer3_1->Add(5, 5);
+    sizer3_1->Add(st, 0, wxALIGN_CENTER);
+    sizer3_1->Add(m_mask_overlay_alpha_sldr, 1, wxEXPAND);
+    sizer3_1->Add(m_mask_overlay_alpha_text, 0, wxALIGN_CENTER);
+    sizer3->Add(sizer3_1, 0, wxEXPAND);
+
 	//vertical sizer
 	wxBoxSizer* sizer_v = new wxBoxSizer(wxVERTICAL);
 	sizer_v->Add(10, 10);
@@ -341,6 +360,8 @@ wxWindow* BrushToolDlg::CreateBrushPage(wxWindow *parent)
 	sizer_v->Add(10, 30);
 	sizer_v->Add(sizer2, 0, wxEXPAND);
 	sizer_v->Add(10, 30);
+    sizer_v->Add(sizer3, 0, wxEXPAND);
+    sizer_v->Add(10, 30);
 
 	st_dslt_r->Disable();
 	m_dslt_r_sldr->Disable();
@@ -815,6 +836,10 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
       m_eve_threshold_sldr->SetRange(0, int(m_max_value));
       m_eve_threshold_sldr->SetValue(int(m_dft_eve_thresh * m_max_value + 0.5));
       m_eve_threshold_text->ChangeValue(wxString::Format("%d", int(m_dft_eve_thresh * m_max_value + 0.5)));
+
+      int alpha = (int)(sel_vol->GetMaskAlpha() * 255.0 + 0.5);
+      m_mask_overlay_alpha_sldr->SetValue(alpha);
+      m_mask_overlay_alpha_text->ChangeValue(wxString::Format("%d", alpha));
    }
 
    SetEvtHandlerEnabled(true);
@@ -1579,6 +1604,29 @@ void BrushToolDlg::OnEVEAnalyzeBtn(wxCommandEvent& event)
     }
 }
 
+void BrushToolDlg::OnMaskAlphaChange(wxScrollEvent& event)
+{
+    int ival = (int)(event.GetPosition() + 0.5);
+    wxString str = wxString::Format("%d", ival);
+    m_mask_overlay_alpha_text->SetValue(str);
+}
+
+void BrushToolDlg::OnMaskAlphaText(wxCommandEvent& event)
+{
+    wxString str = m_mask_overlay_alpha_text->GetValue();
+    double val;
+    str.ToDouble(&val);
+    m_dft_mask_alpha = val;
+    m_mask_overlay_alpha_sldr->SetValue(int(val + 0.5));
+
+    if (m_cur_view && m_cur_view->GetVolumeA())
+    {
+        VolumeData* vd = m_cur_view->GetVolumeA();
+        vd->SetMaskAlpha(m_dft_mask_alpha / 255.0);
+        m_cur_view->RefreshGL();
+    }
+}
+
 //help button
 void BrushToolDlg::OnHelpBtn(wxCommandEvent &event)
 {
@@ -1621,6 +1669,8 @@ void BrushToolDlg::SaveDefault()
       m_brush_iters_rb->GetValue()?2:
       m_brush_iterss_rb->GetValue()?3:0;
    fconfig.Write("brush_iters", ival);
+
+   fconfig.Write("mask_alpha", m_dft_mask_alpha);
 
    fconfig.Write("use_dslt", m_dslt_chk->GetValue());
    str = m_dslt_r_text->GetValue();
@@ -1766,6 +1816,11 @@ void BrushToolDlg::LoadDefault()
          m_brush_iterss_rb->SetValue(true);
          break;
       }
+   }
+   if (fconfig.Read("mask_alpha", &m_dft_mask_alpha))
+   {
+       str = wxString::Format("%d", (int)val);
+       m_mask_overlay_alpha_text->SetValue(str);
    }
 
    if (fconfig.Read("use_dslt", &bval))

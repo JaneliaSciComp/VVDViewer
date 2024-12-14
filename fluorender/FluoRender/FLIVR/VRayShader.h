@@ -177,6 +177,7 @@ namespace FLIVR
 			glm::vec4 loc6_colparam;	//loc6
 			glm::vec4 loc7_view;		//loc7
 			glm::vec4 loc8_fog;			//loc8
+			glm::vec4 loc9_fog_col;		//loc9
 			glm::vec4 plane0;			//loc10
 			glm::vec4 plane1;			//loc11
 			glm::vec4 plane2;			//loc12

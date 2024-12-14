@@ -125,6 +125,7 @@ namespace FLIVR
 			glm::vec4 loc3;//(shine, alpha, 0, 0)
 			glm::vec4 loc7;//(1/vx, 1/vy, 0, 0)
 			glm::vec4 loc8;//(int, start, end, 0.0)
+			glm::vec4 loc9;//(fog_r, fog_g, fog_b, 0.0)
 			glm::vec4 plane0; //plane0
 			glm::vec4 plane1; //plane1
 			glm::vec4 plane2; //plane2

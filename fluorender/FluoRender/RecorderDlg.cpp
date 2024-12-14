@@ -1013,6 +1013,11 @@ void RecorderDlg::InsertKey(int index, double duration, int interpolation)
 			keycode.l2_name = "right_threshold";
 			flkey = new FlKeyDouble(keycode, vd->GetRightThresh());
 			interpolator->AddKey(flkey);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "inv";
+			flkeyB = new FlKeyBoolean(keycode, vd->GetInvert());
+			interpolator->AddKey(flkeyB);
 		}
 	}
     
