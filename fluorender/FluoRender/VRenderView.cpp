@@ -3966,7 +3966,7 @@ void VRenderVulkanView::CalculateSingle(int type, wxString prev_group, bool add)
 	if (vd_A && vd_A->isBrxml())
 	{
 		vd_prevA = vd_A;
-		vd_A = CopyLevel(vd_A);
+		vd_A = CopyLevel(vd_A, vd_A->GetMaskLv());
 		if (vd_A)
 			copiedA = true;
 	}
@@ -3975,7 +3975,7 @@ void VRenderVulkanView::CalculateSingle(int type, wxString prev_group, bool add)
 	if (vd_B && vd_B->isBrxml())
 	{
 		vd_prevB = vd_B;
-		vd_B = CopyLevel(vd_B);
+		vd_B = CopyLevel(vd_B, vd_B->GetMaskLv());
 		if (vd_B) 
 			copiedB = true;
 	}
@@ -3984,7 +3984,7 @@ void VRenderVulkanView::CalculateSingle(int type, wxString prev_group, bool add)
 	if (vd_C && vd_C->isBrxml())
 	{
 		vd_prevC = vd_C;
-		vd_C = CopyLevel(vd_C);
+		vd_C = CopyLevel(vd_C, vd_C->GetMaskLv());
 		if (vd_C)
 			copiedC = true;
 	}

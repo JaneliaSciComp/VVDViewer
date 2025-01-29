@@ -610,7 +610,7 @@ public:
 	//hr_mode (hidden removal): 0-none; 1-ortho; 2-persp
 	void DrawMask(int type, int paint_mode, int hr_mode,
 		double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
-		double w2d, double bins, bool ortho = false, Texture* ext_msk = NULL, bool clear_msk_cache = true, bool use_absolute_value = false, bool save_stroke = true);
+		double w2d, double bins, bool ortho = false, Texture* ext_msk = NULL, bool clear_msk_cache = true, bool use_absolute_value = false, bool save_stroke = true, bool force_clear_stroke = false);
 	void DrawMaskThreshold(float th, bool ortho = false, bool use_absolute_value = false);
 	void DrawMaskDSLT(int type, int paint_mode, int hr_mode,
 		double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,

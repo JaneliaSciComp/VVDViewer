@@ -205,7 +205,7 @@ namespace FLIVR
 		void set_FrameAndChannel(int fr, int ch);
 		void setLevel(int lv);
 		Nrrd* loadData(int &lv);
-		Nrrd* getSubData(int lv, int mask_mode, vector<TextureBrick*> *tar_bricks=NULL, size_t stx=0, size_t sty=0, size_t stz=0, size_t w=0, size_t h=0, size_t d=0);
+		Nrrd* getSubData(int lv, int mask_mode, vector<TextureBrick*> *tar_bricks=NULL, size_t stx=0, size_t sty=0, size_t stz=0, size_t w=0, size_t h=0, size_t d=0, vector<Plane*> *planes=NULL);
 		int GetCurLevel() {return pyramid_cur_lv_;}
 		int GetLevelNum() {return pyramid_.size();}
 		void SetCopyableLevel(int lv) {pyramid_copy_lv_ = lv;}

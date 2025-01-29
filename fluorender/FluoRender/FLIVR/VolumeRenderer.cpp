@@ -3779,7 +3779,7 @@ namespace FLIVR
 		int type, int paint_mode, int hr_mode,
 		double ini_thresh, double gm_falloff, double scl_falloff,
 		double scl_translate, double w2d, double bins, bool orthographic_p,
-		bool estimate, Texture* ext_msk, bool use_absolute_value, bool save_stroke)
+		bool estimate, Texture* ext_msk, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
 	{
 /*		if (paint_mode == 1 || paint_mode == 2)
 		{
@@ -3792,7 +3792,7 @@ namespace FLIVR
 		bool use_2d = tex_2d_weight1_ && tex_2d_weight2_ ? true : false;
 
 		bool use_stroke = (save_stroke && tex_->nstroke() >= 0 && (type == 0 || type == 1)) ? true : false;
-		bool clear_stroke = use_stroke && (paint_mode == 1 || paint_mode == 2 || (paint_mode == 4 && type == 0) || paint_mode == 6 || paint_mode == 7);
+		bool clear_stroke = use_stroke && (force_clear_stroke || paint_mode == 1 || paint_mode == 2 || (paint_mode == 4 && type == 0) || paint_mode == 6 || paint_mode == 7);
 
 		bool write_to_vol = false;
 		switch (type)

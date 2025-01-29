@@ -208,7 +208,7 @@ void VolumeSelector::Select(double radius)
                         m_vd->GetVR()->return_mask();
                 }
             }
-            m_vd->DrawMask(1, m_mode, 0, ini_thresh, gm_falloff, scl_falloff, m_scl_translate, m_w2d, 0.0, false, ext_msk, clear_cache);
+            m_vd->DrawMask(1, m_mode, 0, ini_thresh, gm_falloff, scl_falloff, m_scl_translate, m_w2d, 0.0, false, ext_msk, clear_cache, false, true, i == 0);
             
             auto rn_time = GET_TICK_COUNT();
             if (!prog_diag && rn_time - st_time > 3000)

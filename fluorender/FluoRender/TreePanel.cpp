@@ -99,6 +99,7 @@ END_EVENT_TABLE()
 
 bool DataTreeCtrl::m_md_save_indv = false;
 int DataTreeCtrl::m_save_scale_level = 0;
+bool DataTreeCtrl::m_crop_output_image = false;
 
 DataTreeCtrl::DataTreeCtrl(
 	wxWindow* frame,
@@ -951,7 +952,7 @@ void DataTreeCtrl::OnSave(wxCommandEvent& event)
 		{
 			wxString filename = fopendlg->GetPath();
 			if (vd)
-				vd->Save(filename, fopendlg->GetFilterIndex(), false, true, true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, true, m_save_scale_level);
+				vd->Save(filename, fopendlg->GetFilterIndex(), false, true, true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, m_crop_output_image, m_save_scale_level);
 		}
 		if (vd && vd->isBrxml())
 			vr_frame->RefreshVRenderViews();
@@ -1041,9 +1042,12 @@ void DataTreeCtrl::OnSaveSegmentedVolume(wxCommandEvent& event)
             wxString filename = fopendlg->GetPath();
             if (vd)
             {
+				int mode = fopendlg->GetFilterIndex();
+				if (vd->isBrxml())
+					mode = 1;
                 auto mskmode = vd->GetMaskHideMode();
                 vd->SetMaskHideMode(VOL_MASK_HIDE_OUTSIDE);
-                vd->Save(filename, fopendlg->GetFilterIndex(), false, VRenderFrame::GetCompression(), true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, true);
+                vd->Save(filename, mode, false, VRenderFrame::GetCompression(), true, true, GetCurrentView() ? GetCurrentView()->GetVolumeLoader() : NULL, m_crop_output_image, m_save_scale_level);
                 vd->SetMaskHideMode(mskmode);
             }
         }
@@ -1541,6 +1545,13 @@ void DataTreeCtrl::OnCh1Check(wxCommandEvent &event)
       m_md_save_indv = ch1->GetValue();
 }
 
+void DataTreeCtrl::OnCh2Check(wxCommandEvent& event)
+{
+	wxCheckBox* ch2 = (wxCheckBox*)event.GetEventObject();
+	if (ch2)
+		m_crop_output_image = ch2->GetValue();
+}
+
 void DataTreeCtrl::OnTxt1Change(wxCommandEvent& event)
 {
 	wxTextCtrl* txt1 = (wxTextCtrl*)event.GetEventObject();
@@ -1550,7 +1561,7 @@ void DataTreeCtrl::OnTxt1Change(wxCommandEvent& event)
 
 wxWindow* DataTreeCtrl::CreateExtraControl(wxWindow* parent)
 {
-   wxPanel* panel = new wxPanel(parent, 0, wxDefaultPosition, wxSize(400, 90));
+   wxPanel* panel = new wxPanel(parent, 0, wxDefaultPosition, wxSize(400, 130));
 
    wxBoxSizer *group1 = new wxStaticBoxSizer(
          new wxStaticBox(panel, wxID_ANY, "Additional Options"), wxVERTICAL);
@@ -1562,6 +1573,13 @@ wxWindow* DataTreeCtrl::CreateExtraControl(wxWindow* parent)
          wxCommandEventHandler(DataTreeCtrl::OnCh1Check), NULL, panel);
    if (ch1)
       ch1->SetValue(m_md_save_indv);
+
+   wxCheckBox* ch2 = new wxCheckBox(panel, wxID_HIGHEST + 3006,
+	   "Crop image using clipping planes");
+   ch2->Connect(ch2->GetId(), wxEVT_COMMAND_CHECKBOX_CLICKED,
+	   wxCommandEventHandler(DataTreeCtrl::OnCh2Check), NULL, panel);
+   if (ch2)
+	   ch2->SetValue(m_crop_output_image);
 
    wxBoxSizer* sizer1 = new wxBoxSizer(wxHORIZONTAL);
    wxIntegerValidator<unsigned int> vald_int;
@@ -1580,6 +1598,8 @@ wxWindow* DataTreeCtrl::CreateExtraControl(wxWindow* parent)
    //group
    group1->Add(10, 10);
    group1->Add(ch1);
+   group1->Add(10, 10);
+   group1->Add(ch2);
    group1->Add(10, 10);
    group1->Add(sizer1);
    group1->Add(10, 10);

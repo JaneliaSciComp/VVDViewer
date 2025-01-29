@@ -2859,23 +2859,21 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 	SetXLink(false);
 	if (dist < resx)
 	{
-		int x1 = resx/2-dist/2;
-		int x2 = x1 + dist;
 		int cur_x1 = m_x1_clip_sldr->GetValue();
 		int cur_x2 = m_x2_clip_sldr->GetValue();
-		if (x1 <= cur_x2)
+		if (cur_x1 + dist <= resx)
 		{
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", x1));
+				wxString::Format("%d", cur_x1));
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", x2));
+				wxString::Format("%d", cur_x1 + dist));
 		}
 		else
 		{
-			m_x2_clip_text->SetValue(
-				wxString::Format("%d", x2));
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", x1));
+				wxString::Format("%d", resx - dist));
+			m_x2_clip_text->SetValue(
+				wxString::Format("%d", resx));
 		}
 		SetXLink(true);
 		int distx, disty, distz;
@@ -2935,23 +2933,21 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 	SetYLink(false);
 	if (dist < resy)
 	{
-		int y1 = resy/2-dist/2;
-		int y2 = y1 + dist;
 		int cur_y1 = m_y1_clip_sldr->GetValue();
 		int cur_y2 = m_y2_clip_sldr->GetValue();
-		if (y1 <= cur_y2)
+		if (cur_y1 + dist <= resy)
 		{
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", y1));
+				wxString::Format("%d", cur_y1));
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", y2));
+				wxString::Format("%d", cur_y1 + dist));
 		}
 		else
 		{
-			m_y2_clip_text->SetValue(
-				wxString::Format("%d", y2));
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", y1));
+				wxString::Format("%d", resy - dist));
+			m_y2_clip_text->SetValue(
+				wxString::Format("%d", resy));
 		}
 		SetYLink(true);
 		int distx, disty, distz;
@@ -3011,23 +3007,21 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 	SetZLink(false);
 	if (dist < resz)
 	{
-		int z1 = resz/2-dist/2;
-		int z2 = z1 + dist;
 		int cur_z1 = m_z1_clip_sldr->GetValue();
 		int cur_z2 = m_z2_clip_sldr->GetValue();
-		if (z1 <= cur_z2)
+		if (cur_z1 + dist <= cur_z2)
 		{
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", z1));
+				wxString::Format("%d", cur_z1));
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", z2));
+				wxString::Format("%d", cur_z1 + dist));
 		}
 		else
 		{
-			m_z2_clip_text->SetValue(
-				wxString::Format("%d", z2));
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", z1));
+				wxString::Format("%d", resz - dist));
+			m_z2_clip_text->SetValue(
+				wxString::Format("%d", resz));
 		}
 		SetZLink(true);
 		int distx, disty, distz;

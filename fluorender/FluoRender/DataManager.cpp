@@ -2012,8 +2012,16 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
             if (!py2->Intersect(lp_x2z2, lv_x2z2, pp[7]))
                 crop = false;
             
-            for (int i = 0; i < 8; i++)
-                bbox.extend(pp[i]);
+			for (int i = 0; i < 8; i++)
+			{
+				if (pp[i].x() < 0.0) pp[i].x(0.0);
+				if (pp[i].y() < 0.0) pp[i].y(0.0);
+				if (pp[i].z() < 0.0) pp[i].z(0.0);
+				if (pp[i].x() > 1.0) pp[i].x(1.0);
+				if (pp[i].y() > 1.0) pp[i].y(1.0);
+				if (pp[i].z() > 1.0) pp[i].z(1.0);
+				bbox.extend(pp[i]);
+			}
         }
         
         if (!crop)
@@ -2036,9 +2044,16 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                 int sx = (int)(bbox.min().x() * w + 0.5);
                 int sy = (int)(bbox.min().y() * h + 0.5);
                 int sz = (int)(bbox.min().z() * d + 0.5);
+				if (sx < 0) sx = 0;
+				if (sy < 0) sy = 0;
+				if (sz < 0) sz = 0;
+
                 int nx = (int)(bbox.max().x() * w + 0.5) - sx;
                 int ny = (int)(bbox.max().y() * h + 0.5) - sy;
                 int nz = (int)(bbox.max().z() * d + 0.5) - sz;
+				if (nx > w) nx = w;
+				if (ny > h) ny = h;
+				if (nz > d) nz = d;
                 
 				if (bake)
 				{
@@ -2375,9 +2390,16 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                 int sx = (int)(bbox.min().x() * w + 0.5);
                 int sy = (int)(bbox.min().y() * h + 0.5);
                 int sz = (int)(bbox.min().z() * d + 0.5);
+				if (sx < 0) sx = 0;
+				if (sy < 0) sy = 0;
+				if (sz < 0) sz = 0;
+
                 int nx = (int)(bbox.max().x() * w + 0.5) - sx;
                 int ny = (int)(bbox.max().y() * h + 0.5) - sy;
                 int nz = (int)(bbox.max().z() * d + 0.5) - sz;
+				if (nx > w) nx = w;
+				if (ny > h) ny = h;
+				if (nz > d) nz = d;
 
 				TIFWriter *tifwriter = (TIFWriter *)writer;
 				int ndigit = int(log10(double(d))) + 1;
@@ -2501,7 +2523,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						{
 							size_t bufd = (s+slicenum <= lnz) ? slicenum : lnz-s;
 
-							Nrrd* datablock = m_tex->getSubData(tarlv, GetMaskHideMode(), &lbs, sx, sy, s+loz, nx, ny, bufd);
+							Nrrd* datablock = m_tex->getSubData(tarlv, GetMaskHideMode(), &lbs, sx, sy, s+loz, nx, ny, bufd, m_vr->get_planes());
 							auto block_vlnrrd = make_shared<VL_Nrrd>(datablock);
 							if (m_colormap_mode == 3)
 							{
@@ -3179,7 +3201,7 @@ void VolumeData::DrawBounds()
 //hr_mode (hidden removal): 0-none; 1-ortho; 2-persp
 void VolumeData::DrawMask(int type, int paint_mode, int hr_mode,
 						  double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
-						  double w2d, double bins, bool ortho, Texture* ext_msk, bool clear_msk_cache, bool use_absolute_value, bool save_stroke)
+						  double w2d, double bins, bool ortho, Texture* ext_msk, bool clear_msk_cache, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
 {
 	if (m_vr)
 	{
@@ -3192,7 +3214,7 @@ void VolumeData::DrawMask(int type, int paint_mode, int hr_mode,
 		//OutputDebugStringA("DrawMask Enter\n");
 		m_vr->set_2d_mask(m_2d_mask);
 		m_vr->set_2d_weight(m_2d_weight1, m_2d_weight2);
-		m_vr->draw_mask(type, paint_mode, hr_mode, ini_thresh, gm_falloff, scl_falloff, scl_translate, w2d, bins, ortho, false, ext_msk, use_absolute_value, save_stroke);
+		m_vr->draw_mask(type, paint_mode, hr_mode, ini_thresh, gm_falloff, scl_falloff, scl_translate, w2d, bins, ortho, false, ext_msk, use_absolute_value, save_stroke, force_clear_stroke);
 		if (isBrxml())
 		{
 			int lvnum = GetLevelNum();

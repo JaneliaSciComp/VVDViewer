@@ -1389,7 +1389,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
     for (j=0; j<(int)files.Count(); j++)
     {
         wxString suffix = files[j].Mid(files[j].Find('.', true)).MakeLower();
-		if (suffix == ".zarr" || suffix == ".zgroup")
+		if (suffix == ".zarr" || suffix == ".zgroup" || suffix == ".zattrs")
 		{
 			vector<wstring> zpaths;
 			BRKXMLReader::GetZarrChannelPaths(files[j].ToStdWstring(), zpaths);
@@ -1398,11 +1398,14 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 #else
 			wchar_t slash = L'/';
 #endif
+			wxFileName fn(files[j]);
+			if (!fn.Exists())
+				slash = L'/';
 			if (zpaths.empty())
 			{
 				wstring zpath = files[j].ToStdWstring();
 				wstring dir_name = zpath;
-				if (suffix == ".zgroup")
+				if (suffix == ".zgroup" || suffix == ".zattrs")
 					dir_name = zpath.substr(0, zpath.find_last_of(slash));
 				zpaths.push_back(dir_name);
 			}
@@ -1410,7 +1413,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 			for (wstring& p : zpaths)
 			{
 				wstring root_path_wstr = files[j].ToStdWstring();
-				if (suffix == ".zgroup")
+				if (suffix == ".zgroup" || suffix == ".zattrs")
 					root_path_wstr = root_path_wstr.substr(0, root_path_wstr.find_last_of(slash));
 				std::filesystem::path root = root_path_wstr;
 				std::filesystem::path data_path = p;
@@ -1447,7 +1450,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				metadatafiles.Add(wxEmptyString);
 			}
 		}
-        else if (suffix==".n5" || suffix==".json" || suffix==".xml")
+        else if (suffix==".n5" || suffix==".json")
         {
             vector<wstring> n5paths;
             BRKXMLReader::GetN5ChannelPaths(files[j].ToStdWstring(), n5paths);
@@ -1456,6 +1459,9 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 #else
             wchar_t slash = L'/';
 #endif
+			wxFileName fn(files[j]);
+			if (!fn.Exists())
+				slash = L'/';
 			if (n5paths.empty())
 			{
 				wstring n5path = files[j].ToStdWstring();
@@ -3675,6 +3681,40 @@ void VRenderFrame::OnOpenURL(wxCommandEvent& WXUNUSED(event))
 	if (urlDialog.ShowModal() == wxID_OK)
 	{
 		wxString url = urlDialog.GetValue();
+
+		wxString extension = wxEmptyString;
+		size_t lastSlashPos = url.find_last_of('/');
+		if (lastSlashPos != wxString::npos) {
+			wxString fileName = url.substr(lastSlashPos + 1);
+
+			size_t lastDotPos = fileName.find_last_of('.');
+			if (lastDotPos != wxString::npos) {
+				extension = fileName.substr(lastDotPos + 1);
+			}
+		}
+		if (extension.IsEmpty())
+		{
+			wxString normalizedUrl = url;
+			while (normalizedUrl.EndsWith("/")) {
+				normalizedUrl.RemoveLast();
+			}
+			normalizedUrl = normalizedUrl + "/";
+			
+			bool found = false;
+
+			wxString tmp_zarr_url = normalizedUrl + ".zattrs";
+			if (BRKXMLReader::DownloadFile(tmp_zarr_url.ToStdString())) {
+				url = tmp_zarr_url;
+				found = true;
+			}
+
+			if (!found) {
+				wxString tmp_n5_url = normalizedUrl + "attributes.json";
+				if (BRKXMLReader::DownloadFile(tmp_n5_url.ToStdString())) {
+					url = tmp_n5_url;
+				}
+			}
+		}
 
 		VRenderView* vrv = GetView(0);
 

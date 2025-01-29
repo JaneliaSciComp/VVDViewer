@@ -749,9 +749,13 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
 
    //selection strength
    dval = vrv->GetBrushSclTranslate();
-	m_dft_scl_translate = dval;
-   m_brush_scl_translate_sldr->SetValue(int(dval*1000.0+0.5));
-   m_brush_scl_translate_text->ChangeValue(wxString::Format("%.2f", dval));
+   m_dft_scl_translate = dval;
+
+   if (!sel_vol) {
+       m_brush_scl_translate_sldr->SetRange(0, int(m_max_value * 10.0));
+       m_brush_scl_translate_sldr->SetValue(int(m_dft_scl_translate * m_max_value * 10.0 + 0.5));
+       m_brush_scl_translate_text->ChangeValue(wxString::Format("%.2f", m_dft_scl_translate * m_max_value));
+   }
    //2d influence
    dval = vrv->GetW2d();
    m_brush_2dinfl_sldr->SetValue(int(dval*100.0+0.5));
@@ -824,7 +828,8 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
       m_max_value = sel_vol->GetMaxValue();
       //falloff
       m_brush_scl_translate_sldr->SetRange(0, int(m_max_value*10.0));
-      m_brush_scl_translate_text->SetValue(wxString::Format("%.1f", m_dft_scl_translate*m_max_value));
+      m_brush_scl_translate_sldr->SetValue(int(m_dft_scl_translate * m_max_value * 10.0 + 0.5));
+      m_brush_scl_translate_text->ChangeValue(wxString::Format("%.1f", m_dft_scl_translate*m_max_value));
       m_ca_thresh_sldr->SetRange(0, int(m_max_value*10.0));
       m_ca_thresh_sldr->SetValue(int(m_dft_ca_thresh*m_max_value*10.0+0.5));
       m_ca_thresh_text->ChangeValue(wxString::Format("%.1f", m_dft_ca_thresh*m_max_value));

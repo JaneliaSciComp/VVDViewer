@@ -1132,37 +1132,33 @@ namespace FLIVR
 		int bnum = bricks->size();
 		if (bnum <= 0) return NULL;
 
-		Nrrd *data = pyramid_[level].data->getNrrdDeepCopy();
-		
-		int nbyte = 0;
-		if (data->type == nrrdTypeChar || data->type == nrrdTypeUChar) nbyte = 1;
-		else nbyte = 2;
+		size_t imageW = 0, imageH = 0, imageD = 0;
+		get_dimensions(imageW, imageH, imageD, lv);
+		double xspc = 1.0, yspc = 1.0, zspc = 1.0;
+		get_spacings(xspc, yspc, zspc, lv);
+		size_t nbyte = this->data_[0]->getBytesPerSample();
 
-		size_t dim = data->dim;
-		std::vector<int> size(dim);
-
-		int offset = 0;
-		if (dim > 3) offset = 1; 
-
-		for (size_t p = 0; p < dim; p++) 
-			size[p] = (int)data->axis[p + offset].size;
-
-		int width  = size[0];
-		int height = size[1];
-		int depth  = size[2];
-
+		Nrrd* data;
+		data = nrrdNew();
 		if (nbyte == 1)
 		{
-			unsigned char *val8 = new unsigned char[(size_t)width * (size_t)height * (size_t)depth];
-			data->data = val8;
+			unsigned char* val8 = new unsigned char[imageW * imageH * imageD * nbyte];
+			nrrdWrap(data, val8, nrrdTypeUChar, 3, imageW, imageH, imageD);
 		}
-		else
+		else if (nbyte == 2)
 		{
-			unsigned short *val16 = new unsigned short[(size_t)width * (size_t)height * (size_t)depth];
-			data->data = val16;
+			unsigned short* val16 = new unsigned short[imageW * imageH * imageD * nbyte];
+			nrrdWrap(data, val16, nrrdTypeUShort, 3, imageW, imageH, imageD);
 		}
-
-		memset(data->data, 0, (size_t)width * (size_t)height * (size_t)depth * (size_t)nbyte);
+		else if (nbyte == 4)
+		{
+			float* val32 = new float[imageW * imageH * imageD * nbyte];
+			nrrdWrap(data, val32, nrrdTypeFloat, 3, imageW, imageH, imageD);
+		}
+		nrrdAxisInfoSet(data, nrrdAxisInfoSpacing, xspc, yspc, zspc);
+		nrrdAxisInfoSet(data, nrrdAxisInfoMax, xspc * imageW, yspc * imageH, zspc * imageD);
+		nrrdAxisInfoSet(data, nrrdAxisInfoMin, 0.0, 0.0, 0.0);
+		nrrdAxisInfoSet(data, nrrdAxisInfoSize, imageW, imageH, imageD);
 
 		wxProgressDialog *prog_diag = new wxProgressDialog(
 			"VVDViewer: Load Volume Data...",
@@ -1190,8 +1186,8 @@ namespace FLIVR
 			int nz = (*bricks)[i]->nz();
 
 			unsigned char *ptr_dst = (unsigned char *)(data->data);
-			long long offset = (long long)(oz) * (long long)(width) * (long long)(height) +
-							   (long long)(oy) * (long long)(width) +
+			long long offset = (long long)(oz) * (long long)(imageW) * (long long)(imageH) +
+							   (long long)(oy) * (long long)(imageW) +
 							   (long long)(ox);
 
 			ptr_dst += offset * (long long)nbyte;
@@ -1203,10 +1199,10 @@ namespace FLIVR
 				for (int y = 0; y < ny; y++)
 				{
 					memcpy(ptr_dst, ptr_src, (long long)nx*(long long)nbyte);
-					ptr_dst += (long long)(width) * (long long)nbyte;
+					ptr_dst += (long long)(imageW) * (long long)nbyte;
 					ptr_src += (long long)(nx) * (long long)nbyte;
 				}
-				ptr_dst += (long long)(width) * (long long)(height-ny) * (long long)nbyte;
+				ptr_dst += (long long)(imageW) * (long long)(imageH-ny) * (long long)nbyte;
 			}
 
 			if (tmp) (*bricks)[i]->freeBrkData();
@@ -1225,9 +1221,11 @@ namespace FLIVR
 		return data;
 	}
 
-	Nrrd *Texture::getSubData(int lv, int mask_mode, vector<TextureBrick*> *tar_bricks, size_t stx, size_t sty, size_t stz, size_t w, size_t h, size_t d)
+	Nrrd *Texture::getSubData(int lv, int mask_mode, vector<TextureBrick*> *tar_bricks, size_t stx, size_t sty, size_t stz, size_t w, size_t h, size_t d, vector<Plane*>* planes)
 	{
 		if (!brkxml_) return NULL;
+
+		bool clipping = (planes != NULL);
 
 		int level = lv;
 		if (level < 0 || level > pyramid_.size()) level = pyramid_copy_lv_;
@@ -1343,7 +1341,25 @@ namespace FLIVR
                             for (int x = 0; x < nx2; x++) {
                                 size_t src_id = (size_t)(z+soz)*ny*nx + (size_t)(y+soy)*nx + (size_t)(x+sox);
                                 size_t dst_id = (size_t)(z+doz)*h*w + (size_t)(y+doy)*w + (size_t)(x+dox);
-                                if (!mask)
+								
+								bool clipped = false;
+								if (clipping)
+								{
+									Point p(double(x + ox) / double(imageW), double(y + oy) / double(imageH), double(z + oz) / double(imageD));
+									for (int pi = 0; pi < 6; ++pi)
+									{
+										if ((*planes)[pi] &&
+											(*planes)[pi]->eval_point(p) < 0.0)
+										{
+											clipped = true;
+											break;
+										}
+									}
+								}
+
+								if (clipped)
+									ptr_dst[dst_id] = 0;
+                                else if (!mask)
                                     ptr_dst[dst_id] = ptr_src[src_id];
                                 else {
                                     size_t mx = (size_t)((x+ox2+0.5)*xscale);
@@ -1367,7 +1383,25 @@ namespace FLIVR
                             for (int x = 0; x < nx2; x++) {
                                 size_t src_id = (size_t)(z+soz)*ny*nx + (size_t)(y+soy)*nx + (size_t)(x+sox);
                                 size_t dst_id = (size_t)(z+doz)*h*w + (size_t)(y+doy)*w + (size_t)(x+dox);
-                                if (!mask)
+
+								bool clipped = false;
+								if (clipping)
+								{
+									Point p(double(x + ox) / double(imageW), double(y + oy) / double(imageH), double(z + oz) / double(imageD));
+									for (int pi = 0; pi < 6; ++pi)
+									{
+										if ((*planes)[pi] &&
+											(*planes)[pi]->eval_point(p) < 0.0)
+										{
+											clipped = true;
+											break;
+										}
+									}
+								}
+
+								if (clipped)
+									ptr_dst[dst_id] = 0;
+                                else if (!mask)
                                     ptr_dst[dst_id] = ptr_src[src_id];
                                 else {
                                     size_t mx = (size_t)((x+ox2+0.5)*xscale);
@@ -1381,7 +1415,50 @@ namespace FLIVR
                         }
                     }
                 }
-            }
+            } else if (nbyte == 4) {
+				float* ptr_dst = (float*)(data->data);
+				const float* ptr_src = (const float*)(*bricks)[i]->getBrickData();
+				if (ptr_src) {
+#pragma omp parallel for
+					for (int z = 0; z < nz2; z++) {
+						for (int y = 0; y < ny2; y++) {
+							for (int x = 0; x < nx2; x++) {
+								size_t src_id = (size_t)(z + soz) * ny * nx + (size_t)(y + soy) * nx + (size_t)(x + sox);
+								size_t dst_id = (size_t)(z + doz) * h * w + (size_t)(y + doy) * w + (size_t)(x + dox);
+
+								bool clipped = false;
+								if (clipping)
+								{
+									Point p(double(x + ox) / double(imageW), double(y + oy) / double(imageH), double(z + oz) / double(imageD));
+									for (int pi = 0; pi < 6; ++pi)
+									{
+										if ((*planes)[pi] &&
+											(*planes)[pi]->eval_point(p) < 0.0)
+										{
+											clipped = true;
+											break;
+										}
+									}
+								}
+
+								if (clipped)
+									ptr_dst[dst_id] = 0.0;
+								else if (!mask)
+									ptr_dst[dst_id] = ptr_src[src_id];
+								else {
+									size_t mx = (size_t)((x + ox2 + 0.5) * xscale);
+									size_t my = (size_t)((y + oy2 + 0.5) * yscale);
+									size_t mz = (size_t)((z + oz2 + 0.5) * zscale);
+									size_t mid = mz * mask_h * mask_w + my * mask_w + mx;
+									if (mask_mode == 1) ptr_dst[dst_id] = ptr_mask[mid] > 0 ? ptr_src[src_id] : 0.0;
+									else if (mask_mode == 2) ptr_dst[dst_id] = ptr_mask[mid] == 0 ? ptr_src[src_id] : 0.0;
+								}
+							}
+						}
+					}
+				}
+			}
+
 
 			if (tmp) (*bricks)[i]->freeBrkData();
 		}

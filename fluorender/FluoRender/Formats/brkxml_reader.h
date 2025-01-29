@@ -308,6 +308,9 @@ public:
 	static bool GetZarrChannelPaths(wstring zarr_path, vector<wstring>& output);
     static bool GetN5ChannelPaths(wstring n5path, vector<wstring> &output);
 
+	static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
+	static bool DownloadFile(std::string& url);
+
 protected:
 	Nrrd* ConvertNrrd(int t, int c, bool get_max);
 

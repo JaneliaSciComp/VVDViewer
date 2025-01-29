@@ -41,7 +41,7 @@ template <typename _T> inline void SafeDelete(_T* &p)
 }
 
 // Write callback function for handling data received from libcurl
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+size_t BRKXMLReader::WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
 {
     std::ofstream* outputFile = static_cast<std::ofstream*>(userp);
     size_t totalSize = size * nmemb;
@@ -49,7 +49,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
     return totalSize;
 }
 
-bool DownloadFile(std::string& url)
+bool BRKXMLReader::DownloadFile(std::string& url)
 {
     CURL* curl;
     CURLcode res;
@@ -2204,6 +2204,37 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
             }
             relpaths.push_back(lvpaths);
         }
+        else {
+            vector<wstring> lvpaths;
+            int ii, jj, kk;
+            const int overlapx = 0;
+            const int overlapy = 0;
+            const int overlapz = 0;
+            size_t count = 0;
+            size_t zcount = 0;
+            for (kk = 0; kk < lvinfo.imageD; kk += lvinfo.brick_baseD)
+            {
+                if (kk) kk -= overlapz;
+                size_t ycount = 0;
+                for (jj = 0; jj < lvinfo.imageH; jj += lvinfo.brick_baseH)
+                {
+                    if (jj) jj -= overlapy;
+                    size_t xcount = 0;
+                    for (ii = 0; ii < lvinfo.imageW; ii += lvinfo.brick_baseW)
+                    {
+                        if (ii) ii -= overlapx;
+                        wstringstream wss;
+                        wss << xcount << slash << ycount << slash << zcount;
+                        lvpaths.push_back(wss.str());
+
+                        xcount++;
+                    }
+                    ycount++;
+                }
+                zcount++;
+            }
+            relpaths.push_back(lvpaths);
+        }
         
         if (f + 1 > lvinfo.filename.size())
             lvinfo.filename.resize(f + 1);
@@ -2298,6 +2329,11 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
                 dir_name = dir_name + slash;
             }
             else {
+                std::string path_str = root_path.generic_string();
+                while (!path_str.empty() && (path_str.back() == '/' || path_str.back() == '\\')) {
+                    path_str.pop_back();
+                }
+                root_path = fs::path(path_str);
                 output.push_back(root_path.wstring());
                 skip = true;
                 slash = L'/';
