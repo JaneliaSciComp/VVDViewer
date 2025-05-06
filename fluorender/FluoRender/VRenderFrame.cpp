@@ -3704,14 +3704,16 @@ void VRenderFrame::OnOpenURL(wxCommandEvent& WXUNUSED(event))
 			bool found = false;
 
 			wxString tmp_zarr_url = normalizedUrl + ".zattrs";
-			if (BRKXMLReader::DownloadFile(tmp_zarr_url.ToStdString())) {
+			string tmp_zarr_url_str = tmp_zarr_url.ToStdString();
+			if (BRKXMLReader::DownloadFile(tmp_zarr_url_str)) {
 				url = tmp_zarr_url;
 				found = true;
 			}
 
 			if (!found) {
 				wxString tmp_n5_url = normalizedUrl + "attributes.json";
-				if (BRKXMLReader::DownloadFile(tmp_n5_url.ToStdString())) {
+				string tmp_n5_url_str = tmp_n5_url.ToStdString();
+				if (BRKXMLReader::DownloadFile(tmp_n5_url_str)) {
 					url = tmp_n5_url;
 				}
 			}
