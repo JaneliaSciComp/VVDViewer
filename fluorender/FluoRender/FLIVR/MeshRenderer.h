@@ -281,6 +281,8 @@ namespace FLIVR
 			ShaderProgram* shader;
 			vks::VulkanDevice* device;
 			int blend_mode;
+			bool bnormal;
+			bool btexcoord;
 			VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 			VkPolygonMode polymode = VK_POLYGON_MODE_FILL;
 		};

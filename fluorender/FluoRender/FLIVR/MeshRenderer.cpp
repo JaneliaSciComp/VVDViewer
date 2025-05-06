@@ -1785,6 +1785,9 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 	{
 		MeshPipeline ret_pipeline;
 
+		bool bnormal = data_->normals || data_->facetnorms;
+		bool btexcoord = data_->texcoords;
+
 		ShaderProgram* shader = m_vulkan->msh_shader_factory_->shader(
 			device->logicalDevice,
 			type, depth_peel_, tex && data_->texcoords, fog_, light_ && (data_->normals || data_->facetnorms), extra_vertex_data_ != nullptr);
@@ -1794,7 +1797,9 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 				m_msh_pipelines[m_prev_msh_pipeline].shader == shader &&
 				m_msh_pipelines[m_prev_msh_pipeline].blend_mode == blend &&
 				m_msh_pipelines[m_prev_msh_pipeline].topology == topo &&
-				m_msh_pipelines[m_prev_msh_pipeline].polymode == poly)
+				m_msh_pipelines[m_prev_msh_pipeline].polymode == poly &&
+				m_msh_pipelines[m_prev_msh_pipeline].bnormal == bnormal &&
+				m_msh_pipelines[m_prev_msh_pipeline].btexcoord == btexcoord)
 				return m_msh_pipelines[m_prev_msh_pipeline];
 		}
 		for (int i = 0; i < m_msh_pipelines.size(); i++) {
@@ -1802,7 +1807,9 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 				m_msh_pipelines[i].shader == shader &&
 				m_msh_pipelines[i].blend_mode == blend &&
 				m_msh_pipelines[i].topology == topo &&
-				m_msh_pipelines[i].polymode == poly)
+				m_msh_pipelines[i].polymode == poly &&
+				m_msh_pipelines[i].bnormal == bnormal &&
+				m_msh_pipelines[i].btexcoord == btexcoord)
 			{
 				m_prev_msh_pipeline = i;
 				return m_msh_pipelines[i];
@@ -1946,6 +1953,8 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		ret_pipeline.blend_mode = blend;
 		ret_pipeline.topology = topo;
 		ret_pipeline.polymode = poly;
+		ret_pipeline.bnormal = bnormal;
+		ret_pipeline.btexcoord = btexcoord;
 
 		m_msh_pipelines.push_back(ret_pipeline);
 		m_prev_msh_pipeline = m_msh_pipelines.size() - 1;

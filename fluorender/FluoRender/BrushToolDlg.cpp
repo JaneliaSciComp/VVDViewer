@@ -845,6 +845,13 @@ void BrushToolDlg::GetSettings(VRenderView* vrv)
       int alpha = (int)(sel_vol->GetMaskAlpha() * 255.0 + 0.5);
       m_mask_overlay_alpha_sldr->SetValue(alpha);
       m_mask_overlay_alpha_text->ChangeValue(wxString::Format("%d", alpha));
+      m_mask_overlay_alpha_sldr->Enable();
+      m_mask_overlay_alpha_text->Enable();
+   }
+   else
+   {
+       m_mask_overlay_alpha_sldr->Disable();
+       m_mask_overlay_alpha_text->Disable();
    }
 
    SetEvtHandlerEnabled(true);
@@ -1624,11 +1631,17 @@ void BrushToolDlg::OnMaskAlphaText(wxCommandEvent& event)
     m_dft_mask_alpha = val;
     m_mask_overlay_alpha_sldr->SetValue(int(val + 0.5));
 
-    if (m_cur_view && m_cur_view->GetVolumeA())
+    VolumeData* sel_vol = 0;
+    VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+    if (vr_frame)
     {
-        VolumeData* vd = m_cur_view->GetVolumeA();
-        vd->SetMaskAlpha(m_dft_mask_alpha / 255.0);
-        m_cur_view->RefreshGL();
+        sel_vol = vr_frame->GetCurSelVol();
+        if (sel_vol)
+        {
+            VolumeData* vd = sel_vol;
+            vd->SetMaskAlpha(m_dft_mask_alpha / 255.0);
+            m_cur_view->RefreshGL();
+        }
     }
 }
 

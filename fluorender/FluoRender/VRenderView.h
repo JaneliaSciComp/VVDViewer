@@ -61,6 +61,12 @@ DEALINGS IN THE SOFTWARE.
 
 #include "VVulkan.h"
 
+#include <vector>
+#include <random>
+#include <ctime>
+#include <cmath>
+#include <array>
+
 #ifndef _VRENDERVIEW_H_
 #define _VRENDERVIEW_H_
 
@@ -94,6 +100,74 @@ using namespace std;
 class VRenderView;
 class VRenderVulkanView;
 class LMSeacher;
+
+
+class UniformDensityPointGenerator {
+private:
+	std::mt19937 gen;
+	double nx, ny, nz;
+	int numPoints;
+
+	struct CellDimensions {
+		int nx_cells, ny_cells, nz_cells;
+		double cell_size;
+	};
+
+	CellDimensions calculateCellDimensions() {
+		double volume = nx * ny * nz;
+		double approx_cell_size = std::cbrt(volume / numPoints);
+
+		CellDimensions dims;
+		dims.cell_size = approx_cell_size;
+		dims.nx_cells = static_cast<int>(std::ceil(nx / approx_cell_size));
+		dims.ny_cells = static_cast<int>(std::ceil(ny / approx_cell_size));
+		dims.nz_cells = static_cast<int>(std::ceil(nz / approx_cell_size));
+
+		return dims;
+	}
+
+public:
+	UniformDensityPointGenerator(int num_points, double max_x, double max_y, double max_z)
+		: gen(static_cast<unsigned int>(time(nullptr))),
+		nx(max_x), ny(max_y), nz(max_z), numPoints(num_points) {}
+
+	std::vector<Point> generatePoints() {
+		std::vector<Point> points;
+		auto dims = calculateCellDimensions();
+
+		std::uniform_real_distribution<double> dist_unit(0.0, 1.0);
+
+		int total_cells = dims.nx_cells * dims.ny_cells * dims.nz_cells;
+
+		std::vector<int> cell_indices(total_cells);
+		for (int i = 0; i < total_cells; ++i) {
+			cell_indices[i] = i;
+		}
+
+		std::shuffle(cell_indices.begin(), cell_indices.end(), gen);
+
+		for (int i = 0; i < numPoints && i < total_cells; ++i) {
+			int cell_idx = cell_indices[i];
+
+			int z_idx = cell_idx / (dims.nx_cells * dims.ny_cells);
+			int remainder = cell_idx % (dims.nx_cells * dims.ny_cells);
+			int y_idx = remainder / dims.nx_cells;
+			int x_idx = remainder % dims.nx_cells;
+
+			double x = (x_idx + dist_unit(gen)) * dims.cell_size;
+			double y = (y_idx + dist_unit(gen)) * dims.cell_size;
+			double z = (z_idx + dist_unit(gen)) * dims.cell_size;
+
+			x = std::min(x, nx);
+			y = std::min(y, ny);
+			z = std::min(z, nz);
+
+			points.emplace_back(x, y, z);
+		}
+
+		return points;
+	}
+};
 
 //tree item data
 class EXPORT_API LMItemInfo : public wxTreeItemData
@@ -458,6 +532,8 @@ public:
 	void SetParamCapture(wxString &cap_file, int begin_frame, int end_frame, bool rewind);
 	//set parameters
 	void SetParams(double t);
+	//add key frame
+	void AddKeyFrame(double duration, int interpolation, bool record_volume_params);
 	//reset and stop
 	void ResetMovieAngle();
 	void StopMovie();
@@ -748,6 +824,150 @@ public:
     void ImportBigWarpCSV(wxString inputpath);
     void ExportBigWarpCSV(wxString outpath);
     void WarpCurrentVolume();
+	
+	void ScatterRulers(long density);
+
+	void SetSyncClippingPlanes(bool val) { m_sync_clipping_planes = val; }
+	void SetSyncClippingPlanes(bool val, ClippingLayer* copy) 
+	{
+		m_sync_clipping_planes = val; 
+		copy->GetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		copy->GetClippingFixParams(m_clip_mode, m_q_cl_zero, m_q_cl_fix, m_q_fix, m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix, m_rotx_fix, m_roty_fix, m_rotz_fix, m_trans_fix);
+		
+		m_link_x_chk = copy->GetClippingLinkX();
+		m_link_y_chk = copy->GetClippingLinkY();
+		m_link_z_chk = copy->GetClippingLinkZ();
+		
+		for (int i = 0; i < 6; i++)
+			m_linked_plane_params[i] = copy->GetLinkedParam(i);
+	}
+	void SetSyncClippingPlanes(bool val, VolumeData* copy)
+	{
+		m_sync_clipping_planes = val;
+		copy->GetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		copy->GetClippingFixParams(m_clip_mode, m_q_cl_zero, m_q_cl_fix, m_q_fix, m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix, m_rotx_fix, m_roty_fix, m_rotz_fix, m_trans_fix);
+
+		m_link_x_chk = copy->GetClippingLinkX();
+		m_link_y_chk = copy->GetClippingLinkY();
+		m_link_z_chk = copy->GetClippingLinkZ();
+
+		vector<Plane*>* planes = 0;
+		if (copy->GetVR())
+			planes = copy->GetVR()->get_planes();
+		if (!planes)
+			return;
+		if (planes->size() != 6)
+			return;
+		for (int i = 0; i < 6; i++)
+			m_linked_plane_params[i] = (*planes)[i]->GetParam();
+	}
+	void SetSyncClippingPlanes(bool val, MeshData* copy)
+	{
+		m_sync_clipping_planes = val;
+		copy->GetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		copy->GetClippingFixParams(m_clip_mode, m_q_cl_zero, m_q_cl_fix, m_q_fix, m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix, m_rotx_fix, m_roty_fix, m_rotz_fix, m_trans_fix);
+
+		m_link_x_chk = copy->GetClippingLinkX();
+		m_link_y_chk = copy->GetClippingLinkY();
+		m_link_z_chk = copy->GetClippingLinkZ();
+
+		vector<Plane*>* planes = 0;
+		if (copy->GetMR())
+			planes = copy->GetMR()->get_planes();
+		if (!planes)
+			return;
+		if (planes->size() != 6)
+			return;
+		for (int i = 0; i < 6; i++)
+			m_linked_plane_params[i] = (*planes)[i]->GetParam();
+	}
+	bool GetSyncClippingPlanes() { return m_sync_clipping_planes; }
+
+	void SetLinkedParam(int id, double p) { m_linked_plane_params[id] = p; }
+	double GetLinkedParam(int id) { return m_linked_plane_params[id]; }
+
+	void SetLinkedX1Param(double p) { m_linked_plane_params[0] = p; }
+	void SetLinkedX2Param(double p) { m_linked_plane_params[1] = p; }
+	void SetLinkedY1Param(double p) { m_linked_plane_params[2] = p; }
+	void SetLinkedY2Param(double p) { m_linked_plane_params[3] = p; }
+	void SetLinkedZ1Param(double p) { m_linked_plane_params[4] = p; }
+	void SetLinkedZ2Param(double p) { m_linked_plane_params[5] = p; }
+	double GetLinkedX1Param() { return m_linked_plane_params[0]; }
+	double GetLinkedX2Param() { return m_linked_plane_params[1]; }
+	double GetLinkedY1Param() { return m_linked_plane_params[2]; }
+	double GetLinkedY2Param() { return m_linked_plane_params[3]; }
+	double GetLinkedZ1Param() { return m_linked_plane_params[4]; }
+	double GetLinkedZ2Param() { return m_linked_plane_params[5]; }
+
+	void SetClippingLinkX(bool v) { m_link_x_chk = v; }
+	void SetClippingLinkY(bool v) { m_link_y_chk = v; }
+	void SetClippingLinkZ(bool v) { m_link_z_chk = v; }
+	bool GetClippingLinkX() { return m_link_x_chk; }
+	bool GetClippingLinkY() { return m_link_y_chk; }
+	bool GetClippingLinkZ() { return m_link_z_chk; }
+
+	void SetClipDistance(int distx, int disty, int distz)
+	{
+		m_clip_dist_x = distx;
+		m_clip_dist_y = disty;
+		m_clip_dist_z = distz;
+	}
+
+	void GetClipDistance(int& distx, int& disty, int& distz)
+	{
+		distx = m_clip_dist_x;
+		disty = m_clip_dist_y;
+		distz = m_clip_dist_z;
+	}
+
+	void GetCameraSettings(double& cam_rotx, double& cam_roty, double& cam_rotz, Vector& obj_ctr, Vector& obj_trans)
+	{
+		cam_rotx = m_rotx;
+		cam_roty = m_roty;
+		cam_rotz = m_rotz;
+		obj_ctr.x(m_obj_ctrx);
+		obj_ctr.y(m_obj_ctry);
+		obj_ctr.z(m_obj_ctrz);
+		obj_trans.x(m_obj_transx);
+		obj_trans.y(m_obj_transy);
+		obj_trans.z(m_obj_transz);
+	}
+
+	void SetClippingFixParams(int clip_mode, Quaternion q_cl_zero, Quaternion q_cl_fix, Quaternion q_fix, double rotx_cl_fix, double roty_cl_fix, double rotz_cl_fix, double rotx_fix, double roty_fix, double rotz_fix, Vector trans_fix)
+	{
+		m_clip_mode = clip_mode;
+		m_q_cl_zero = q_cl_zero;
+		m_q_cl_fix = q_cl_fix;
+		m_q_fix = q_fix;
+
+		m_rotx_cl_fix = rotx_cl_fix;
+		m_roty_cl_fix = roty_cl_fix;
+		m_rotz_cl_fix = rotz_cl_fix;
+
+		m_rotx_fix = rotx_fix;
+		m_roty_fix = roty_fix;
+		m_rotz_fix = rotz_fix;
+
+		m_trans_fix = trans_fix;
+	}
+
+	void GetClippingFixParams(int& clip_mode, Quaternion& q_cl_zero, Quaternion& q_cl_fix, Quaternion& q_fix, double& rotx_cl_fix, double& roty_cl_fix, double& rotz_cl_fix, double& rotx_fix, double& roty_fix, double& rotz_fix, Vector& trans_fix)
+	{
+		clip_mode = m_clip_mode;
+		q_cl_zero = m_q_cl_zero;
+		q_cl_fix = m_q_cl_fix;
+		q_fix = m_q_fix;
+
+		rotx_cl_fix = m_rotx_cl_fix;
+		roty_cl_fix = m_roty_cl_fix;
+		rotz_cl_fix = m_rotz_cl_fix;
+
+		rotx_fix = m_rotx_fix;
+		roty_fix = m_roty_fix;
+		rotz_fix = m_rotz_fix;
+
+		trans_fix = m_trans_fix;
+	}
 
 public:
 	//script run
@@ -1225,6 +1445,19 @@ private:
 
 	wxButton *m_dummy;
 
+	bool m_sync_clipping_planes;
+
+	int m_clip_dist_x;
+	int m_clip_dist_y;
+	int m_clip_dist_z;
+
+	//linkers
+	bool m_link_x_chk;
+	bool m_link_y_chk;
+	bool m_link_z_chk;
+
+	double m_linked_plane_params[6];
+
 private:
 #ifdef _WIN32
 	//wacom tablet
@@ -1311,7 +1544,11 @@ private:
 	Quaternion Trackball(int p1x, int p1y, int p2x, int p2y);
 	Quaternion TrackballClip(int p1x, int p1y, int p2x, int p2y);
 	void Q2A();
+	void Q2ASync();
 	void A2Q();
+	void A2QSync();
+	void SyncClippingPlaneRotations(bool force=false);
+	void SyncClippingMode();
 	//sort bricks after the view has been changed
 	void SetSortBricks();
 
@@ -1747,6 +1984,10 @@ public:
 		if (m_glview)
 			m_glview->SetParams(p);
 	}
+	void AddKeyFrame(double duration, int interpolation, bool record_volume_params) {
+		if (m_glview)
+			m_glview->AddKeyFrame(duration, interpolation, record_volume_params);
+	}
 	//reset & stop
 	void ResetMovieAngle()
 	{
@@ -2181,6 +2422,70 @@ public:
     {
         if (m_glview) m_glview->WarpCurrentVolume();
     }
+
+	void ScatterRulers(long density)
+	{
+		if (m_glview) m_glview->ScatterRulers(density);
+	}
+
+	void SetSyncClippingPlanes(bool val) { if (m_glview) m_glview->SetSyncClippingPlanes(val); }
+	void SetSyncClippingPlanes(bool val, ClippingLayer* copy) { if (m_glview) m_glview->SetSyncClippingPlanes(val, copy); }
+	void SetSyncClippingPlanes(bool val, VolumeData* copy) { if (m_glview) m_glview->SetSyncClippingPlanes(val, copy); }
+	void SetSyncClippingPlanes(bool val, MeshData* copy) { if (m_glview) m_glview->SetSyncClippingPlanes(val, copy); }
+	bool GetSyncClippingPlanes() { if (m_glview) return m_glview->GetSyncClippingPlanes(); else return false; }
+
+	void SetLinkedParam(int id, double p) { if (m_glview)  m_glview->SetLinkedParam(id, p); }
+	double GetLinkedParam(int id) { if (m_glview) return m_glview->GetLinkedParam(id); else return false; }
+
+	void SetLinkedX1Param(double p) { if (m_glview) m_glview->SetLinkedX1Param(p); }
+	void SetLinkedX2Param(double p) { if (m_glview) m_glview->SetLinkedX2Param(p); }
+	void SetLinkedY1Param(double p) { if (m_glview) m_glview->SetLinkedY1Param(p); }
+	void SetLinkedY2Param(double p) { if (m_glview) m_glview->SetLinkedY2Param(p); }
+	void SetLinkedZ1Param(double p) { if (m_glview) m_glview->SetLinkedZ1Param(p); }
+	void SetLinkedZ2Param(double p) { if (m_glview) m_glview->SetLinkedZ2Param(p); }
+	double GetLinkedX1Param() { if (m_glview) return m_glview->GetLinkedX1Param(); else return 0.0; }
+	double GetLinkedX2Param() { if (m_glview) return m_glview->GetLinkedX2Param(); else return 0.0; }
+	double GetLinkedY1Param() { if (m_glview) return m_glview->GetLinkedY1Param(); else return 0.0; }
+	double GetLinkedY2Param() { if (m_glview) return m_glview->GetLinkedY2Param(); else return 0.0; }
+	double GetLinkedZ1Param() { if (m_glview) return m_glview->GetLinkedZ1Param(); else return 0.0; }
+	double GetLinkedZ2Param() { if (m_glview) return m_glview->GetLinkedZ2Param(); else return 0.0; }
+
+	void SetClippingLinkX(bool v) { if (m_glview) m_glview->SetClippingLinkX(v); }
+	void SetClippingLinkY(bool v) { if (m_glview) m_glview->SetClippingLinkY(v); }
+	void SetClippingLinkZ(bool v) { if (m_glview) m_glview->SetClippingLinkZ(v); }
+	bool GetClippingLinkX() { if (m_glview) return m_glview->GetClippingLinkX(); else return false; }
+	bool GetClippingLinkY() { if (m_glview) return m_glview->GetClippingLinkY(); else return false; }
+	bool GetClippingLinkZ() { if (m_glview) return m_glview->GetClippingLinkZ(); else return false; }
+
+	void SetClipDistance(int distx, int disty, int distz)
+	{
+		if (m_glview) m_glview->SetClipDistance(distx, disty, distz);
+	}
+
+	void GetClipDistance(int& distx, int& disty, int& distz)
+	{
+		if (m_glview) m_glview->GetClipDistance(distx, disty, distz);
+	}
+
+	void GetCameraSettings(double& cam_rotx, double& cam_roty, double& cam_rotz, Vector& obj_ctr, Vector& obj_trans)
+	{
+		if (m_glview) m_glview->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+	}
+
+	void SetClippingFixParams(int clip_mode, Quaternion q_cl_zero, Quaternion q_cl_fix, Quaternion q_fix, double rotx_cl_fix, double roty_cl_fix, double rotz_cl_fix, double rotx_fix, double roty_fix, double rotz_fix, Vector trans_fix)
+	{
+		if (m_glview) m_glview->SetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix, rotx_cl_fix, roty_cl_fix, rotz_cl_fix, rotx_fix, roty_fix, rotz_fix, trans_fix);
+	}
+
+	void GetClippingFixParams(int& clip_mode, Quaternion& q_cl_zero, Quaternion& q_cl_fix, Quaternion& q_fix, double& rotx_cl_fix, double& roty_cl_fix, double& rotz_cl_fix, double& rotx_fix, double& roty_fix, double& rotz_fix, Vector& trans_fix)
+	{
+		if (m_glview) m_glview->GetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix, rotx_cl_fix, roty_cl_fix, rotz_cl_fix, rotx_fix, roty_fix, rotz_fix, trans_fix);
+	}
+
+	void SyncClippingPlaneRotations(bool force = false)
+	{
+		if (m_glview) m_glview->SyncClippingPlaneRotations(force);
+	}
 
 public:
 	wxWindow* m_frame;

@@ -1166,6 +1166,7 @@ BEGIN_EVENT_TABLE(MeasureDlg, wxPanel)
 	EVT_CHECKBOX(ID_UseTransferChk, MeasureDlg::OnUseTransferCheck)
 	EVT_CHECKBOX(ID_TransientChk, MeasureDlg::OnTransientCheck)
     EVT_BUTTON(ID_WarpBtn, MeasureDlg::OnWarp)
+	EVT_BUTTON(ID_ScatterBtn, MeasureDlg::OnScatterRulers)
 	END_EVENT_TABLE()
 
 MeasureDlg::MeasureDlg(wxWindow* frame, wxWindow* parent,
@@ -1180,6 +1181,9 @@ wxPanel(parent, id, pos, size, style, name),
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
+
+	//validator: integer
+	wxIntegerValidator<unsigned int> vald_int;
 
 	//toolbar
 	m_toolbar = new wxToolBar(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -1252,13 +1256,25 @@ wxPanel(parent, id, pos, size, style, name),
 		wxDefaultPosition, wxDefaultSize);
 	m_use_transfer_chk = new wxCheckBox(this, ID_UseTransferChk, "Use Volume Properties",
 		wxDefaultPosition, wxDefaultSize);
+	m_scatter_btn = new wxButton(this, ID_ScatterBtn, "Scatter Rulers",
+		wxDefaultPosition, wxSize(120, 20));
+	wxStaticText* st2 = new wxStaticText(this, 0, "Density:",
+		wxDefaultPosition, wxSize(50, -1), wxALIGN_CENTER);
+	m_density_txt = new wxTextCtrl(this, ID_DensityText, "1000",
+		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
     m_warp_btn = new wxButton(this, ID_WarpBtn, "Apply Transform",
         wxDefaultPosition, wxSize(120, 20));
 	sizer_2->Add(10, 10);
 	sizer_2->Add(m_transient_chk, 0, wxALIGN_CENTER);
 	sizer_2->Add(10, 10);
 	sizer_2->Add(m_use_transfer_chk, 0, wxALIGN_CENTER);
-    sizer_2->Add(10, 10);
+	sizer_2->Add(10, 10);
+	sizer_2->Add(m_scatter_btn, 0, wxALIGN_CENTER);
+	sizer_2->Add(2, 10);
+	sizer_2->Add(st2, 0, wxALIGN_CENTER);
+	sizer_2->Add(1, 10);
+	sizer_2->Add(m_density_txt, 0, wxALIGN_CENTER);
+    sizer_2->Add(30, 10);
     sizer_2->Add(m_warp_btn, 0, wxALIGN_CENTER);
     //m_warp_btn->Hide();
 
@@ -1514,4 +1530,15 @@ void MeasureDlg::OnWarp(wxCommandEvent& event)
         return;
 
     m_view->WarpCurrentVolume();
+}
+
+void MeasureDlg::OnScatterRulers(wxCommandEvent& event)
+{
+	if (!m_view)
+		return;
+
+	wxString str = m_density_txt->GetValue();
+	long ival = 0;
+	str.ToLong(&ival);
+	m_view->ScatterRulers(ival);
 }

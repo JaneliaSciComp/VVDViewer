@@ -824,7 +824,13 @@ void VolumeSelector::CompExportMultiChann(bool select)
 	//get all the data from original volume
 	Texture* tex_mvd = m_vd->GetTexture();
 	if (!tex_mvd) return;
-	Nrrd* nrrd_mvd = tex_mvd->get_nrrd_raw(0);
+	auto nrrd_mvd_sp = tex_mvd->get_nrrd(0);
+	if (m_vd->isBrxml())
+	{
+		int lv = m_vd->GetMaskLv();
+		nrrd_mvd_sp = make_shared<VL_Nrrd>(tex_mvd->loadData(lv));
+	}
+	Nrrd* nrrd_mvd = nrrd_mvd_sp->getNrrd();
 	if (!nrrd_mvd) return;
 	Nrrd* nrrd_mvd_mask = tex_mvd->get_nrrd_raw(tex_mvd->nmask());
 	if (select && !nrrd_mvd_mask) return;
@@ -846,7 +852,7 @@ void VolumeSelector::CompExportMultiChann(bool select)
 		//create a new volume
 		int res_x, res_y, res_z;
 		double spc_x, spc_y, spc_z;
-		int bits = 8;
+		int bits = nrrd_mvd_sp->getBytesPerSample() * 8;
 		m_vd->GetResolution(res_x, res_y, res_z);
 		m_vd->GetSpacings(spc_x, spc_y, spc_z);
 		double amb, diff, spec, shine;
@@ -864,10 +870,7 @@ void VolumeSelector::CompExportMultiChann(bool select)
 		//the actual data
 		Texture* tex_vd = vd->GetTexture();
 		if (!tex_vd) continue;
-		Nrrd* nrrd_vd = tex_vd->get_nrrd_raw(0);
-		if (!nrrd_vd) continue;
-		unsigned char* data_vd = (unsigned char*)nrrd_vd->data;
-		if (!data_vd) continue;
+		auto nrrd_new = tex_vd->get_nrrd(0);
 
 		int ii, jj, kk;
 		for (ii=0; ii<res_x; ii++)
@@ -878,34 +881,13 @@ void VolumeSelector::CompExportMultiChann(bool select)
 					unsigned int value_label = data_mvd_label[index];
 					if (value_label > 0 && value_label==comp_iter->second.id)
 					{
-						unsigned char value = 0;
-						if (nrrd_mvd->type == nrrdTypeUChar)
-						{
-							if (select)
-								value = (unsigned char)((double)(((unsigned char*)data_mvd)[index]) *
-								double(data_mvd_mask[index]) / 255.0);
-							else
-								value = ((unsigned char*)data_mvd)[index];
-						}
-						else if (nrrd_mvd->type == nrrdTypeUShort)
-						{
-							if (select)
-								value = (unsigned char)((double)(((unsigned short*)data_mvd)[index]) *
-								m_vd->GetScalarScale() * double(data_mvd_mask[index]) / 65535.0);
-							else
-								value = (unsigned char)((double)(((unsigned short*)data_mvd)[index]) *
-								m_vd->GetScalarScale() / 255.0);
-						}
-						else if (nrrd_mvd->type == nrrdTypeFloat)
-						{
-							if (select)
-								value = (unsigned char)((double)(((float*)data_mvd)[index]) *
-									m_vd->GetScalarScale() * double(data_mvd_mask[index]));
-							else
-								value = (unsigned char)((double)(((float*)data_mvd)[index]) *
-									m_vd->GetScalarScale() * 255.0);
-						}
-						data_vd[index] = value;
+						float value = 0;
+						if (select)
+							value = nrrd_mvd_sp->getFloatUnsafe(index) *
+							float(data_mvd_mask[index]) / 255.0f;
+						else
+							value = nrrd_mvd_sp->getFloatUnsafe(index);
+						nrrd_new->setFloatUnsafe(index, value);
 					}
 				}
 				int randv = 0;
@@ -927,6 +909,7 @@ void VolumeSelector::CompExportMultiChann(bool select)
 				vd->SetAlpha(m_vd->GetAlpha());
 				vd->SetSampleRate(m_vd->GetSampleRate());
 				vd->SetMaterial(amb, diff, spec, shine);
+				vd->SetMaxValue(m_vd->GetMaxValue());
 
 				m_result_vols.push_back(vd);
 	}
@@ -949,7 +932,13 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 	//get all the data from original volume
 	Texture* tex_mvd = m_vd->GetTexture();
 	if (!tex_mvd) return;
-	Nrrd* nrrd_mvd = tex_mvd->get_nrrd_raw(0);
+	auto nrrd_mvd_sp = tex_mvd->get_nrrd(0);
+	if (m_vd->isBrxml())
+	{
+		int lv = m_vd->GetMaskLv();
+		nrrd_mvd_sp = make_shared<VL_Nrrd>(tex_mvd->loadData(lv));
+	}
+	Nrrd* nrrd_mvd = nrrd_mvd_sp->getNrrd();
 	if (!nrrd_mvd) return;
 	Nrrd* nrrd_mvd_mask = tex_mvd->get_nrrd_raw(tex_mvd->nmask());
 	if (select && !nrrd_mvd_mask) return;
@@ -963,7 +952,7 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 	//create new volumes
 	int res_x, res_y, res_z;
 	double spc_x, spc_y, spc_z;
-	int bits = 8;
+	int bits = nrrd_mvd_sp->getBytesPerSample() * 8;
 	m_vd->GetResolution(res_x, res_y, res_z);
 	m_vd->GetSpacings(spc_x, spc_y, spc_z);
 	bool push_new = true;
@@ -1001,24 +990,16 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 	//red volume
 	Texture* tex_vd_r = vd_r->GetTexture();
 	if (!tex_vd_r) return;
-	Nrrd* nrrd_vd_r = tex_vd_r->get_nrrd_raw(0);
-	if (!nrrd_vd_r) return;
-	unsigned char* data_vd_r = (unsigned char*)nrrd_vd_r->data;
-	if (!data_vd_r) return;
 	//green volume
 	Texture* tex_vd_g = vd_g->GetTexture();
 	if (!tex_vd_g) return;
-	Nrrd* nrrd_vd_g = tex_vd_g->get_nrrd_raw(0);
-	if (!nrrd_vd_g) return;
-	unsigned char* data_vd_g = (unsigned char*)nrrd_vd_g->data;
-	if (!data_vd_g) return;
 	//blue volume
 	Texture* tex_vd_b = vd_b->GetTexture();
 	if (!tex_vd_b) return;
-	Nrrd* nrrd_vd_b = tex_vd_b->get_nrrd_raw(0);
-	if (!nrrd_vd_b) return;
-	unsigned char* data_vd_b = (unsigned char*)nrrd_vd_b->data;
-	if (!data_vd_b) return;
+
+	auto nrrd_r = tex_vd_r->get_nrrd(0);
+	auto nrrd_g = tex_vd_g->get_nrrd(0);
+	auto nrrd_b = tex_vd_b->get_nrrd(0);
 
 	if (hide)
 		m_randv = int((double)rand()/(RAND_MAX)*900+100);
@@ -1034,41 +1015,21 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 				{
 					//intensity value
 					double value = 0.0;
-					if (nrrd_mvd->type == nrrdTypeUChar)
-					{
-						if (select)
-							value = double(((unsigned char*)data_mvd)[index]) *
-							double(data_mvd_mask[index]) / 65025.0;
-						else
-							value = double(((unsigned char*)data_mvd)[index]) / 255.0;
-					}
-					else if (nrrd_mvd->type == nrrdTypeUShort)
-					{
-						if (select)
-							value = double(((unsigned short*)data_mvd)[index]) *
-							m_vd->GetScalarScale() *
-							double(data_mvd_mask[index]) / 16581375.0;
-						else
-							value = double(((unsigned short*)data_mvd)[index]) *
-							m_vd->GetScalarScale() / 65535.0;
-					}
-					else if (nrrd_mvd->type == nrrdTypeFloat)
-					{
-						if (select)
-							value = double(((float*)data_mvd)[index]) *
-							m_vd->GetScalarScale() *
-							double(data_mvd_mask[index]) / 255.0;
-						else
-							value = double(((float*)data_mvd)[index]) *
-							m_vd->GetScalarScale();
-					}
+					if (select)
+						value = double(nrrd_mvd_sp->getFloatUnsafe(index)) *
+						m_vd->GetScalarScale() *
+						double(data_mvd_mask[index]) / 255.0;
+					else
+						value = double(nrrd_mvd_sp->getFloatUnsafe(index)) *
+						m_vd->GetScalarScale();
+					
 					double hue = HueCalculation(hmode, value_label);
 					Color color(HSVColor(hue, 1.0, 1.0));
 					//color
-					value = value>1.0?1.0:value;
-					data_vd_r[index] = (unsigned char)(color.r()*255.0*value);
-					data_vd_g[index] = (unsigned char)(color.g()*255.0*value);
-					data_vd_b[index] = (unsigned char)(color.b()*255.0*value);
+					value = value > m_vd->GetMaxValue() ? m_vd->GetMaxValue() : value;
+					nrrd_r->setFloatUnsafe(index, (float)(color.r()*value));
+					nrrd_g->setFloatUnsafe(index, (float)(color.g()*value));
+					nrrd_b->setFloatUnsafe(index, (float)(color.b()*value));
 				}
 			}
 
@@ -1089,6 +1050,9 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 			vd_r->SetShadow(false);
 			vd_g->SetShadow(false);
 			vd_b->SetShadow(false);
+			vd_r->SetMaxValue(m_vd->GetMaxValue());
+			vd_g->SetMaxValue(m_vd->GetMaxValue());
+			vd_b->SetMaxValue(m_vd->GetMaxValue());
 			//other settings
 			double amb, diff, spec, shine;
 			m_vd->GetMaterial(amb, diff, spec, shine);

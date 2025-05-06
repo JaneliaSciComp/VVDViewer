@@ -155,6 +155,14 @@ VolumeData::VolumeData()
 	m_brkxml_mask = NULL;
 
 	m_skip_brick = false;
+
+	m_link_x_chk = false;
+	m_link_y_chk = false;
+	m_link_z_chk = false;
+	for (auto& e : m_linked_plane_params)
+		e = 0.0;
+
+	m_rotx_cl = m_roty_cl = m_rotz_cl = 0.0;
 }
 
 /*
@@ -3892,21 +3900,6 @@ int VolumeData::GetBlendMode()
 	return m_blend_mode;
 }
 
-//clip distance
-void VolumeData::SetClipDistance(int distx, int disty, int distz)
-{
-	m_clip_dist_x = distx;
-	m_clip_dist_y = disty;
-	m_clip_dist_z = distz;
-}
-
-void VolumeData::GetClipDistance(int &distx, int &disty, int &distz)
-{
-	distx = m_clip_dist_x;
-	disty = m_clip_dist_y;
-	distz = m_clip_dist_z;
-}
-
 //randomize color
 void VolumeData::RandomizeColor()
 {
@@ -4078,6 +4071,22 @@ VolumeData* VolumeData::CopyLevel(int lv)
 	{
 		auto mask = make_shared<VL_Nrrd>(maskindata->getNrrdDeepCopy());
 		vd->LoadMask(mask);
+	}
+
+	if (vd->GetTexture() && vd->GetTexture()->get_nrrd(0))
+	{
+		Nrrd* nrrd_data = vd->GetTexture()->get_nrrd(0)->getNrrd();
+		uint8* val8nr = (uint8*)nrrd_data->data;
+		int max_val = 255;
+		int bytes = vd->GetTexture()->get_nrrd(0)->getBytesPerSample();
+		unsigned long long mem_size = (unsigned long long)m_res_x * (unsigned long long)m_res_y * (unsigned long long)m_res_z * bytes;
+		if (nrrd_data->type == nrrdTypeUChar)
+			max_val = *std::max_element(val8nr, val8nr + mem_size);
+		else if (nrrd_data->type == nrrdTypeUShort)
+			max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / bytes);
+		else if (nrrd_data->type == nrrdTypeFloat)
+			max_val = *std::max_element((float*)val8nr, (float*)val8nr + mem_size / bytes);
+		vd->SetMaxValue(max_val);
 	}
 
 	return vd;
@@ -4298,6 +4307,396 @@ bool VolumeData::InsideClippingPlanes(Point pos)
     }
 
     return true;
+}
+
+Quaternion VolumeData::TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y)
+{
+	Quaternion q;
+	Vector a; /* Axis of rotation */
+	double phi;  /* how much to rotate about axis */
+
+	if (p1x == p2x && p1y == p2y)
+	{
+		/* Zero rotation */
+		return q;
+	}
+
+	a = Vector(p1y - p2y, p2x - p1x, 0.0);
+	phi = a.length() / 3.0;
+	a.normalize();
+	Quaternion q_a(a);
+	//rotate back to local
+	Quaternion q2;
+	q2.FromEuler(-cam_rotx, cam_roty, cam_rotz);
+	q_a = (q2)*q_a * (-q2);
+	q_a = (m_q_cl)*q_a * (-m_q_cl);
+	a = Vector(q_a.x, q_a.y, q_a.z);
+	a.normalize();
+
+	q = Quaternion(phi, a);
+	q.Normalize();
+
+	return q;
+}
+
+void VolumeData::Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (cam_roty > 360.0)
+		cam_roty -= 360.0;
+	if (cam_roty < 0.0)
+		cam_roty += 360.0;
+	if (cam_rotx > 360.0)
+		cam_rotx -= 360.0;
+	if (cam_rotx < 0.0)
+		cam_rotx += 360.0;
+	if (cam_rotz > 360.0)
+		cam_rotz -= 360.0;
+	if (cam_rotz < 0.0)
+		cam_rotz += 360.0;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		vector<Plane*>* planes = 0;
+		Vector n;
+		Point p;
+
+		double spcx, spcy, spcz;
+		int resx, resy, resz;
+		GetSpacings(spcx, spcy, spcz);
+		GetResolution(resx, resy, resz);
+		Vector scale, scale2, scale2inv;
+		if (spcx > 0.0 && spcy > 0.0 && spcz > 0.0)
+		{
+			scale = Vector(1.0 / resx / spcx, 1.0 / resy / spcy, 1.0 / resz / spcz);
+			scale.safe_normalize();
+			scale2 = Vector(resx * spcx, resy * spcy, resz * spcz);
+			//scale2.safe_normalize();
+			scale2inv = Vector(1.0 / (resx * spcx), 1.0 / (resy * spcy), 1.0 / (resz * spcz));
+			//scale2inv.safe_normalize();
+		}
+		else
+		{
+			scale = Vector(1.0, 1.0, 1.0);
+			scale2 = Vector(1.0, 1.0, 1.0);
+			scale2inv = Vector(1.0, 1.0, 1.0);
+		}
+
+		if (!GetTexture())
+			return;
+		Transform* tform = GetTexture()->transform();
+		if (!tform)
+			return;
+		Transform tform_copy;
+		double mvmat[16];
+		tform->get_trans(mvmat);
+		swap(mvmat[3], mvmat[12]);
+		swap(mvmat[7], mvmat[13]);
+		swap(mvmat[11], mvmat[14]);
+		tform_copy.set(mvmat);
+
+		double rotx, roty, rotz;
+		Quaternion q_cl, q_cl_fix;
+		m_q_cl.ToEuler(rotx, roty, rotz);
+		q_cl.FromEuler(-rotx, -roty, rotz);
+		m_q_cl_fix.ToEuler(rotx, roty, rotz);
+		q_cl_fix.FromEuler(-rotx, -roty, rotz);
+
+		if (GetVR())
+			planes = GetVR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			GetVR()->set_clip_quaternion(m_q_cl);
+			double x1, x2, y1, y2, z1, z2;
+			double abcd[4];
+			(*planes)[0]->get_copy(abcd);
+			x1 = fabs(abcd[3]);
+			(*planes)[1]->get_copy(abcd);
+			x2 = fabs(abcd[3]);
+			(*planes)[2]->get_copy(abcd);
+			y1 = fabs(abcd[3]);
+			(*planes)[3]->get_copy(abcd);
+			y2 = fabs(abcd[3]);
+			(*planes)[4]->get_copy(abcd);
+			z1 = fabs(abcd[3]);
+			(*planes)[5]->get_copy(abcd);
+			z2 = fabs(abcd[3]);
+
+			Vector trans1(-obj_ctr.x(), -obj_ctr.y(), -obj_ctr.z());
+			Vector trans2 = obj_ctr;
+
+			if (m_clip_mode == 3)
+			{
+				Vector obj_trans1 = m_trans_fix;
+				Vector obj_trans2 = -obj_trans1;
+				Vector obj_trans3 = obj_trans1 - obj_trans;
+
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.project(p);
+					n = tform->unproject(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Rotate(q_cl_fix);
+					(*planes)[i]->Translate(obj_trans1);
+					(*planes)[i]->Rotate(q_cl);
+					(*planes)[i]->Translate(obj_trans2);
+					(*planes)[i]->Translate(obj_trans3);
+					(*planes)[i]->Translate(trans2);
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.unproject(p);
+					n = tform->project(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+				}
+			}
+			else
+			{
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.project(p);
+					n = tform->unproject(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Rotate(q_cl);
+					(*planes)[i]->Translate(trans2);
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.unproject(p);
+					n = tform->project(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+				}
+			}
+		}
+	}
+}
+
+void VolumeData::A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		vector<Plane*>* planes = 0;
+		Vector n;
+		Point p;
+		double spcx, spcy, spcz;
+		int resx, resy, resz;
+		GetSpacings(spcx, spcy, spcz);
+		GetResolution(resx, resy, resz);
+		Vector scale, scale2, scale2inv;
+		if (spcx > 0.0 && spcy > 0.0 && spcz > 0.0)
+		{
+			scale = Vector(1.0 / resx / spcx, 1.0 / resy / spcy, 1.0 / resz / spcz);
+			scale.safe_normalize();
+			scale2 = Vector(resx * spcx, resy * spcy, resz * spcz);
+			//scale2.safe_normalize();
+			scale2inv = Vector(1.0 / (resx * spcx), 1.0 / (resy * spcy), 1.0 / (resz * spcz));
+			//scale2inv.safe_normalize();
+		}
+		else
+		{
+			scale = Vector(1.0, 1.0, 1.0);
+			scale2 = Vector(1.0, 1.0, 1.0);
+			scale2inv = Vector(1.0, 1.0, 1.0);
+		}
+
+		if (!GetTexture())
+			return;
+		Transform* tform = GetTexture()->transform();
+		if (!tform)
+			return;
+		Transform tform_copy;
+		double mvmat[16];
+		tform->get_trans(mvmat);
+		swap(mvmat[3], mvmat[12]);
+		swap(mvmat[7], mvmat[13]);
+		swap(mvmat[11], mvmat[14]);
+		tform_copy.set(mvmat);
+
+		double rotx, roty, rotz;
+		Quaternion q_cl, q_cl_fix;
+		m_q_cl.ToEuler(rotx, roty, rotz);
+		q_cl.FromEuler(-rotx, -roty, rotz);
+		m_q_cl_fix.ToEuler(rotx, roty, rotz);
+		q_cl_fix.FromEuler(-rotx, -roty, rotz);
+
+		if (GetVR())
+			planes = GetVR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			GetVR()->set_clip_quaternion(m_q_cl);
+			double x1, x2, y1, y2, z1, z2;
+			double abcd[4];
+
+			(*planes)[0]->get_copy(abcd);
+			x1 = fabs(abcd[3]);
+			(*planes)[1]->get_copy(abcd);
+			x2 = fabs(abcd[3]);
+			(*planes)[2]->get_copy(abcd);
+			y1 = fabs(abcd[3]);
+			(*planes)[3]->get_copy(abcd);
+			y2 = fabs(abcd[3]);
+			(*planes)[4]->get_copy(abcd);
+			z1 = fabs(abcd[3]);
+			(*planes)[5]->get_copy(abcd);
+			z2 = fabs(abcd[3]);
+
+			Vector trans1(-obj_ctr.x(), -obj_ctr.y(), -obj_ctr.z());
+			Vector trans2 = obj_ctr;
+
+			if (m_clip_mode == 3)
+			{
+				Vector obj_trans1 = m_trans_fix;
+				Vector obj_trans2 = -obj_trans1;
+				Vector obj_trans3 = obj_trans1 - obj_trans;
+
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.project(p);
+					n = tform->unproject(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Rotate(q_cl_fix);
+					(*planes)[i]->Translate(obj_trans1);
+					(*planes)[i]->Rotate(q_cl);
+					(*planes)[i]->Translate(obj_trans2);
+					(*planes)[i]->Translate(obj_trans3);
+					(*planes)[i]->Translate(trans2);
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.unproject(p);
+					n = tform->project(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+				}
+			}
+			else
+			{
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.project(p);
+					n = tform->unproject(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Rotate(q_cl);
+					(*planes)[i]->Translate(trans2);
+
+					p = (*planes)[i]->get_point();
+					n = (*planes)[i]->normal();
+					p = tform_copy.unproject(p);
+					n = tform->project(n);
+					n.safe_normalize();
+					(*planes)[i]->ChangePlaneTemp(p, n);
+				}
+			}
+		}
+	}
+}
+
+void VolumeData::SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	vector<Plane*>* planes = 0;
+
+	switch (mode)
+	{
+	case 0:
+		m_clip_mode = 0;
+		if (GetVR())
+			planes = GetVR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			(*planes)[0]->Restore();
+			(*planes)[1]->Restore();
+			(*planes)[2]->Restore();
+			(*planes)[3]->Restore();
+			(*planes)[4]->Restore();
+			(*planes)[5]->Restore();
+		}
+		m_rotx_cl = 0;
+		m_roty_cl = 0;
+		m_rotz_cl = 0;
+		break;
+	case 1:
+		m_clip_mode = 1;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 2:
+		m_clip_mode = 2;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_q_cl = m_q_cl_zero;
+		m_q_cl.ToEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		if (m_rotx_cl > 180.0) m_rotx_cl -= 360.0;
+		if (m_roty_cl > 180.0) m_roty_cl -= 360.0;
+		if (m_rotz_cl > 180.0) m_rotz_cl -= 360.0;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 3:
+		m_clip_mode = 3;
+		m_rotx_cl_fix = m_rotx_cl;
+		m_roty_cl_fix = m_roty_cl;
+		m_rotz_cl_fix = m_rotz_cl;
+		m_rotx_fix = cam_rotx;
+		m_roty_fix = cam_roty;
+		m_rotz_fix = cam_rotz;
+		m_q_cl_fix.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_fix.FromEuler(cam_rotx, cam_roty, cam_rotz);
+		m_q_fix.z *= -1;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_trans_fix = obj_trans;
+		break;
+	case 4:
+		m_clip_mode = 2;
+		m_rotx_cl = m_rotx_cl_fix;
+		m_roty_cl = m_roty_cl_fix;
+		m_rotz_cl = m_rotz_cl_fix;
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	}
 }
 
 Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t dst_datasize, bool interpolation)
@@ -4895,6 +5294,14 @@ m_data(0),
     m_extra_vertex_data = NULL;
     m_anno = nullptr;
     m_show_labels = false;
+
+	m_link_x_chk = false;
+	m_link_y_chk = false;
+	m_link_z_chk = false;
+	for (auto& e : m_linked_plane_params)
+		e = 0.0;
+
+	m_rotx_cl = m_roty_cl = m_rotz_cl = 0.0;
 }
 
 MeshData::~MeshData()
@@ -5328,21 +5735,6 @@ void MeshData::Save(wxString& filename)
 		delete []str;
 		m_data_path = filename;
 	}
-}
-
-//clip distance
-void MeshData::SetClipDistance(int distx, int disty, int distz)
-{
-	m_clip_dist_x = distx;
-	m_clip_dist_y = disty;
-	m_clip_dist_z = distz;
-}
-
-void MeshData::GetClipDistance(int &distx, int &disty, int &distz)
-{
-	distx = m_clip_dist_x;
-	disty = m_clip_dist_y;
-	distz = m_clip_dist_z;
 }
 
 bool MeshData::UpdateModelSWC()
@@ -5873,6 +6265,343 @@ bool MeshData::InsideClippingPlanes(Point pos)
     }
 
     return true;
+}
+
+
+Quaternion MeshData::TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y)
+{
+	Quaternion q;
+	Vector a; /* Axis of rotation */
+	double phi;  /* how much to rotate about axis */
+
+	if (p1x == p2x && p1y == p2y)
+	{
+		/* Zero rotation */
+		return q;
+	}
+
+	a = Vector(p1y - p2y, p2x - p1x, 0.0);
+	phi = a.length() / 3.0;
+	a.normalize();
+	Quaternion q_a(a);
+	//rotate back to local
+	Quaternion q2;
+	q2.FromEuler(-cam_rotx, cam_roty, cam_rotz);
+	q_a = (q2)*q_a * (-q2);
+	q_a = (m_q_cl)*q_a * (-m_q_cl);
+	a = Vector(q_a.x, q_a.y, q_a.z);
+	a.normalize();
+
+	q = Quaternion(phi, a);
+	q.Normalize();
+
+	return q;
+}
+
+void MeshData::Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (cam_roty > 360.0)
+		cam_roty -= 360.0;
+	if (cam_roty < 0.0)
+		cam_roty += 360.0;
+	if (cam_rotx > 360.0)
+		cam_rotx -= 360.0;
+	if (cam_rotx < 0.0)
+		cam_rotx += 360.0;
+	if (cam_rotz > 360.0)
+		cam_rotz -= 360.0;
+	if (cam_rotz < 0.0)
+		cam_rotz += 360.0;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		vector<Plane*>* planes = 0;
+		Vector n;
+		Point p;
+
+		Vector sz = GetBounds().diagonal();
+		Vector scale, scale2, scale2inv;
+		scale = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+		scale.safe_normalize();
+		scale2 = Vector(sz.x(), sz.y(), sz.z());
+		//scale2.safe_normalize();
+		scale2inv = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+		//scale2inv.safe_normalize();
+
+		if (GetMR())
+			planes = GetMR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			double x1, x2, y1, y2, z1, z2;
+			double abcd[4];
+
+			(*planes)[0]->get_copy(abcd);
+			x1 = fabs(abcd[3]);
+			(*planes)[1]->get_copy(abcd);
+			x2 = fabs(abcd[3]);
+			(*planes)[2]->get_copy(abcd);
+			y1 = fabs(abcd[3]);
+			(*planes)[3]->get_copy(abcd);
+			y2 = fabs(abcd[3]);
+			(*planes)[4]->get_copy(abcd);
+			z1 = fabs(abcd[3]);
+			(*planes)[5]->get_copy(abcd);
+			z2 = fabs(abcd[3]);
+
+			Vector trans1(-0.5, -0.5, -0.5);
+			Vector trans2(0.5, 0.5, 0.5);
+
+			if (m_clip_mode == 3)
+			{
+				Vector obj_trans1 = m_trans_fix;
+				Vector obj_trans2 = -obj_trans1;
+				Vector obj_trans3 = obj_trans1 - obj_trans;
+
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Scale2(scale2);
+					(*planes)[i]->Rotate(m_q_cl_fix);
+					(*planes)[i]->Translate(obj_trans1);
+					(*planes)[i]->Rotate(m_q_cl);
+					(*planes)[i]->Translate(obj_trans2);
+					(*planes)[i]->Translate(obj_trans3);
+					(*planes)[i]->Scale2(scale2inv);
+					(*planes)[i]->Translate(trans2);
+				}
+			}
+			else
+			{
+				(*planes)[0]->Restore();
+				(*planes)[0]->Translate(trans1);
+				(*planes)[0]->Scale2(scale2);
+				(*planes)[0]->Rotate(m_q_cl);
+				(*planes)[0]->Scale2(scale2inv);
+				(*planes)[0]->Translate(trans2);
+
+				(*planes)[1]->Restore();
+				(*planes)[1]->Translate(trans1);
+				(*planes)[1]->Scale2(scale2);
+				(*planes)[1]->Rotate(m_q_cl);
+				(*planes)[1]->Scale2(scale2inv);
+				(*planes)[1]->Translate(trans2);
+
+				(*planes)[2]->Restore();
+				(*planes)[2]->Translate(trans1);
+				(*planes)[2]->Scale2(scale2);
+				(*planes)[2]->Rotate(m_q_cl);
+				(*planes)[2]->Scale2(scale2inv);
+				(*planes)[2]->Translate(trans2);
+
+				(*planes)[3]->Restore();
+				(*planes)[3]->Translate(trans1);
+				(*planes)[3]->Scale2(scale2);
+				(*planes)[3]->Rotate(m_q_cl);
+				(*planes)[3]->Scale2(scale2inv);
+				(*planes)[3]->Translate(trans2);
+
+				(*planes)[4]->Restore();
+				(*planes)[4]->Translate(trans1);
+				(*planes)[4]->Scale2(scale2);
+				(*planes)[4]->Rotate(m_q_cl);
+				(*planes)[4]->Scale2(scale2inv);
+				(*planes)[4]->Translate(trans2);
+
+				(*planes)[5]->Restore();
+				(*planes)[5]->Translate(trans1);
+				(*planes)[5]->Scale2(scale2);
+				(*planes)[5]->Rotate(m_q_cl);
+				(*planes)[5]->Scale2(scale2inv);
+				(*planes)[5]->Translate(trans2);
+			}
+		}
+	}
+}
+
+void MeshData::A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		vector<Plane*>* planes = 0;
+
+		Vector sz = GetBounds().diagonal();
+		Vector scale, scale2, scale2inv;
+		scale = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+		scale.safe_normalize();
+		scale2 = Vector(sz.x(), sz.y(), sz.z());
+		//scale2.safe_normalize();
+		scale2inv = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+		//scale2inv.safe_normalize();
+
+		if (GetMR())
+			planes = GetMR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			double x1, x2, y1, y2, z1, z2;
+			double abcd[4];
+
+			(*planes)[0]->get_copy(abcd);
+			x1 = fabs(abcd[3]);
+			(*planes)[1]->get_copy(abcd);
+			x2 = fabs(abcd[3]);
+			(*planes)[2]->get_copy(abcd);
+			y1 = fabs(abcd[3]);
+			(*planes)[3]->get_copy(abcd);
+			y2 = fabs(abcd[3]);
+			(*planes)[4]->get_copy(abcd);
+			z1 = fabs(abcd[3]);
+			(*planes)[5]->get_copy(abcd);
+			z2 = fabs(abcd[3]);
+
+			Vector trans1(-0.5, -0.5, -0.5);
+			Vector trans2(0.5, 0.5, 0.5);
+
+			if (m_clip_mode == 3)
+			{
+				Vector obj_trans1 = m_trans_fix;
+				Vector obj_trans2 = -obj_trans1;
+				Vector obj_trans3 = obj_trans1 - obj_trans;
+
+				for (int i = 0; i < 6; i++)
+				{
+					(*planes)[i]->Restore();
+					(*planes)[i]->Translate(trans1);
+					(*planes)[i]->Scale2(scale2);
+					(*planes)[i]->Rotate(m_q_cl_fix);
+					(*planes)[i]->Translate(obj_trans1);
+					(*planes)[i]->Rotate(m_q_cl);
+					(*planes)[i]->Translate(obj_trans2);
+					(*planes)[i]->Translate(obj_trans3);
+					(*planes)[i]->Scale2(scale2inv);
+					(*planes)[i]->Translate(trans2);
+				}
+			}
+			else
+			{
+				(*planes)[0]->Restore();
+				(*planes)[0]->Translate(trans1);
+				(*planes)[0]->Scale2(scale2);
+				(*planes)[0]->Rotate(m_q_cl);
+				(*planes)[0]->Scale2(scale2inv);
+				(*planes)[0]->Translate(trans2);
+
+				(*planes)[1]->Restore();
+				(*planes)[1]->Translate(trans1);
+				(*planes)[1]->Scale2(scale2);
+				(*planes)[1]->Rotate(m_q_cl);
+				(*planes)[1]->Scale2(scale2inv);
+				(*planes)[1]->Translate(trans2);
+
+				(*planes)[2]->Restore();
+				(*planes)[2]->Translate(trans1);
+				(*planes)[2]->Scale2(scale2);
+				(*planes)[2]->Rotate(m_q_cl);
+				(*planes)[2]->Scale2(scale2inv);
+				(*planes)[2]->Translate(trans2);
+
+				(*planes)[3]->Restore();
+				(*planes)[3]->Translate(trans1);
+				(*planes)[3]->Scale2(scale2);
+				(*planes)[3]->Rotate(m_q_cl);
+				(*planes)[3]->Scale2(scale2inv);
+				(*planes)[3]->Translate(trans2);
+
+				(*planes)[4]->Restore();
+				(*planes)[4]->Translate(trans1);
+				(*planes)[4]->Scale2(scale2);
+				(*planes)[4]->Rotate(m_q_cl);
+				(*planes)[4]->Scale2(scale2inv);
+				(*planes)[4]->Translate(trans2);
+
+				(*planes)[5]->Restore();
+				(*planes)[5]->Translate(trans1);
+				(*planes)[5]->Scale2(scale2);
+				(*planes)[5]->Rotate(m_q_cl);
+				(*planes)[5]->Scale2(scale2inv);
+				(*planes)[5]->Translate(trans2);
+			}
+		}
+	
+	}
+}
+
+void MeshData::SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	vector<Plane*>* planes = 0;
+	switch (mode)
+	{
+	case 0:
+		m_clip_mode = 0;
+		if (GetMR())
+			planes = GetMR()->get_planes();
+		if (planes && planes->size() == 6)
+		{
+			(*planes)[0]->Restore();
+			(*planes)[1]->Restore();
+			(*planes)[2]->Restore();
+			(*planes)[3]->Restore();
+			(*planes)[4]->Restore();
+			(*planes)[5]->Restore();
+		}
+		m_rotx_cl = 0;
+		m_roty_cl = 0;
+		m_rotz_cl = 0;
+		break;
+	case 1:
+		m_clip_mode = 1;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 2:
+		m_clip_mode = 2;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_q_cl = m_q_cl_zero;
+		m_q_cl.ToEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		if (m_rotx_cl > 180.0) m_rotx_cl -= 360.0;
+		if (m_roty_cl > 180.0) m_roty_cl -= 360.0;
+		if (m_rotz_cl > 180.0) m_rotz_cl -= 360.0;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 3:
+		m_clip_mode = 3;
+		m_rotx_cl_fix = m_rotx_cl;
+		m_roty_cl_fix = m_roty_cl;
+		m_rotz_cl_fix = m_rotz_cl;
+		m_rotx_fix = cam_rotx;
+		m_roty_fix = cam_roty;
+		m_rotz_fix = cam_rotz;
+		m_q_cl_fix.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_fix.FromEuler(cam_rotx, cam_roty, cam_rotz);
+		m_q_fix.z *= -1;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_trans_fix = obj_trans;
+		break;
+	case 4:
+		m_clip_mode = 2;
+		m_rotx_cl = m_rotx_cl_fix;
+		m_roty_cl = m_roty_cl_fix;
+		m_rotz_cl = m_rotz_cl_fix;
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -6974,6 +7703,16 @@ DataGroup::DataGroup()
 	m_disp = true;
 	m_sync_volume_prop = false;
 	m_sync_volume_spc = false;
+	m_sync_clipping_planes = false;
+
+	m_link_x_chk = false;
+	m_link_y_chk = false;
+	m_link_z_chk = false;
+
+	for (auto& e : m_linked_plane_params)
+		e = 0.0;
+
+	m_rotx_cl = m_roty_cl = m_rotz_cl = 0.0;
 }
 
 DataGroup::~DataGroup()
@@ -7379,6 +8118,396 @@ void DataGroup::SetMaskHideMode(int mode)
     }
 }
 
+void DataGroup::Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+
+	if (cam_roty > 360.0)
+		cam_roty -= 360.0;
+	if (cam_roty < 0.0)
+		cam_roty += 360.0;
+	if (cam_rotx > 360.0)
+		cam_rotx -= 360.0;
+	if (cam_rotx < 0.0)
+		cam_rotx += 360.0;
+	if (cam_rotz > 360.0)
+		cam_rotz -= 360.0;
+	if (cam_rotz < 0.0)
+		cam_rotz += 360.0;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		for (int i = 0; i < GetVolumeNum(); i++)
+		{
+			VolumeData* vd = GetVolumeData(i);
+			if (!vd)
+				continue;
+
+			vector<Plane*>* planes = 0;
+			Vector n;
+			Point p;
+
+			double spcx, spcy, spcz;
+			int resx, resy, resz;
+			vd->GetSpacings(spcx, spcy, spcz);
+			vd->GetResolution(resx, resy, resz);
+			Vector scale, scale2, scale2inv;
+			if (spcx > 0.0 && spcy > 0.0 && spcz > 0.0)
+			{
+				scale = Vector(1.0 / resx / spcx, 1.0 / resy / spcy, 1.0 / resz / spcz);
+				scale.safe_normalize();
+				scale2 = Vector(resx * spcx, resy * spcy, resz * spcz);
+				//scale2.safe_normalize();
+				scale2inv = Vector(1.0 / (resx * spcx), 1.0 / (resy * spcy), 1.0 / (resz * spcz));
+				//scale2inv.safe_normalize();
+			}
+			else
+			{
+				scale = Vector(1.0, 1.0, 1.0);
+				scale2 = Vector(1.0, 1.0, 1.0);
+				scale2inv = Vector(1.0, 1.0, 1.0);
+			}
+
+			if (!vd->GetTexture())
+				return;
+			Transform* tform = vd->GetTexture()->transform();
+			if (!tform)
+				return;
+			Transform tform_copy;
+			double mvmat[16];
+			tform->get_trans(mvmat);
+			swap(mvmat[3], mvmat[12]);
+			swap(mvmat[7], mvmat[13]);
+			swap(mvmat[11], mvmat[14]);
+			tform_copy.set(mvmat);
+
+			double rotx, roty, rotz;
+			Quaternion q_cl, q_cl_fix;
+			m_q_cl.ToEuler(rotx, roty, rotz);
+			q_cl.FromEuler(-rotx, -roty, rotz);
+			m_q_cl_fix.ToEuler(rotx, roty, rotz);
+			q_cl_fix.FromEuler(-rotx, -roty, rotz);
+
+			if (vd->GetVR())
+				planes = vd->GetVR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				vd->GetVR()->set_clip_quaternion(m_q_cl);
+				double x1, x2, y1, y2, z1, z2;
+				double abcd[4];
+				(*planes)[0]->get_copy(abcd);
+				x1 = fabs(abcd[3]);
+				(*planes)[1]->get_copy(abcd);
+				x2 = fabs(abcd[3]);
+				(*planes)[2]->get_copy(abcd);
+				y1 = fabs(abcd[3]);
+				(*planes)[3]->get_copy(abcd);
+				y2 = fabs(abcd[3]);
+				(*planes)[4]->get_copy(abcd);
+				z1 = fabs(abcd[3]);
+				(*planes)[5]->get_copy(abcd);
+				z2 = fabs(abcd[3]);
+
+				Vector trans1(-obj_ctr.x(), -obj_ctr.y(), -obj_ctr.z());
+				Vector trans2 = obj_ctr;
+
+				if (m_clip_mode == 3)
+				{
+					Vector obj_trans1 = m_trans_fix;
+					Vector obj_trans2 = -obj_trans1;
+					Vector obj_trans3 = obj_trans1 - obj_trans;
+
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.project(p);
+						n = tform->unproject(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Rotate(q_cl_fix);
+						(*planes)[i]->Translate(obj_trans1);
+						(*planes)[i]->Rotate(q_cl);
+						(*planes)[i]->Translate(obj_trans2);
+						(*planes)[i]->Translate(obj_trans3);
+						(*planes)[i]->Translate(trans2);
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.unproject(p);
+						n = tform->project(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+					}
+				}
+				else
+				{
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.project(p);
+						n = tform->unproject(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Rotate(q_cl);
+						(*planes)[i]->Translate(trans2);
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.unproject(p);
+						n = tform->project(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+					}
+				}
+			}
+		}
+	}
+}
+
+void DataGroup::A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		for (int i = 0; i < GetVolumeNum(); i++)
+		{
+			VolumeData* vd = GetVolumeData(i);
+			if (!vd)
+				continue;
+
+			vector<Plane*>* planes = 0;
+			Vector n;
+			Point p;
+			double spcx, spcy, spcz;
+			int resx, resy, resz;
+			vd->GetSpacings(spcx, spcy, spcz);
+			vd->GetResolution(resx, resy, resz);
+			Vector scale, scale2, scale2inv;
+			if (spcx > 0.0 && spcy > 0.0 && spcz > 0.0)
+			{
+				scale = Vector(1.0 / resx / spcx, 1.0 / resy / spcy, 1.0 / resz / spcz);
+				scale.safe_normalize();
+				scale2 = Vector(resx * spcx, resy * spcy, resz * spcz);
+				//scale2.safe_normalize();
+				scale2inv = Vector(1.0 / (resx * spcx), 1.0 / (resy * spcy), 1.0 / (resz * spcz));
+				//scale2inv.safe_normalize();
+			}
+			else
+			{
+				scale = Vector(1.0, 1.0, 1.0);
+				scale2 = Vector(1.0, 1.0, 1.0);
+				scale2inv = Vector(1.0, 1.0, 1.0);
+			}
+
+			if (!vd->GetTexture())
+				return;
+			Transform* tform = vd->GetTexture()->transform();
+			if (!tform)
+				return;
+			Transform tform_copy;
+			double mvmat[16];
+			tform->get_trans(mvmat);
+			swap(mvmat[3], mvmat[12]);
+			swap(mvmat[7], mvmat[13]);
+			swap(mvmat[11], mvmat[14]);
+			tform_copy.set(mvmat);
+
+			double rotx, roty, rotz;
+			Quaternion q_cl, q_cl_fix;
+			m_q_cl.ToEuler(rotx, roty, rotz);
+			q_cl.FromEuler(-rotx, -roty, rotz);
+			m_q_cl_fix.ToEuler(rotx, roty, rotz);
+			q_cl_fix.FromEuler(-rotx, -roty, rotz);
+
+			if (vd->GetVR())
+				planes = vd->GetVR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				vd->GetVR()->set_clip_quaternion(m_q_cl);
+				double x1, x2, y1, y2, z1, z2;
+				double abcd[4];
+
+				(*planes)[0]->get_copy(abcd);
+				x1 = fabs(abcd[3]);
+				(*planes)[1]->get_copy(abcd);
+				x2 = fabs(abcd[3]);
+				(*planes)[2]->get_copy(abcd);
+				y1 = fabs(abcd[3]);
+				(*planes)[3]->get_copy(abcd);
+				y2 = fabs(abcd[3]);
+				(*planes)[4]->get_copy(abcd);
+				z1 = fabs(abcd[3]);
+				(*planes)[5]->get_copy(abcd);
+				z2 = fabs(abcd[3]);
+
+				Vector trans1(-obj_ctr.x(), -obj_ctr.y(), -obj_ctr.z());
+				Vector trans2 = obj_ctr;
+
+				if (m_clip_mode == 3)
+				{
+					Vector obj_trans1 = m_trans_fix;
+					Vector obj_trans2 = -obj_trans1;
+					Vector obj_trans3 = obj_trans1 - obj_trans;
+
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.project(p);
+						n = tform->unproject(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Rotate(q_cl_fix);
+						(*planes)[i]->Translate(obj_trans1);
+						(*planes)[i]->Rotate(q_cl);
+						(*planes)[i]->Translate(obj_trans2);
+						(*planes)[i]->Translate(obj_trans3);
+						(*planes)[i]->Translate(trans2);
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.unproject(p);
+						n = tform->project(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+					}
+				}
+				else
+				{
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.project(p);
+						n = tform->unproject(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Rotate(q_cl);
+						(*planes)[i]->Translate(trans2);
+
+						p = (*planes)[i]->get_point();
+						n = (*planes)[i]->normal();
+						p = tform_copy.unproject(p);
+						n = tform->project(n);
+						n.safe_normalize();
+						(*planes)[i]->ChangePlaneTemp(p, n);
+					}
+				}
+			}
+		}
+	}
+}
+
+void DataGroup::SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+	
+	vector<Plane*>* planes = 0;
+	switch (mode)
+	{
+	case 0:
+		m_clip_mode = 0;
+		for (int i = 0; i < GetVolumeNum(); i++)
+		{
+			VolumeData* vd = GetVolumeData(i);
+			if (!vd)
+				continue;
+
+			planes = 0;
+			if (vd->GetVR())
+				planes = vd->GetVR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				(*planes)[0]->Restore();
+				(*planes)[1]->Restore();
+				(*planes)[2]->Restore();
+				(*planes)[3]->Restore();
+				(*planes)[4]->Restore();
+				(*planes)[5]->Restore();
+			}
+		}
+		m_rotx_cl = 0;
+		m_roty_cl = 0;
+		m_rotz_cl = 0;
+		break;
+	case 1:
+		m_clip_mode = 1;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 2:
+		m_clip_mode = 2;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_q_cl = m_q_cl_zero;
+		m_q_cl.ToEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		if (m_rotx_cl > 180.0) m_rotx_cl -= 360.0;
+		if (m_roty_cl > 180.0) m_roty_cl -= 360.0;
+		if (m_rotz_cl > 180.0) m_rotz_cl -= 360.0;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 3:
+		m_clip_mode = 3;
+		m_rotx_cl_fix = m_rotx_cl;
+		m_roty_cl_fix = m_roty_cl;
+		m_rotz_cl_fix = m_rotz_cl;
+		m_rotx_fix = cam_rotx;
+		m_roty_fix = cam_roty;
+		m_rotz_fix = cam_rotz;
+		m_q_cl_fix.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_fix.FromEuler(cam_rotx, cam_roty, cam_rotz);
+		m_q_fix.z *= -1;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_trans_fix = obj_trans;
+		break;
+	case 4:
+		m_clip_mode = 2;
+		m_rotx_cl = m_rotx_cl_fix;
+		m_roty_cl = m_roty_cl_fix;
+		m_rotz_cl = m_rotz_cl_fix;
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	}
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int MeshGroup::m_num = 0;
@@ -7389,6 +8518,16 @@ MeshGroup::MeshGroup()
 	m_name = wxString::Format("MGroup %d", m_num);
 	m_disp = true;
 	m_sync_mesh_prop = false;
+
+	m_sync_clipping_planes = false;
+	
+	m_link_x_chk = false;
+	m_link_y_chk = false;
+	m_link_z_chk = false;
+	for (auto& e : m_linked_plane_params)
+		e = 0.0;
+
+	m_rotx_cl = m_roty_cl = m_rotz_cl = 0.0;
 }
 
 MeshGroup::~MeshGroup()
@@ -7411,6 +8550,342 @@ void MeshGroup::RandomizeColor()
 		}
 	}
 }
+
+
+void MeshGroup::Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+	if (cam_roty > 360.0)
+		cam_roty -= 360.0;
+	if (cam_roty < 0.0)
+		cam_roty += 360.0;
+	if (cam_rotx > 360.0)
+		cam_rotx -= 360.0;
+	if (cam_rotx < 0.0)
+		cam_rotx += 360.0;
+	if (cam_rotz > 360.0)
+		cam_rotz -= 360.0;
+	if (cam_rotz < 0.0)
+		cam_rotz += 360.0;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		for (int i = 0; i < GetMeshNum(); i++)
+		{
+			MeshData* md = GetMeshData(i);
+			if (!md)
+				continue;
+
+			vector<Plane*>* planes = 0;
+			Vector n;
+			Point p;
+
+			Vector sz = md->GetBounds().diagonal();
+			Vector scale, scale2, scale2inv;
+			scale = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+			scale.safe_normalize();
+			scale2 = Vector(sz.x(), sz.y(), sz.z());
+			//scale2.safe_normalize();
+			scale2inv = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+			//scale2inv.safe_normalize();
+
+			if (md->GetMR())
+				planes = md->GetMR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				double x1, x2, y1, y2, z1, z2;
+				double abcd[4];
+
+				(*planes)[0]->get_copy(abcd);
+				x1 = fabs(abcd[3]);
+				(*planes)[1]->get_copy(abcd);
+				x2 = fabs(abcd[3]);
+				(*planes)[2]->get_copy(abcd);
+				y1 = fabs(abcd[3]);
+				(*planes)[3]->get_copy(abcd);
+				y2 = fabs(abcd[3]);
+				(*planes)[4]->get_copy(abcd);
+				z1 = fabs(abcd[3]);
+				(*planes)[5]->get_copy(abcd);
+				z2 = fabs(abcd[3]);
+
+				Vector trans1(-0.5, -0.5, -0.5);
+				Vector trans2(0.5, 0.5, 0.5);
+
+				if (m_clip_mode == 3)
+				{
+					Vector obj_trans1 = m_trans_fix;
+					Vector obj_trans2 = -obj_trans1;
+					Vector obj_trans3 = obj_trans1 - obj_trans;
+
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Scale2(scale2);
+						(*planes)[i]->Rotate(m_q_cl_fix);
+						(*planes)[i]->Translate(obj_trans1);
+						(*planes)[i]->Rotate(m_q_cl);
+						(*planes)[i]->Translate(obj_trans2);
+						(*planes)[i]->Translate(obj_trans3);
+						(*planes)[i]->Scale2(scale2inv);
+						(*planes)[i]->Translate(trans2);
+					}
+				}
+				else
+				{
+					(*planes)[0]->Restore();
+					(*planes)[0]->Translate(trans1);
+					(*planes)[0]->Scale2(scale2);
+					(*planes)[0]->Rotate(m_q_cl);
+					(*planes)[0]->Scale2(scale2inv);
+					(*planes)[0]->Translate(trans2);
+
+					(*planes)[1]->Restore();
+					(*planes)[1]->Translate(trans1);
+					(*planes)[1]->Scale2(scale2);
+					(*planes)[1]->Rotate(m_q_cl);
+					(*planes)[1]->Scale2(scale2inv);
+					(*planes)[1]->Translate(trans2);
+
+					(*planes)[2]->Restore();
+					(*planes)[2]->Translate(trans1);
+					(*planes)[2]->Scale2(scale2);
+					(*planes)[2]->Rotate(m_q_cl);
+					(*planes)[2]->Scale2(scale2inv);
+					(*planes)[2]->Translate(trans2);
+
+					(*planes)[3]->Restore();
+					(*planes)[3]->Translate(trans1);
+					(*planes)[3]->Scale2(scale2);
+					(*planes)[3]->Rotate(m_q_cl);
+					(*planes)[3]->Scale2(scale2inv);
+					(*planes)[3]->Translate(trans2);
+
+					(*planes)[4]->Restore();
+					(*planes)[4]->Translate(trans1);
+					(*planes)[4]->Scale2(scale2);
+					(*planes)[4]->Rotate(m_q_cl);
+					(*planes)[4]->Scale2(scale2inv);
+					(*planes)[4]->Translate(trans2);
+
+					(*planes)[5]->Restore();
+					(*planes)[5]->Translate(trans1);
+					(*planes)[5]->Scale2(scale2);
+					(*planes)[5]->Rotate(m_q_cl);
+					(*planes)[5]->Scale2(scale2inv);
+					(*planes)[5]->Translate(trans2);
+				}
+			}
+		}
+	}
+}
+
+void MeshGroup::A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+
+	if (m_clip_mode)
+	{
+		if (m_clip_mode == 1)
+			m_q_cl.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		else if (m_clip_mode == 3)
+		{
+			m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+			m_q_cl = m_q_fix * m_q_cl_zero;
+		}
+
+		for (int i = 0; i < GetMeshNum(); i++)
+		{
+			MeshData* md = GetMeshData(i);
+			if (!md)
+				continue;
+
+			vector<Plane*>* planes = 0;
+
+			Vector sz = md->GetBounds().diagonal();
+			Vector scale, scale2, scale2inv;
+			scale = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+			scale.safe_normalize();
+			scale2 = Vector(sz.x(), sz.y(), sz.z());
+			//scale2.safe_normalize();
+			scale2inv = Vector(1.0 / sz.x(), 1.0 / sz.y(), 1.0 / sz.z());
+			//scale2inv.safe_normalize();
+
+			if (md->GetMR())
+				planes = md->GetMR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				double x1, x2, y1, y2, z1, z2;
+				double abcd[4];
+
+				(*planes)[0]->get_copy(abcd);
+				x1 = fabs(abcd[3]);
+				(*planes)[1]->get_copy(abcd);
+				x2 = fabs(abcd[3]);
+				(*planes)[2]->get_copy(abcd);
+				y1 = fabs(abcd[3]);
+				(*planes)[3]->get_copy(abcd);
+				y2 = fabs(abcd[3]);
+				(*planes)[4]->get_copy(abcd);
+				z1 = fabs(abcd[3]);
+				(*planes)[5]->get_copy(abcd);
+				z2 = fabs(abcd[3]);
+
+				Vector trans1(-0.5, -0.5, -0.5);
+				Vector trans2(0.5, 0.5, 0.5);
+
+				if (m_clip_mode == 3)
+				{
+					Vector obj_trans1 = m_trans_fix;
+					Vector obj_trans2 = -obj_trans1;
+					Vector obj_trans3 = obj_trans1 - obj_trans;
+
+					for (int i = 0; i < 6; i++)
+					{
+						(*planes)[i]->Restore();
+						(*planes)[i]->Translate(trans1);
+						(*planes)[i]->Scale2(scale2);
+						(*planes)[i]->Rotate(m_q_cl_fix);
+						(*planes)[i]->Translate(obj_trans1);
+						(*planes)[i]->Rotate(m_q_cl);
+						(*planes)[i]->Translate(obj_trans2);
+						(*planes)[i]->Translate(obj_trans3);
+						(*planes)[i]->Scale2(scale2inv);
+						(*planes)[i]->Translate(trans2);
+					}
+				}
+				else
+				{
+					(*planes)[0]->Restore();
+					(*planes)[0]->Translate(trans1);
+					(*planes)[0]->Scale2(scale2);
+					(*planes)[0]->Rotate(m_q_cl);
+					(*planes)[0]->Scale2(scale2inv);
+					(*planes)[0]->Translate(trans2);
+
+					(*planes)[1]->Restore();
+					(*planes)[1]->Translate(trans1);
+					(*planes)[1]->Scale2(scale2);
+					(*planes)[1]->Rotate(m_q_cl);
+					(*planes)[1]->Scale2(scale2inv);
+					(*planes)[1]->Translate(trans2);
+
+					(*planes)[2]->Restore();
+					(*planes)[2]->Translate(trans1);
+					(*planes)[2]->Scale2(scale2);
+					(*planes)[2]->Rotate(m_q_cl);
+					(*planes)[2]->Scale2(scale2inv);
+					(*planes)[2]->Translate(trans2);
+
+					(*planes)[3]->Restore();
+					(*planes)[3]->Translate(trans1);
+					(*planes)[3]->Scale2(scale2);
+					(*planes)[3]->Rotate(m_q_cl);
+					(*planes)[3]->Scale2(scale2inv);
+					(*planes)[3]->Translate(trans2);
+
+					(*planes)[4]->Restore();
+					(*planes)[4]->Translate(trans1);
+					(*planes)[4]->Scale2(scale2);
+					(*planes)[4]->Rotate(m_q_cl);
+					(*planes)[4]->Scale2(scale2inv);
+					(*planes)[4]->Translate(trans2);
+
+					(*planes)[5]->Restore();
+					(*planes)[5]->Translate(trans1);
+					(*planes)[5]->Scale2(scale2);
+					(*planes)[5]->Rotate(m_q_cl);
+					(*planes)[5]->Scale2(scale2inv);
+					(*planes)[5]->Translate(trans2);
+				}
+			}
+		}
+	}
+}
+
+void MeshGroup::SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+{
+	if (!m_sync_clipping_planes)
+		return;
+
+	vector<Plane*>* planes = 0;
+	switch (mode)
+	{
+	case 0:
+		m_clip_mode = 0;
+		for (int i = 0; i < GetMeshNum(); i++)
+		{
+			MeshData* md = GetMeshData(i);
+			if (!md)
+				continue;
+			if (md->GetMR())
+				planes = md->GetMR()->get_planes();
+			if (planes && planes->size() == 6)
+			{
+				(*planes)[0]->Restore();
+				(*planes)[1]->Restore();
+				(*planes)[2]->Restore();
+				(*planes)[3]->Restore();
+				(*planes)[4]->Restore();
+				(*planes)[5]->Restore();
+			}
+		}
+		m_rotx_cl = 0;
+		m_roty_cl = 0;
+		m_rotz_cl = 0;
+		break;
+	case 1:
+		m_clip_mode = 1;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 2:
+		m_clip_mode = 2;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_q_cl = m_q_cl_zero;
+		m_q_cl.ToEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		if (m_rotx_cl > 180.0) m_rotx_cl -= 360.0;
+		if (m_roty_cl > 180.0) m_roty_cl -= 360.0;
+		if (m_rotz_cl > 180.0) m_rotz_cl -= 360.0;
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	case 3:
+		m_clip_mode = 3;
+		m_rotx_cl_fix = m_rotx_cl;
+		m_roty_cl_fix = m_roty_cl;
+		m_rotz_cl_fix = m_rotz_cl;
+		m_rotx_fix = cam_rotx;
+		m_roty_fix = cam_roty;
+		m_rotz_fix = cam_rotz;
+		m_q_cl_fix.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_fix.FromEuler(cam_rotx, cam_roty, cam_rotz);
+		m_q_fix.z *= -1;
+		m_q_cl_zero.FromEuler(-cam_rotx, -cam_roty, cam_rotz);
+		m_trans_fix = obj_trans;
+		break;
+	case 4:
+		m_clip_mode = 2;
+		m_rotx_cl = m_rotx_cl_fix;
+		m_roty_cl = m_roty_cl_fix;
+		m_rotz_cl = m_rotz_cl_fix;
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+		A2Q(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		break;
+	}
+}
+
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 DataManager::DataManager() :

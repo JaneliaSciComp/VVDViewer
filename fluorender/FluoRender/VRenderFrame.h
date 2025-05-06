@@ -346,6 +346,8 @@ public:
     void OpenVolumesFromProjectMT(wxFileConfig &fconfig, bool join);
     void SetVolumePropertiesFromProject(wxFileConfig &fconfig);
 	MeshData* OpenMeshFromProject(wxString name, wxFileConfig &fconfig);
+	void SaveClippingLayerProperties(wxFileConfig& fconfig, ClippingLayer* layer);
+	void LoadClippingLayerProperties(wxFileConfig& fconfig, ClippingLayer* layer);
 	void OpenProject(wxString& filename);
 	void SaveProject(wxString& filename);
 	void LoadVolumes(wxArrayString files, VRenderView* view = 0, vector<vector<AnnotationDB>> annotations = vector<vector<AnnotationDB>>(), size_t datasize = 0LL, wxArrayString descs = wxArrayString());

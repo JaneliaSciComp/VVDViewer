@@ -195,6 +195,200 @@ protected:
 	TreeLayer* m_associated;
 };
 
+class EXPORT_API ClippingLayer : public TreeLayer
+{
+public:
+	ClippingLayer() {
+
+		m_clip_dist_x = 1;
+		m_clip_dist_y = 1;
+		m_clip_dist_z = 1;
+
+		m_link_x_chk = false;
+		m_link_y_chk = false;
+		m_link_z_chk = false;
+		for (auto& e : m_linked_plane_params)
+			e = 0.0;
+
+		m_rotx_cl = m_roty_cl = m_rotz_cl = 0.0;
+		m_rotx_cl_fix = m_roty_cl_fix = m_rotz_cl_fix = 0.0;
+		m_rotx_fix = m_roty_fix = m_rotz_fix = 0.0;
+		m_clip_mode = 2;
+	}
+	virtual ~ClippingLayer() {
+
+	}
+
+	void CopyClippingParams(ClippingLayer &copy)
+	{
+		m_clip_dist_x = copy.m_clip_dist_x;
+		m_clip_dist_y = copy.m_clip_dist_y;
+		m_clip_dist_z = copy.m_clip_dist_z;
+
+		m_link_x_chk = copy.m_link_x_chk;
+		m_link_y_chk = copy.m_link_y_chk;
+		m_link_z_chk = copy.m_link_z_chk;
+		for (int i = 0; i < 6; i++)
+			m_linked_plane_params[i] = copy.m_linked_plane_params[i];
+
+		m_rotx_cl = copy.m_rotx_cl;
+		m_roty_cl = copy.m_roty_cl;
+		m_rotz_cl = copy.m_rotz_cl;
+
+		m_rotx_cl_fix = copy.m_rotx_cl_fix;
+		m_roty_cl_fix = copy.m_roty_cl_fix;
+		m_rotz_cl_fix = copy.m_rotz_cl_fix;
+
+		m_rotx_fix = copy.m_rotx_fix;
+		m_roty_fix = copy.m_roty_fix;
+		m_rotz_fix = copy.m_rotz_fix;
+
+		m_clip_mode = copy.m_clip_mode;
+
+		m_q_cl = copy.m_q_cl;
+		m_q_cl_zero = copy.m_q_cl_zero;
+		m_q_cl_fix = copy.m_q_cl_fix;
+		m_q_fix = copy.m_q_fix;
+		m_trans_fix = copy.m_trans_fix;
+	}
+
+	void SetSyncClippingPlanes(bool val) { m_sync_clipping_planes = val; }
+	bool GetSyncClippingPlanes() { return m_sync_clipping_planes; }
+
+	void SetLinkedParam(int id, double p) { m_linked_plane_params[id] = p; }
+	double GetLinkedParam(int id) { return m_linked_plane_params[id]; }
+
+	void SetLinkedX1Param(double p) { m_linked_plane_params[0] = p; }
+	void SetLinkedX2Param(double p) { m_linked_plane_params[1] = p; }
+	void SetLinkedY1Param(double p) { m_linked_plane_params[2] = p; }
+	void SetLinkedY2Param(double p) { m_linked_plane_params[3] = p; }
+	void SetLinkedZ1Param(double p) { m_linked_plane_params[4] = p; }
+	void SetLinkedZ2Param(double p) { m_linked_plane_params[5] = p; }
+	double GetLinkedX1Param() { return m_linked_plane_params[0]; }
+	double GetLinkedX2Param() { return m_linked_plane_params[1]; }
+	double GetLinkedY1Param() { return m_linked_plane_params[2]; }
+	double GetLinkedY2Param() { return m_linked_plane_params[3]; }
+	double GetLinkedZ1Param() { return m_linked_plane_params[4]; }
+	double GetLinkedZ2Param() { return m_linked_plane_params[5]; }
+
+	void SetClippingLinkX(bool v) { m_link_x_chk = v; }
+	void SetClippingLinkY(bool v) { m_link_y_chk = v; }
+	void SetClippingLinkZ(bool v) { m_link_z_chk = v; }
+	bool GetClippingLinkX() { return m_link_x_chk; }
+	bool GetClippingLinkY() { return m_link_y_chk; }
+	bool GetClippingLinkZ() { return m_link_z_chk; }
+
+	void SetClippingPlaneRotations(double rotx, double roty, double rotz)
+	{
+		m_rotx_cl = 360.0 - rotx;
+		m_roty_cl = roty;
+		m_rotz_cl = -rotz;
+
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+	}
+
+	void SetClippingPlaneRotationsRaw(double rotx, double roty, double rotz)
+	{
+		m_rotx_cl = rotx;
+		m_roty_cl = roty;
+		m_rotz_cl = rotz;
+
+		m_q_cl.FromEuler(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		m_q_cl.Normalize();
+	}
+
+	void GetClippingPlaneRotations(double& rotx, double& roty, double& rotz)
+	{
+		rotx = 360.0 - m_rotx_cl;
+		roty = m_roty_cl;
+		rotz = -m_rotz_cl;
+	}
+
+	void GetClippingPlaneRotationsRaw(double& rotx, double& roty, double& rotz)
+	{
+		rotx = m_rotx_cl;
+		roty = m_roty_cl;
+		rotz = m_rotz_cl;
+	}
+
+	void SetClipDistance(int distx, int disty, int distz)
+	{
+		m_clip_dist_x = distx;
+		m_clip_dist_y = disty;
+		m_clip_dist_z = distz;
+	}
+
+	void GetClipDistance(int& distx, int& disty, int& distz)
+	{
+		distx = m_clip_dist_x;
+		disty = m_clip_dist_y;
+		distz = m_clip_dist_z;
+	}
+
+	void SetClippingFixParams(int clip_mode, Quaternion q_cl_zero, Quaternion q_cl_fix, Quaternion q_fix, double rotx_cl_fix, double roty_cl_fix, double rotz_cl_fix, double rotx_fix, double roty_fix, double rotz_fix, Vector trans_fix)
+	{
+		m_clip_mode = clip_mode;
+		m_q_cl_zero = q_cl_zero;
+		m_q_cl_fix = q_cl_fix;
+		m_q_fix = q_fix;
+
+		m_rotx_cl_fix = rotx_cl_fix;
+		m_roty_cl_fix = roty_cl_fix;
+		m_rotz_cl_fix = rotz_cl_fix;
+
+		m_rotx_fix = rotx_fix;
+		m_roty_fix = roty_fix;
+		m_rotz_fix = rotz_fix;
+
+		m_trans_fix = trans_fix;
+	}
+
+	void GetClippingFixParams(int &clip_mode, Quaternion &q_cl_zero, Quaternion &q_cl_fix, Quaternion &q_fix, double &rotx_cl_fix, double &roty_cl_fix, double &rotz_cl_fix, double &rotx_fix, double &roty_fix, double &rotz_fix, Vector &trans_fix)
+	{
+		clip_mode = m_clip_mode;
+		q_cl_zero = m_q_cl_zero;
+		q_cl_fix = m_q_cl_fix;
+		q_fix = m_q_fix;
+
+		rotx_cl_fix = m_rotx_cl_fix;
+		roty_cl_fix = m_roty_cl_fix;
+		rotz_cl_fix = m_rotz_cl_fix;
+
+		rotx_fix = m_rotx_fix;
+		roty_fix = m_roty_fix;
+		rotz_fix = m_rotz_fix;
+
+		trans_fix = m_trans_fix;
+	}
+
+protected:
+	bool m_sync_clipping_planes;
+
+	int m_clip_mode;
+
+	int m_clip_dist_x;
+	int m_clip_dist_y;
+	int m_clip_dist_z;
+
+	//linkers
+	bool m_link_x_chk;
+	bool m_link_y_chk;
+	bool m_link_z_chk;
+
+	double m_linked_plane_params[6];
+
+	//clipping plane rotations
+	Quaternion m_q_cl;
+	Quaternion m_q_cl_zero;
+	Quaternion m_q_cl_fix;
+	Quaternion m_q_fix;
+	double m_rotx_cl, m_roty_cl, m_rotz_cl;
+	double m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix;
+	double m_rotx_fix, m_roty_fix, m_rotz_fix;
+	Vector m_trans_fix;
+};
+
 struct VD_Landmark
 {
 	wstring name;
@@ -213,7 +407,7 @@ class VolumeLoader;
 #define MESH_FLOAT_ALPHA	5
 
 class Annotations;
-class EXPORT_API MeshData : public TreeLayer
+class EXPORT_API MeshData : public ClippingLayer
 {
 public:
 	MeshData();
@@ -306,9 +500,6 @@ public:
 	}
 	bool UpdateModelSWC();
 	double GetRadScale(){ return m_r_scale; }
-
-	void SetClipDistance(int distx, int disty, int distz);
-	void GetClipDistance(int &distx, int &disty, int &distz);
 
 	void SetDepthTex(const std::shared_ptr<vks::VTexture>& depth_tex)
 	{
@@ -457,6 +648,10 @@ public:
     void ImportROITreeXML(const wstring &filepath){ if (m_mr) m_mr->import_roi_tree_xml(filepath); }
     void ImportSelIDs(const string &sel_ids_str){ if (m_mr) m_mr->import_selected_ids(sel_ids_str); }
 
+	Quaternion TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y);
+	void Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
 
 private:
 	//wxString m_name;
@@ -503,14 +698,10 @@ private:
     bool m_show_labels;
 
 	wstring m_info;
-
-	int m_clip_dist_x;
-	int m_clip_dist_y;
-	int m_clip_dist_z;
 };
 
 /////////////////////////////////////////////////////////////////////
-class EXPORT_API VolumeData : public TreeLayer
+class EXPORT_API VolumeData : public ClippingLayer
 {
 public:
 	VolumeData();
@@ -755,10 +946,6 @@ public:
 	double GetMaxValue() { return m_max_value; }
 	void SetMaxValue(double val) { m_max_value = val; }
 
-	//clip distance
-	void SetClipDistance(int distx, int disty, int distz);
-	void GetClipDistance(int& distx, int& disty, int& distz);
-
 	//randomize color
 	void RandomizeColor();
 	//legend
@@ -898,6 +1085,11 @@ public:
     bool GetHighlightingMode() { return m_vr ? m_vr->get_highlight_mode() : false; }
     void SetHighlightingThreshold(double val) { if (m_vr) m_vr->set_highlight_th(val); }
     double GetHighlightingThreshold() { return m_vr ? m_vr->get_highlight_th() : 0.0; }
+
+	Quaternion TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y);
+	void Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
 
 private:
 	//duplication indicator and counter
@@ -1517,7 +1709,7 @@ private:
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-class EXPORT_API DataGroup : public TreeLayer
+class EXPORT_API DataGroup : public ClippingLayer
 {
 public:
 	DataGroup();
@@ -1662,6 +1854,45 @@ public:
 	//randomize color
 	void RandomizeColor();
 
+
+	void SyncClippingPlaneRotations()
+	{
+		for (VolumeData* vd : m_vd_list)
+		{
+			if (!vd)
+				continue;
+			vd->SetClippingPlaneRotations(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		}
+	}
+	void SyncClippingMode(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+	{
+		for (VolumeData* vd : m_vd_list)
+		{
+			if (!vd)
+				continue;
+			vd->SetClipMode(m_clip_mode ,cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		}
+	}
+	Quaternion TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y)
+	{
+		Quaternion ret;
+		if (!m_sync_clipping_planes)
+			return ret;
+		SyncClippingPlaneRotations();
+		for (VolumeData* vd : m_vd_list)
+		{
+			if (!vd)
+				continue;
+			ret = vd->TrackballClip(cam_rotx, cam_roty, cam_rotz, p1x, p1y, p2x, p2y);
+			break;
+		}
+
+		return ret;
+	}
+	void Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+
 private:
 	static int m_num;
 	//wxString m_name;
@@ -1673,7 +1904,7 @@ private:
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-class EXPORT_API MeshGroup : public TreeLayer
+class EXPORT_API MeshGroup : public ClippingLayer
 {
 public:
 	MeshGroup();
@@ -1751,10 +1982,49 @@ public:
 	//randomize color
 	void RandomizeColor();
 
+	void SyncClippingPlaneRotations()
+	{
+		for (MeshData* md : m_md_list)
+		{
+			if (!md)
+				continue;
+			md->SetClippingPlaneRotations(m_rotx_cl, m_roty_cl, m_rotz_cl);
+		}
+	}
+	void SyncClippingMode(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans)
+	{
+		for (MeshData* md : m_md_list)
+		{
+			if (!md)
+				continue;
+			md->SetClipMode(m_clip_mode, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		}
+	}
+	Quaternion TrackballClip(double cam_rotx, double cam_roty, double cam_rotz, int p1x, int p1y, int p2x, int p2y)
+	{
+		Quaternion ret;
+		if (!m_sync_clipping_planes)
+			return ret;
+		SyncClippingPlaneRotations();
+		for (MeshData* md : m_md_list)
+		{
+			if (!md)
+				continue;
+			ret = md->TrackballClip(cam_rotx, cam_roty, cam_rotz, p1x, p1y, p2x, p2y);
+			break;
+		}
+
+		return ret;
+	}
+	void Q2A(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void A2Q(double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+	void SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
+
 private:
 	static int m_num;
 	vector<MeshData*> m_md_list;
 	bool m_sync_mesh_prop;
+
 	bool m_disp;
 };
 

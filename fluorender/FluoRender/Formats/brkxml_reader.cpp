@@ -435,6 +435,16 @@ void BRKXMLReader::Preprocess()
         }
     }
 
+    for (int i = 0; i < m_pyramid.size(); i++)
+    {
+        size_t datasize = (size_t)m_pyramid[i].imageW * (size_t)m_pyramid[i].imageH * (size_t)m_pyramid[i].imageD * (size_t)(m_pyramid[i].bit_depth / 8);
+        if (datasize < 536870912ULL)
+        {
+            m_mask_lv = i;
+            break;
+        }
+    }
+
 	SetInfo();
 
 	//OutputInfo();

@@ -722,7 +722,14 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
     m_use_fog_mesh(true),
     m_use_absolute_value(false),
 	m_peeling_layer_progress(0),
-	m_mesh_rendering_progress(0)
+	m_mesh_rendering_progress(0),
+	m_sync_clipping_planes(false),
+	m_link_x_chk(false),
+	m_link_y_chk(false),
+	m_link_z_chk(false),
+	m_clip_dist_x(0),
+	m_clip_dist_y(0),
+	m_clip_dist_z(0)
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
@@ -758,6 +765,9 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 #else
     m_dummy = new wxButton(this, wxID_ANY, wxT(""), wxPoint(-1, -1), wxSize(1,1));
 #endif
+
+	for (auto& e : m_linked_plane_params)
+		e = 0.0;
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
@@ -7663,232 +7673,756 @@ void VRenderVulkanView::SetParams(double t)
 	Interpolator *interpolator = vr_frame->GetInterpolator();
 	if(!interpolator)
 		return;
-	FLKeyCode keycode;
+	FLKeyCode keycode, keycode_x, keycode_y, keycode_z;
 	keycode.l0 = 1;
 	keycode.l0_name = m_vrv->GetName();
+	keycode_x.l0 = 1;
+	keycode_x.l0_name = m_vrv->GetName();
+	keycode_y.l0 = 1;
+	keycode_y.l0_name = m_vrv->GetName();
+	keycode_z.l0 = 1;
+	keycode_z.l0_name = m_vrv->GetName();
     
     //for the view
     keycode.l1 = 1;
     keycode.l1_name = m_vrv->GetName();
+	keycode_x.l1 = 1;
+	keycode_x.l1_name = m_vrv->GetName();
+	keycode_y.l1 = 1;
+	keycode_y.l1_name = m_vrv->GetName();
+	keycode_z.l1 = 1;
+	keycode_z.l1_name = m_vrv->GetName();
     //link clipping planes
     keycode.l2 = 0;
     keycode.l2_name = "link_planes";
     bool bval;
-    if (interpolator->GetBoolean(keycode, t, bval))
-        clip_view->SetChannLink(bval);
-
-	for (int i=0; i<GetAllVolumeNum(); i++)
+	bool oldversion = false;
+	if (interpolator->GetBoolean(keycode, t, bval))
 	{
-		VolumeData* vd = GetAllVolumeData(i);
-		if (!vd) continue;
-
-		keycode.l1 = 2;
-		keycode.l1_name = vd->GetName();
-
-		//display
-		keycode.l2 = 0;
-		keycode.l2_name = "display";
-		if (interpolator->GetBoolean(keycode, t, bval))
-			vd->SetDisp(bval);
-
-		//clipping planes
-		vector<Plane*> *planes = vd->GetVR()->get_planes();
-		if (!planes) continue;
-		if(planes->size() != 6) continue;
-		Plane *plane = 0;
-		double val = 0;
-		//x1
-		plane = (*planes)[0];
-		keycode.l2 = 0;
-		keycode.l2_name = "x1_val";
-		if (interpolator->GetDouble(keycode, t, val)) {
-			plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedX1Param(val);
-        }
-		//x2
-		plane = (*planes)[1];
-		keycode.l2 = 0;
-		keycode.l2_name = "x2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedX2Param(val);
-        }
-		//y1
-		plane = (*planes)[2];
-		keycode.l2 = 0;
-		keycode.l2_name = "y1_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedY1Param(val);
-        }
-		//y2
-		plane = (*planes)[3];
-		keycode.l2 = 0;
-		keycode.l2_name = "y2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedY2Param(val);
-        }
-		//z1
-		plane = (*planes)[4];
-		keycode.l2 = 0;
-		keycode.l2_name = "z1_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedZ1Param(val);
-        }
-		//z2
-		plane = (*planes)[5];
-		keycode.l2 = 0;
-		keycode.l2_name = "z2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedZ2Param(val);
-        }
-
-		keycode.l2 = 0;
-		keycode.l2_name = "gamma";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->Set3DGamma(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "saturation";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetOffset(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "luminance";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetLuminance(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "alpha_enable";
-		if (interpolator->GetBoolean(keycode, t, bval))
-			vd->SetEnableAlpha(bval);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "alpha";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetAlpha(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "shading_enable";
-		if (interpolator->GetBoolean(keycode, t, bval))
-			vd->SetShading(bval);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "shading";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetLowShading(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "boundary";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetBoundary(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "left_threshold";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetLeftThresh(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "right_threshold";
-		if (interpolator->GetDouble(keycode, t, val))
-			vd->SetRightThresh(val);
-
-		keycode.l2 = 0;
-		keycode.l2_name = "inv";
-		if (interpolator->GetBoolean(keycode, t, bval))
-			vd->SetInvert(bval);
+		SetSyncClippingPlanes(bval);
+		oldversion = true;
 	}
-    
-    for (int i=0; i<GetAllMeshNum(); i++)
-    {
-        MeshData* md = GetAllMeshData(i);
-        if (!md) continue;
-        
-        keycode.l1 = 2;
-        keycode.l1_name = md->GetName();
-        
-        //display
-        keycode.l2 = 0;
-        keycode.l2_name = "display";
-        bool bval;
-        if (interpolator->GetBoolean(keycode, t, bval))
-            md->SetDisp(bval);
-        
-        //clipping planes
-        vector<Plane*> *planes = md->GetMR()->get_planes();
-        if (!planes) continue;
-        if(planes->size() != 6) continue;
-        Plane *plane = 0;
-        double val = 0;
-        //x1
-        plane = (*planes)[0];
-        keycode.l2 = 0;
-        keycode.l2_name = "x1_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedX1Param(val);
-        }
-        //x2
-        plane = (*planes)[1];
-        keycode.l2 = 0;
-        keycode.l2_name = "x2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedX2Param(val);
-        }
-        //y1
-        plane = (*planes)[2];
-        keycode.l2 = 0;
-        keycode.l2_name = "y1_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedY1Param(val);
-        }
-        //y2
-        plane = (*planes)[3];
-        keycode.l2 = 0;
-        keycode.l2_name = "y2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedY2Param(val);
-        }
-        //z1
-        plane = (*planes)[4];
-        keycode.l2 = 0;
-        keycode.l2_name = "z1_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedZ1Param(val);
-        }
-        //z2
-        plane = (*planes)[5];
-        keycode.l2 = 0;
-        keycode.l2_name = "z2_val";
-        if (interpolator->GetDouble(keycode, t, val)) {
-            plane->SetParam(val);
-            if (clip_view && clip_view->GetChannLink())
-                clip_view->SetLinkedZ2Param(val);
-        }
-        
-        keycode.l2 = 0;
-        keycode.l2_name = "transparency";
-        if (interpolator->GetDouble(keycode, t, val))
-            md->SetFloat(val, MESH_FLOAT_ALPHA);
-    }
+
+	keycode.l2 = 0;
+	keycode.l2_name = "link_clipping_planes";
+	if (interpolator->GetBoolean(keycode, t, bval))
+		SetSyncClippingPlanes(bval);
+
+	
+	double val = 0;
+	double x, y, z;
+	int ix, iy, iz;
+	bool bx, by, bz;
+
+	//clipping planes
+	//x1
+	keycode.l2 = 0;
+	keycode.l2_name = "x1_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedX1Param(val);
+	//x2
+	keycode.l2 = 0;
+	keycode.l2_name = "x2_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedX2Param(val);
+	//y1
+	keycode.l2 = 0;
+	keycode.l2_name = "y1_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedY1Param(val);
+	//y2
+	keycode.l2 = 0;
+	keycode.l2_name = "y2_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedY2Param(val);
+	//z1
+	keycode.l2 = 0;
+	keycode.l2_name = "z1_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedZ1Param(val);
+	//z2
+	keycode.l2 = 0;
+	keycode.l2_name = "z2_val";
+	if (interpolator->GetDouble(keycode, t, val))
+		SetLinkedZ2Param(val);
+
+	keycode_x.l2 = 0;
+	keycode_x.l2_name = "clip_link_x";
+	keycode_y.l2 = 0;
+	keycode_y.l2_name = "clip_link_y";
+	keycode_z.l2 = 0;
+	keycode_z.l2_name = "clip_link_z";
+	if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+	{
+		SetClippingLinkX(bx);
+		SetClippingLinkY(by);
+		SetClippingLinkZ(bz);
+	}
+
+	//clipping plane rotation
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_rotation";
+	Quaternion q;
+	if (interpolator->GetQuaternion(keycode, t, q))
+	{
+		double rotx, roty, rotz;
+		q.ToEuler(rotx, roty, rotz);
+		SetClippingPlaneRotations(rotx, roty, -rotz);
+	}
+
+	keycode_x.l2 = 0;
+	keycode_x.l2_name = "clip_dist_x";
+	keycode_y.l2 = 0;
+	keycode_y.l2_name = "clip_dist_y";
+	keycode_z.l2 = 0;
+	keycode_z.l2_name = "clip_dist_z";
+	if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+		SetClipDistance(ix, iy, iz);
+
+	for (size_t i = 0; i < m_layer_list.size(); i++)
+	{
+		if (!m_layer_list[i])
+			continue;
+		switch (m_layer_list[i]->IsA())
+		{
+		case 5://group
+		{
+			DataGroup* group = (DataGroup*)m_layer_list[i];
+
+			if (!group)
+				continue;
+
+			keycode.l1 = 5;
+			keycode.l1_name = group->GetName();
+			keycode_x.l1 = 5;
+			keycode_x.l1_name = group->GetName();
+			keycode_y.l1 = 5;
+			keycode_y.l1_name = group->GetName();
+			keycode_z.l1 = 5;
+			keycode_z.l1_name = group->GetName();
+
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			if (interpolator->GetBoolean(keycode, t, bval))
+				group->SetDisp(bval);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "link_clipping_planes";
+			if (interpolator->GetBoolean(keycode, t, bval))
+				group->SetSyncClippingPlanes(bval);
+
+			//clipping planes
+			//x1
+			keycode.l2 = 0;
+			keycode.l2_name = "x1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedX1Param(val);
+			//x2
+			keycode.l2 = 0;
+			keycode.l2_name = "x2_val";
+			if (interpolator->GetDouble(keycode, t, val)) 
+				group->SetLinkedX2Param(val);
+			//y1
+			keycode.l2 = 0;
+			keycode.l2_name = "y1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedY1Param(val);
+			//y2
+			keycode.l2 = 0;
+			keycode.l2_name = "y2_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedY2Param(val);
+			//z1
+			keycode.l2 = 0;
+			keycode.l2_name = "z1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedZ1Param(val);
+			//z2
+			keycode.l2 = 0;
+			keycode.l2_name = "z2_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedZ2Param(val);
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_link_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_link_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_link_z";
+			if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+			{
+				group->SetClippingLinkX(bx);
+				group->SetClippingLinkY(by);
+				group->SetClippingLinkZ(bz);
+			}
+
+			//clipping plane rotation
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+			Quaternion q;
+			if (interpolator->GetQuaternion(keycode, t, q))
+			{
+				double rotx, roty, rotz;
+				q.ToEuler(rotx, roty, rotz);
+				group->SetClippingPlaneRotationsRaw(rotx, roty, rotz);
+			}
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_dist_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_dist_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_dist_z";
+			if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+				group->SetClipDistance(ix, iy, iz);
+
+			for (int j = 0; j < group->GetVolumeNum(); j++)
+			{
+				VolumeData* vd = group->GetVolumeData(j);
+				if (vd)
+				{
+					keycode.l1 = 2;
+					keycode.l1_name = vd->GetName();
+					keycode_x.l1 = 2;
+					keycode_x.l1_name = vd->GetName();
+					keycode_y.l1 = 2;
+					keycode_y.l1_name = vd->GetName();
+					keycode_z.l1 = 2;
+					keycode_z.l1_name = vd->GetName();
+
+					//display
+					keycode.l2 = 0;
+					keycode.l2_name = "display";
+					if (interpolator->GetBoolean(keycode, t, bval))
+						vd->SetDisp(bval);
+
+					//clipping planes
+					vector<Plane*>* planes = vd->GetVR()->get_planes();
+					if (!planes) continue;
+					if (planes->size() != 6) continue;
+					Plane* plane = 0;
+					//x1
+					plane = (*planes)[0];
+					keycode.l2 = 0;
+					keycode.l2_name = "x1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedX1Param(val);
+					}
+					//x2
+					plane = (*planes)[1];
+					keycode.l2 = 0;
+					keycode.l2_name = "x2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedX2Param(val);
+					}
+					//y1
+					plane = (*planes)[2];
+					keycode.l2 = 0;
+					keycode.l2_name = "y1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedY1Param(val);
+					}
+					//y2
+					plane = (*planes)[3];
+					keycode.l2 = 0;
+					keycode.l2_name = "y2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedY2Param(val);
+					}
+					//z1
+					plane = (*planes)[4];
+					keycode.l2 = 0;
+					keycode.l2_name = "z1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedZ1Param(val);
+					}
+					//z2
+					plane = (*planes)[5];
+					keycode.l2 = 0;
+					keycode.l2_name = "z2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedZ2Param(val);
+					}
+
+					keycode_x.l2 = 0;
+					keycode_x.l2_name = "clip_link_x";
+					keycode_y.l2 = 0;
+					keycode_y.l2_name = "clip_link_y";
+					keycode_z.l2 = 0;
+					keycode_z.l2_name = "clip_link_z";
+					if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+					{
+						vd->SetClippingLinkX(bx);
+						vd->SetClippingLinkY(by);
+						vd->SetClippingLinkZ(bz);
+						if (oldversion)
+						{
+							SetClippingLinkX(bx);
+							SetClippingLinkY(by);
+							SetClippingLinkZ(bz);
+						}
+					}
+
+					//clipping plane rotation
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_rotation";
+					Quaternion q;
+					if (interpolator->GetQuaternion(keycode, t, q))
+					{
+						double rotx, roty, rotz;
+						q.ToEuler(rotx, roty, rotz);
+						vd->SetClippingPlaneRotationsRaw(rotx, roty, rotz);
+						if (oldversion)
+							SetClippingPlaneRotations(rotx, roty, rotz);
+					}
+
+					keycode_x.l2 = 0;
+					keycode_x.l2_name = "clip_dist_x";
+					keycode_y.l2 = 0;
+					keycode_y.l2_name = "clip_dist_y";
+					keycode_z.l2 = 0;
+					keycode_z.l2_name = "clip_dist_z";
+					if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+					{
+						vd->SetClipDistance(ix, iy, iz);
+						if (oldversion)
+							SetClipDistance(ix, iy, iz);
+					}
+
+					keycode.l2 = 0;
+					keycode.l2_name = "gamma";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->Set3DGamma(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "saturation";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetOffset(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "luminance";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetLuminance(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "alpha_enable";
+					if (interpolator->GetBoolean(keycode, t, bval))
+						vd->SetEnableAlpha(bval);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "alpha";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetAlpha(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "shading_enable";
+					if (interpolator->GetBoolean(keycode, t, bval))
+						vd->SetShading(bval);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "shading";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetLowShading(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "boundary";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetBoundary(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "left_threshold";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetLeftThresh(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "right_threshold";
+					if (interpolator->GetDouble(keycode, t, val))
+						vd->SetRightThresh(val);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "inv";
+					if (interpolator->GetBoolean(keycode, t, bval))
+						vd->SetInvert(bval);
+				}
+			}
+
+		}
+		break;
+		case 3://mesh data
+		{
+			MeshData* md = (MeshData*)m_layer_list[i];
+
+			if (!md)
+				continue;
+
+			keycode.l1 = 2;
+			keycode.l1_name = md->GetName();
+			keycode_x.l1 = 2;
+			keycode_x.l1_name = md->GetName();
+			keycode_y.l1 = 2;
+			keycode_y.l1_name = md->GetName();
+			keycode_z.l1 = 2;
+			keycode_z.l1_name = md->GetName();
+
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			bool bval;
+			if (interpolator->GetBoolean(keycode, t, bval))
+				md->SetDisp(bval);
+
+			//clipping planes
+			vector<Plane*>* planes = md->GetMR()->get_planes();
+			if (!planes) continue;
+			if (planes->size() != 6) continue;
+			Plane* plane = 0;
+			//x1
+			plane = (*planes)[0];
+			keycode.l2 = 0;
+			keycode.l2_name = "x1_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedX1Param(val);
+			}
+			//x2
+			plane = (*planes)[1];
+			keycode.l2 = 0;
+			keycode.l2_name = "x2_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedX2Param(val);
+			}
+			//y1
+			plane = (*planes)[2];
+			keycode.l2 = 0;
+			keycode.l2_name = "y1_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedY1Param(val);
+			}
+			//y2
+			plane = (*planes)[3];
+			keycode.l2 = 0;
+			keycode.l2_name = "y2_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedY2Param(val);
+			}
+			//z1
+			plane = (*planes)[4];
+			keycode.l2 = 0;
+			keycode.l2_name = "z1_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedZ1Param(val);
+			}
+			//z2
+			plane = (*planes)[5];
+			keycode.l2 = 0;
+			keycode.l2_name = "z2_val";
+			if (interpolator->GetDouble(keycode, t, val)) {
+				plane->SetParam(val);
+				if (oldversion)
+					SetLinkedZ2Param(val);
+			}
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_link_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_link_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_link_z";
+			if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+			{
+				md->SetClippingLinkX(bx);
+				md->SetClippingLinkY(by);
+				md->SetClippingLinkZ(bz);
+				if (oldversion)
+				{
+					SetClippingLinkX(bx);
+					SetClippingLinkY(by);
+					SetClippingLinkZ(bz);
+				}
+			}
+
+			//clipping plane rotation
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+			Quaternion q;
+			if (interpolator->GetQuaternion(keycode, t, q))
+			{
+				double rotx, roty, rotz;
+				q.ToEuler(rotx, roty, rotz);
+				md->SetClippingPlaneRotationsRaw(rotx, roty, rotz);
+				if (oldversion)
+					SetClippingPlaneRotations(rotx, roty, rotz);
+			}
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_dist_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_dist_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_dist_z";
+			if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+			{
+				md->SetClipDistance(ix, iy, iz);
+				if (oldversion)
+					SetClipDistance(ix, iy, iz);
+			}
+
+			keycode.l2 = 0;
+			keycode.l2_name = "transparency";
+			if (interpolator->GetDouble(keycode, t, val))
+				md->SetFloat(val, MESH_FLOAT_ALPHA);
+		}
+		break;
+		case 6://mesh group
+		{
+			MeshGroup* group = (MeshGroup*)m_layer_list[i];
+
+			if (!group)
+				continue;
+
+			keycode.l1 = 6;
+			keycode.l1_name = group->GetName();
+			keycode_x.l1 = 6;
+			keycode_x.l1_name = group->GetName();
+			keycode_y.l1 = 6;
+			keycode_y.l1_name = group->GetName();
+			keycode_z.l1 = 6;
+			keycode_z.l1_name = group->GetName();
+
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			if (interpolator->GetBoolean(keycode, t, bval))
+				group->SetDisp(bval);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "link_clipping_planes";
+			if (interpolator->GetBoolean(keycode, t, bval))
+				group->SetSyncClippingPlanes(bval);
+
+			//clipping planes
+			//x1
+			keycode.l2 = 0;
+			keycode.l2_name = "x1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedX1Param(val);
+			//x2
+			keycode.l2 = 0;
+			keycode.l2_name = "x2_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedX2Param(val);
+			//y1
+			keycode.l2 = 0;
+			keycode.l2_name = "y1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedY1Param(val);
+			//y2
+			keycode.l2 = 0;
+			keycode.l2_name = "y2_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedY2Param(val);
+			//z1
+			keycode.l2 = 0;
+			keycode.l2_name = "z1_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedZ1Param(val);
+			//z2
+			keycode.l2 = 0;
+			keycode.l2_name = "z2_val";
+			if (interpolator->GetDouble(keycode, t, val))
+				group->SetLinkedZ2Param(val);
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_link_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_link_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_link_z";
+			if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+			{
+				group->SetClippingLinkX(bx);
+				group->SetClippingLinkY(by);
+				group->SetClippingLinkZ(bz);
+			}
+
+			//clipping plane rotation
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+			Quaternion q;
+			if (interpolator->GetQuaternion(keycode, t, q))
+			{
+				double rotx, roty, rotz;
+				q.ToEuler(rotx, roty, rotz);
+				group->SetClippingPlaneRotationsRaw(rotx, roty, rotz);
+			}
+
+			keycode_x.l2 = 0;
+			keycode_x.l2_name = "clip_dist_x";
+			keycode_y.l2 = 0;
+			keycode_y.l2_name = "clip_dist_y";
+			keycode_z.l2 = 0;
+			keycode_z.l2_name = "clip_dist_z";
+			if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+				group->SetClipDistance(ix, iy, iz);
+
+			for (int j = 0; j < group->GetMeshNum(); j++)
+			{
+				MeshData* md = group->GetMeshData(j);
+				if (md)
+				{
+					keycode.l1 = 2;
+					keycode.l1_name = md->GetName();
+					keycode_x.l1 = 2;
+					keycode_x.l1_name = md->GetName();
+					keycode_y.l1 = 2;
+					keycode_y.l1_name = md->GetName();
+					keycode_z.l1 = 2;
+					keycode_z.l1_name = md->GetName();
+
+					//display
+					keycode.l2 = 0;
+					keycode.l2_name = "display";
+					bool bval;
+					if (interpolator->GetBoolean(keycode, t, bval))
+						md->SetDisp(bval);
+
+					//clipping planes
+					vector<Plane*>* planes = md->GetMR()->get_planes();
+					if (!planes) continue;
+					if (planes->size() != 6) continue;
+					Plane* plane = 0;
+					//x1
+					plane = (*planes)[0];
+					keycode.l2 = 0;
+					keycode.l2_name = "x1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedX1Param(val);
+					}
+					//x2
+					plane = (*planes)[1];
+					keycode.l2 = 0;
+					keycode.l2_name = "x2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedX2Param(val);
+					}
+					//y1
+					plane = (*planes)[2];
+					keycode.l2 = 0;
+					keycode.l2_name = "y1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedY1Param(val);
+					}
+					//y2
+					plane = (*planes)[3];
+					keycode.l2 = 0;
+					keycode.l2_name = "y2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedY2Param(val);
+					}
+					//z1
+					plane = (*planes)[4];
+					keycode.l2 = 0;
+					keycode.l2_name = "z1_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedZ1Param(val);
+					}
+					//z2
+					plane = (*planes)[5];
+					keycode.l2 = 0;
+					keycode.l2_name = "z2_val";
+					if (interpolator->GetDouble(keycode, t, val)) {
+						plane->SetParam(val);
+						if (oldversion)
+							SetLinkedZ2Param(val);
+					}
+
+					keycode_x.l2 = 0;
+					keycode_x.l2_name = "clip_link_x";
+					keycode_y.l2 = 0;
+					keycode_y.l2_name = "clip_link_y";
+					keycode_z.l2 = 0;
+					keycode_z.l2_name = "clip_link_z";
+					if (interpolator->GetBoolean(keycode_x, t, bx) && interpolator->GetBoolean(keycode_y, t, by) && interpolator->GetBoolean(keycode_z, t, bz))
+					{
+						md->SetClippingLinkX(bx);
+						md->SetClippingLinkY(by);
+						md->SetClippingLinkZ(bz);
+						if (oldversion)
+						{
+							SetClippingLinkX(bx);
+							SetClippingLinkY(by);
+							SetClippingLinkZ(bz);
+						}
+					}
+
+					//clipping plane rotation
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_rotation";
+					Quaternion q;
+					if (interpolator->GetQuaternion(keycode, t, q))
+					{
+						double rotx, roty, rotz;
+						q.ToEuler(rotx, roty, rotz);
+						md->SetClippingPlaneRotationsRaw(rotx, roty, rotz);
+						if (oldversion)
+							SetClippingPlaneRotations(rotx, roty, rotz);
+					}
+
+					keycode_x.l2 = 0;
+					keycode_x.l2_name = "clip_dist_x";
+					keycode_y.l2 = 0;
+					keycode_y.l2_name = "clip_dist_y";
+					keycode_z.l2 = 0;
+					keycode_z.l2_name = "clip_dist_z";
+					if (interpolator->GetInt(keycode_x, t, ix) && interpolator->GetInt(keycode_y, t, iy) && interpolator->GetInt(keycode_z, t, iz))
+					{
+						md->SetClipDistance(ix, iy, iz);
+						if (oldversion)
+							SetClipDistance(ix, iy, iz);
+					}
+
+					keycode.l2 = 0;
+					keycode.l2_name = "transparency";
+					if (interpolator->GetDouble(keycode, t, val))
+						md->SetFloat(val, MESH_FLOAT_ALPHA);
+				}
+			}
+		}
+		break;
+		}
+	}
     
     m_vrv->SetEvtHandlerEnabled(false);
 /*
@@ -7906,10 +8440,15 @@ void VRenderVulkanView::SetParams(double t)
 	if (interpolator->GetDouble(keycode, t, batch))
 		Set3DBatFrame(int(batch + 0.5));
 */
-	bool bx, by, bz;
 	//for the view
 	keycode.l1 = 1;
 	keycode.l1_name = m_vrv->GetName();
+	keycode_x.l1 = 1;
+	keycode_x.l1_name = m_vrv->GetName();
+	keycode_y.l1 = 1;
+	keycode_y.l1_name = m_vrv->GetName();
+	keycode_z.l1 = 1;
+	keycode_z.l1_name = m_vrv->GetName();
 	//translation
 	double tx, ty, tz;
 	keycode.l2 = 0;
@@ -7947,7 +8486,6 @@ void VRenderVulkanView::SetParams(double t)
 	//rotation
 	keycode.l2 = 0;
 	keycode.l2_name = "rotation";
-	Quaternion q;
 	if (interpolator->GetQuaternion(keycode, t, q))
 	{
 		double rotx, roty, rotz;
@@ -7971,6 +8509,745 @@ void VRenderVulkanView::SetParams(double t)
 		vr_frame->GetRecorderDlg()->SetSelection(index);
 	}
 	SetVolPopDirty();
+}
+
+void VRenderVulkanView::AddKeyFrame(double duration, int interpolation, bool record_volume_params)
+{
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (!vr_frame)
+		return;
+	ClippingView* clip_view = vr_frame->GetClippingView();
+	DataManager* mgr = vr_frame->GetDataManager();
+	if (!mgr)
+		return;
+	Interpolator* interpolator = vr_frame->GetInterpolator();
+	if (!interpolator)
+		return;
+	FLKeyCode keycode;
+	FlKeyDouble* flkey = 0;
+	FlKeyQuaternion* flkeyQ = 0;
+	FlKeyBoolean* flkeyB = 0;
+	FlKeyInt* flkeyI = 0;
+
+	int ix, iy, iz;
+	double rotx, roty, rotz;
+	Quaternion q;
+
+	double t = interpolator->GetLastT();
+	t = t < 0.0 ? 0.0 : t + duration;
+
+	interpolator->Begin(t);
+
+	for (size_t i = 0; i < m_layer_list.size(); i++)
+	{
+		if (!m_layer_list[i])
+			continue;
+		switch (m_layer_list[i]->IsA())
+		{
+		case 5://group
+		{
+			DataGroup* group = (DataGroup*)m_layer_list[i];
+
+			if (!group)
+				continue;
+
+			keycode.l0 = 1;
+			keycode.l0_name = m_vrv->GetName();
+			keycode.l1 = 5;
+			keycode.l1_name = group->GetName();
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			flkeyB = new FlKeyBoolean(keycode, group->GetDisp());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "link_clipping_planes";
+			flkeyB = new FlKeyBoolean(keycode, group->GetSyncClippingPlanes());
+			interpolator->AddKey(flkeyB);
+
+			//x1
+			keycode.l2 = 0;
+			keycode.l2_name = "x1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(0));
+			interpolator->AddKey(flkey);
+			//x2
+			keycode.l2 = 0;
+			keycode.l2_name = "x2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(1));
+			interpolator->AddKey(flkey);
+			//y1
+			keycode.l2 = 0;
+			keycode.l2_name = "y1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(2));
+			interpolator->AddKey(flkey);
+			//y2
+			keycode.l2 = 0;
+			keycode.l2_name = "y2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(3));
+			interpolator->AddKey(flkey);
+			//z1
+			keycode.l2 = 0;
+			keycode.l2_name = "z1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(4));
+			interpolator->AddKey(flkey);
+			//z2
+			keycode.l2 = 0;
+			keycode.l2_name = "z2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(5));
+			interpolator->AddKey(flkey);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_x";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkX());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_y";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkY());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_z";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkZ());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+			group->GetClippingPlaneRotationsRaw(rotx, roty, rotz);
+			q.FromEuler(rotx, roty, rotz);
+			flkeyQ = new FlKeyQuaternion(keycode, q);
+			interpolator->AddKey(flkeyQ);
+
+			group->GetClipDistance(ix, iy, iz);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_x";
+			flkeyI = new FlKeyInt(keycode, ix);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_y";
+			flkeyI = new FlKeyInt(keycode, iy);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_z";
+			flkeyI = new FlKeyInt(keycode, iz);
+			interpolator->AddKey(flkeyI);
+
+			for (int j = 0; j < group->GetVolumeNum(); j++)
+			{
+				VolumeData* vd = group->GetVolumeData(j);
+				if (vd)
+				{
+					keycode.l0 = 1;
+					keycode.l0_name = m_vrv->GetName();
+					keycode.l1 = 2;
+					keycode.l1_name = vd->GetName();
+					//display
+					keycode.l2 = 0;
+					keycode.l2_name = "display";
+					flkeyB = new FlKeyBoolean(keycode, vd->GetDisp());
+					interpolator->AddKey(flkeyB);
+					//clipping planes
+					vector<Plane*>* planes = vd->GetVR()->get_planes();
+
+					if (planes && planes->size() == 6)
+					{
+						Plane* plane = 0;
+						double param;
+						//x1
+						plane = (*planes)[0];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "x1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//x2
+						plane = (*planes)[1];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "x2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//y1
+						plane = (*planes)[2];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "y1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//y2
+						plane = (*planes)[3];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "y2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//z1
+						plane = (*planes)[4];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "z1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//z2
+						plane = (*planes)[5];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "z2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+					}
+
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_x";
+					flkeyB = new FlKeyBoolean(keycode, vd->GetClippingLinkX());
+					interpolator->AddKey(flkeyB);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_y";
+					flkeyB = new FlKeyBoolean(keycode, vd->GetClippingLinkY());
+					interpolator->AddKey(flkeyB);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_z";
+					flkeyB = new FlKeyBoolean(keycode, vd->GetClippingLinkZ());
+					interpolator->AddKey(flkeyB);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_rotation";
+					vd->GetClippingPlaneRotationsRaw(rotx, roty, rotz);
+					q.FromEuler(rotx, roty, rotz);
+					flkeyQ = new FlKeyQuaternion(keycode, q);
+					interpolator->AddKey(flkeyQ);
+					
+					vd->GetClipDistance(ix, iy, iz);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_x";
+					flkeyI = new FlKeyInt(keycode, ix);
+					interpolator->AddKey(flkeyI);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_y";
+					flkeyI = new FlKeyInt(keycode, iy);
+					interpolator->AddKey(flkeyI);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_z";
+					flkeyI = new FlKeyInt(keycode, iz);
+					interpolator->AddKey(flkeyI);
+
+					if (record_volume_params)
+					{
+						keycode.l2 = 0;
+						keycode.l2_name = "gamma";
+						flkey = new FlKeyDouble(keycode, vd->Get3DGamma());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "saturation";
+						flkey = new FlKeyDouble(keycode, vd->GetOffset());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "luminance";
+						flkey = new FlKeyDouble(keycode, vd->GetLuminance());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "alpha_enable";
+						flkeyB = new FlKeyBoolean(keycode, vd->GetEnableAlpha());
+						interpolator->AddKey(flkeyB);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "alpha";
+						flkey = new FlKeyDouble(keycode, vd->GetAlpha());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "shading_enable";
+						flkeyB = new FlKeyBoolean(keycode, vd->GetShading());
+						interpolator->AddKey(flkeyB);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "shading";
+						flkey = new FlKeyDouble(keycode, vd->GetLowShading());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "boundary";
+						flkey = new FlKeyDouble(keycode, vd->GetBoundary());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "left_threshold";
+						flkey = new FlKeyDouble(keycode, vd->GetLeftThresh());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "right_threshold";
+						flkey = new FlKeyDouble(keycode, vd->GetRightThresh());
+						interpolator->AddKey(flkey);
+
+						keycode.l2 = 0;
+						keycode.l2_name = "inv";
+						flkeyB = new FlKeyBoolean(keycode, vd->GetInvert());
+						interpolator->AddKey(flkeyB);
+					}
+				}
+			}
+
+		}
+		break;
+		case 3://mesh data
+		{
+			MeshData* md = (MeshData*)m_layer_list[i];
+
+			if (!md)
+				continue;
+
+			keycode.l0 = 1;
+			keycode.l0_name = m_vrv->GetName();
+			keycode.l1 = 2;
+			keycode.l1_name = md->GetName();
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			flkeyB = new FlKeyBoolean(keycode, md->GetDisp());
+			interpolator->AddKey(flkeyB);
+			//clipping planes
+			vector<Plane*>* planes = md->GetMR()->get_planes();
+
+			if (planes && planes->size() == 6)
+			{
+				Plane* plane = 0;
+				double param;
+				//x1
+				plane = (*planes)[0];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "x1_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+				//x2
+				plane = (*planes)[1];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "x2_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+				//y1
+				plane = (*planes)[2];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "y1_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+				//y2
+				plane = (*planes)[3];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "y2_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+				//z1
+				plane = (*planes)[4];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "z1_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+				//z2
+				plane = (*planes)[5];
+				param = plane->GetParam();
+				keycode.l2 = 0;
+				keycode.l2_name = "z2_val";
+				flkey = new FlKeyDouble(keycode, param);
+				interpolator->AddKey(flkey);
+			}
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_x";
+			flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkX());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_y";
+			flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkY());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_z";
+			flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkZ());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+
+			md->GetClippingPlaneRotationsRaw(rotx, roty, rotz);
+			q.FromEuler(rotx, roty, rotz);
+			flkeyQ = new FlKeyQuaternion(keycode, q);
+			interpolator->AddKey(flkeyQ);
+
+			md->GetClipDistance(ix, iy, iz);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_x";
+			flkeyI = new FlKeyInt(keycode, ix);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_y";
+			flkeyI = new FlKeyInt(keycode, iy);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_z";
+			flkeyI = new FlKeyInt(keycode, iz);
+			interpolator->AddKey(flkeyI);
+
+			if (record_volume_params)
+			{
+				keycode.l2 = 0;
+				keycode.l2_name = "transparency";
+				if (md->GetMR()) {
+					flkey = new FlKeyDouble(keycode, md->GetMR()->get_alpha());
+					interpolator->AddKey(flkey);
+				}
+			}
+		}
+		break;
+		case 6://mesh group
+		{
+			MeshGroup* group = (MeshGroup*)m_layer_list[i];
+
+			if (!group)
+				continue;
+
+			keycode.l0 = 1;
+			keycode.l0_name = m_vrv->GetName();
+			keycode.l1 = 5;
+			keycode.l1_name = group->GetName();
+			//display
+			keycode.l2 = 0;
+			keycode.l2_name = "display";
+			flkeyB = new FlKeyBoolean(keycode, group->GetDisp());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "link_clipping_planes";
+			flkeyB = new FlKeyBoolean(keycode, group->GetSyncClippingPlanes());
+			interpolator->AddKey(flkeyB);
+
+			//x1
+			keycode.l2 = 0;
+			keycode.l2_name = "x1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(0));
+			interpolator->AddKey(flkey);
+			//x2
+			keycode.l2 = 0;
+			keycode.l2_name = "x2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(1));
+			interpolator->AddKey(flkey);
+			//y1
+			keycode.l2 = 0;
+			keycode.l2_name = "y1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(2));
+			interpolator->AddKey(flkey);
+			//y2
+			keycode.l2 = 0;
+			keycode.l2_name = "y2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(3));
+			interpolator->AddKey(flkey);
+			//z1
+			keycode.l2 = 0;
+			keycode.l2_name = "z1_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(4));
+			interpolator->AddKey(flkey);
+			//z2
+			keycode.l2 = 0;
+			keycode.l2_name = "z2_val";
+			flkey = new FlKeyDouble(keycode, group->GetLinkedParam(5));
+			interpolator->AddKey(flkey);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_x";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkX());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_y";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkY());
+			interpolator->AddKey(flkeyB);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_link_z";
+			flkeyB = new FlKeyBoolean(keycode, group->GetClippingLinkZ());
+			interpolator->AddKey(flkeyB);
+
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_rotation";
+			group->GetClippingPlaneRotationsRaw(rotx, roty, rotz);
+			q.FromEuler(rotx, roty, rotz);
+			flkeyQ = new FlKeyQuaternion(keycode, q);
+			interpolator->AddKey(flkeyQ);
+
+			group->GetClipDistance(ix, iy, iz);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_x";
+			flkeyI = new FlKeyInt(keycode, ix);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_y";
+			flkeyI = new FlKeyInt(keycode, iy);
+			interpolator->AddKey(flkeyI);
+			keycode.l2 = 0;
+			keycode.l2_name = "clip_dist_z";
+			flkeyI = new FlKeyInt(keycode, iz);
+			interpolator->AddKey(flkeyI);
+
+			for (int j = 0; j < group->GetMeshNum(); j++)
+			{
+				MeshData* md = group->GetMeshData(j);
+				if (md)
+				{
+					keycode.l0 = 1;
+					keycode.l0_name = m_vrv->GetName();
+					keycode.l1 = 2;
+					keycode.l1_name = md->GetName();
+					//display
+					keycode.l2 = 0;
+					keycode.l2_name = "display";
+					flkeyB = new FlKeyBoolean(keycode, md->GetDisp());
+					interpolator->AddKey(flkeyB);
+					//clipping planes
+					vector<Plane*>* planes = md->GetMR()->get_planes();
+
+					if (planes && planes->size() == 6)
+					{
+						Plane* plane = 0;
+						double param;
+						//x1
+						plane = (*planes)[0];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "x1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//x2
+						plane = (*planes)[1];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "x2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//y1
+						plane = (*planes)[2];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "y1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//y2
+						plane = (*planes)[3];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "y2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//z1
+						plane = (*planes)[4];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "z1_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+						//z2
+						plane = (*planes)[5];
+						param = plane->GetParam();
+						keycode.l2 = 0;
+						keycode.l2_name = "z2_val";
+						flkey = new FlKeyDouble(keycode, param);
+						interpolator->AddKey(flkey);
+					}
+
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_x";
+					flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkX());
+					interpolator->AddKey(flkeyB);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_y";
+					flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkY());
+					interpolator->AddKey(flkeyB);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_link_z";
+					flkeyB = new FlKeyBoolean(keycode, md->GetClippingLinkZ());
+					interpolator->AddKey(flkeyB);
+
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_rotation";
+
+					md->GetClippingPlaneRotationsRaw(rotx, roty, rotz);
+					q.FromEuler(rotx, roty, rotz);
+					flkeyQ = new FlKeyQuaternion(keycode, q);
+					interpolator->AddKey(flkeyQ);
+
+					md->GetClipDistance(ix, iy, iz);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_x";
+					flkeyI = new FlKeyInt(keycode, ix);
+					interpolator->AddKey(flkeyI);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_y";
+					flkeyI = new FlKeyInt(keycode, iy);
+					interpolator->AddKey(flkeyI);
+					keycode.l2 = 0;
+					keycode.l2_name = "clip_dist_z";
+					flkeyI = new FlKeyInt(keycode, iz);
+					interpolator->AddKey(flkeyI);
+
+					if (record_volume_params)
+					{
+						keycode.l2 = 0;
+						keycode.l2_name = "transparency";
+						if (md->GetMR()) {
+							flkey = new FlKeyDouble(keycode, md->GetMR()->get_alpha());
+							interpolator->AddKey(flkey);
+						}
+					}
+				}
+			}
+		}
+		break;
+		}
+	}
+
+	//for the view
+	keycode.l0 = 1;
+	keycode.l0_name = m_vrv->GetName();
+	keycode.l1 = 1;
+	keycode.l1_name = m_vrv->GetName();
+
+	keycode.l2 = 0;
+	keycode.l2_name = "link_clipping_planes";
+	flkeyB = new FlKeyBoolean(keycode, GetSyncClippingPlanes());
+	interpolator->AddKey(flkeyB);
+
+	//x1
+	keycode.l2 = 0;
+	keycode.l2_name = "x1_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(0));
+	interpolator->AddKey(flkey);
+	//x2
+	keycode.l2 = 0;
+	keycode.l2_name = "x2_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(1));
+	interpolator->AddKey(flkey);
+	//y1
+	keycode.l2 = 0;
+	keycode.l2_name = "y1_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(2));
+	interpolator->AddKey(flkey);
+	//y2
+	keycode.l2 = 0;
+	keycode.l2_name = "y2_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(3));
+	interpolator->AddKey(flkey);
+	//z1
+	keycode.l2 = 0;
+	keycode.l2_name = "z1_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(4));
+	interpolator->AddKey(flkey);
+	//z2
+	keycode.l2 = 0;
+	keycode.l2_name = "z2_val";
+	flkey = new FlKeyDouble(keycode, GetLinkedParam(5));
+	interpolator->AddKey(flkey);
+
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_link_x";
+	flkeyB = new FlKeyBoolean(keycode, GetClippingLinkX());
+	interpolator->AddKey(flkeyB);
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_link_y";
+	flkeyB = new FlKeyBoolean(keycode, GetClippingLinkY());
+	interpolator->AddKey(flkeyB);
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_link_z";
+	flkeyB = new FlKeyBoolean(keycode, GetClippingLinkZ());
+	interpolator->AddKey(flkeyB);
+
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_rotation";
+	flkeyQ = new FlKeyQuaternion(keycode, m_q_cl);
+	interpolator->AddKey(flkeyQ);
+
+	GetClipDistance(ix, iy, iz);
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_dist_x";
+	flkeyI = new FlKeyInt(keycode, ix);
+	interpolator->AddKey(flkeyI);
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_dist_y";
+	flkeyI = new FlKeyInt(keycode, iy);
+	interpolator->AddKey(flkeyI);
+	keycode.l2 = 0;
+	keycode.l2_name = "clip_dist_z";
+	flkeyI = new FlKeyInt(keycode, iz);
+	interpolator->AddKey(flkeyI);
+
+	//rotation
+	keycode.l2 = 0;
+	keycode.l2_name = "rotation";
+	GetRotations(rotx, roty, rotz);
+	q.FromEuler(-rotx, roty, rotz);
+	flkeyQ = new FlKeyQuaternion(keycode, q);
+	interpolator->AddKey(flkeyQ);
+	//translation
+	double tx, ty, tz;
+	GetTranslations(tx, ty, tz);
+	//x
+	keycode.l2_name = "translation_x";
+	flkey = new FlKeyDouble(keycode, tx);
+	interpolator->AddKey(flkey);
+	//y
+	keycode.l2_name = "translation_y";
+	flkey = new FlKeyDouble(keycode, ty);
+	interpolator->AddKey(flkey);
+	//z
+	keycode.l2_name = "translation_z";
+	flkey = new FlKeyDouble(keycode, tz);
+	interpolator->AddKey(flkey);
+	//centers
+	GetCenters(tx, ty, tz);
+	//x
+	keycode.l2_name = "center_x";
+	flkey = new FlKeyDouble(keycode, tx);
+	interpolator->AddKey(flkey);
+	//y
+	keycode.l2_name = "center_y";
+	flkey = new FlKeyDouble(keycode, ty);
+	interpolator->AddKey(flkey);
+	//z
+	keycode.l2_name = "center_z";
+	flkey = new FlKeyDouble(keycode, tz);
+	interpolator->AddKey(flkey);
+	//obj traslation
+	GetObjTrans(tx, ty, tz);
+	//x
+	keycode.l2_name = "obj_trans_x";
+	flkey = new FlKeyDouble(keycode, tx);
+	interpolator->AddKey(flkey);
+	//y
+	keycode.l2_name = "obj_trans_y";
+	flkey = new FlKeyDouble(keycode, ty);
+	interpolator->AddKey(flkey);
+	//z
+	keycode.l2_name = "obj_trans_z";
+	flkey = new FlKeyDouble(keycode, tz);
+	interpolator->AddKey(flkey);
+	//scale
+	double scale = m_scale_factor;
+	keycode.l2_name = "scale";
+	flkey = new FlKeyDouble(keycode, scale);
+	interpolator->AddKey(flkey);
+	//intermixing mode
+	int ival = GetVolMethod();
+	keycode.l2_name = "volmethod";
+	flkeyI = new FlKeyInt(keycode, ival);
+	interpolator->AddKey(flkeyI);
+
+	interpolator->End();
+
+	FlKeyGroup* group = interpolator->GetKeyGroup(interpolator->GetLastIndex());
+	if (group)
+		group->type = interpolation;
 }
 
 void VRenderVulkanView::ResetMovieAngle()
@@ -9851,11 +11128,8 @@ DataGroup* VRenderVulkanView::AddVolumeData(VolumeData* vd, wxString group_name)
 			else if (cvd && cvd->GetVR())
 				src_planes = cvd->GetVR()->get_planes();
 
-			if (vr_frame->GetClippingView()->GetChannLink() && group->GetVolumeData(0) != vd && src_planes)
-			{
-                CalcAndSetCombinedClippingPlanes();
-                A2Q();
-			}
+            CalcAndSetCombinedClippingPlanes();
+			A2QSync();
 		}
 	}
 
@@ -9900,11 +11174,8 @@ void VRenderVulkanView::AddMeshData(MeshData* md)
 		else if (cvd && cvd->GetVR())
 			src_planes = cvd->GetVR()->get_planes();
 
-		if (src_planes && vr_frame->GetClippingView()->GetChannLink())
-		{
-			CalcAndSetCombinedClippingPlanes();
-            A2Q();
-		}
+		CalcAndSetCombinedClippingPlanes();
+		A2QSync();
 	}
 	m_md_pop_dirty = true;
 
@@ -9931,11 +11202,8 @@ void VRenderVulkanView::AddAnnotations(Annotations* ann)
             else if (cvd && cvd->GetVR())
                 src_planes = cvd->GetVR()->get_planes();
 
-            if (src_planes && vr_frame->GetClippingView()->GetChannLink())
-            {
-                CalcAndSetCombinedClippingPlanes();
-                A2Q();
-            }
+            CalcAndSetCombinedClippingPlanes();
+			A2QSync();
         }
     }
 }
@@ -10633,11 +11901,8 @@ void VRenderVulkanView::MoveLayertoGroup(wxString &group_name, wxString &src_nam
 	{
 		vr_frame->GetAdjustView()->SetVolumeData(src_vd);
 		vr_frame->GetAdjustView()->SetGroupLink(group);
-		if (vr_frame->GetClippingView()->GetChannLink() && group->GetVolumeData(0) != src_vd)
-		{
-			CalcAndSetCombinedClippingPlanes();
-            A2Q();
-		}
+		CalcAndSetCombinedClippingPlanes();
+		A2QSync();
 	}
 
 	m_vd_pop_dirty = true;
@@ -10744,11 +12009,8 @@ void VRenderVulkanView::MoveLayerfromtoGroup(wxString &src_group_name, wxString 
 	{
 		vr_frame->GetAdjustView()->SetVolumeData(src_vd);
 		vr_frame->GetAdjustView()->SetGroupLink(dst_group);
-		if (vr_frame->GetClippingView()->GetChannLink() && dst_group->GetVolumeData(0) != src_vd)
-		{
-			CalcAndSetCombinedClippingPlanes();
-            A2Q();
-		}
+		CalcAndSetCombinedClippingPlanes();
+		A2QSync();
 	}
 
 	m_vd_pop_dirty = true;
@@ -11170,11 +12432,8 @@ void VRenderVulkanView::InitView(unsigned int type)
     {
         for (i = 0; i < (int)m_md_pop_list.size(); i++)
             m_md_pop_list[i]->RecalcBounds();
-        if (vr_frame->GetClippingView()->GetChannLink())
-        {
-            CalcAndSetCombinedClippingPlanes();
-            A2Q();
-        }
+        CalcAndSetCombinedClippingPlanes();
+		A2QSync();
     }
 
 	m_init_view = true;
@@ -14259,6 +15518,216 @@ void VRenderVulkanView::A2Q()
                     (*planes)[5]->Translate(trans2);
                 }
 			}
+		}
+	}
+}
+
+void VRenderVulkanView::A2QSync()
+{
+	if (m_sync_clipping_planes)
+	{
+		A2Q();
+	}
+	else
+	{
+		m_q.FromEuler(m_rotx, m_roty, m_rotz);
+
+		Vector obj_ctr(m_obj_ctrx, m_obj_ctry, m_obj_ctrz);
+		Vector obj_trans(m_obj_transx, m_obj_transy, m_obj_transz);
+		for (size_t i = 0; i < m_layer_list.size(); i++)
+		{
+			if (!m_layer_list[i])
+				continue;
+			switch (m_layer_list[i]->IsA())
+			{
+			case 5://group
+			{
+				DataGroup* group = (DataGroup*)m_layer_list[i];
+				if (group->GetSyncClippingPlanes())
+					group->A2Q(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+				else
+				{
+					for (int j = 0; j < group->GetVolumeNum(); j++)
+					{
+						VolumeData* vd = group->GetVolumeData(j);
+						if (vd)
+						{
+							vd->A2Q(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+						}
+					}
+				}
+			}
+			break;
+			case 6://mesh group
+			{
+				MeshGroup* group = (MeshGroup*)m_layer_list[i];
+				if (group->GetSyncClippingPlanes())
+					group->A2Q(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+				else
+				{
+					for (int j = 0; j < group->GetMeshNum(); j++)
+					{
+						MeshData* md = group->GetMeshData(j);
+						if (md)
+						{
+							md->A2Q(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+						}
+					}
+				}
+			}
+			break;
+			}
+		}
+	}
+}
+
+void VRenderVulkanView::Q2ASync()
+{
+	if (m_sync_clipping_planes)
+	{
+		Q2A();
+	}
+	else
+	{
+		m_q.ToEuler(m_rotx, m_roty, m_rotz);
+		if (m_roty > 360.0)
+			m_roty -= 360.0;
+		if (m_roty < 0.0)
+			m_roty += 360.0;
+		if (m_rotx > 360.0)
+			m_rotx -= 360.0;
+		if (m_rotx < 0.0)
+			m_rotx += 360.0;
+		if (m_rotz > 360.0)
+			m_rotz -= 360.0;
+		if (m_rotz < 0.0)
+			m_rotz += 360.0;
+
+		Vector obj_ctr(m_obj_ctrx, m_obj_ctry, m_obj_ctrz);
+		Vector obj_trans(m_obj_transx, m_obj_transy, m_obj_transz);
+		for (size_t i = 0; i < m_layer_list.size(); i++)
+		{
+			if (!m_layer_list[i])
+				continue;
+			switch (m_layer_list[i]->IsA())
+			{
+			case 5://group
+			{
+				DataGroup* group = (DataGroup*)m_layer_list[i];
+				if (group->GetSyncClippingPlanes())
+					group->Q2A(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+				else
+				{
+					for (int j = 0; j < group->GetVolumeNum(); j++)
+					{
+						VolumeData* vd = group->GetVolumeData(j);
+						if (vd)
+						{
+							vd->Q2A(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+						}
+					}
+				}
+			}
+			break;
+			case 6://mesh group
+			{
+				MeshGroup* group = (MeshGroup*)m_layer_list[i];
+				if (group->GetSyncClippingPlanes())
+					group->Q2A(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+				else
+				{
+					for (int j = 0; j < group->GetMeshNum(); j++)
+					{
+						MeshData* md = group->GetMeshData(j);
+						if (md)
+						{
+							md->Q2A(m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+						}
+					}
+				}
+			}
+			break;
+			}
+		}
+	}
+}
+
+void VRenderVulkanView::SyncClippingPlaneRotations(bool force)
+{
+	if (!m_sync_clipping_planes && !force)
+		return;
+	for (size_t i = 0; i < m_layer_list.size(); i++)
+	{
+		if (!m_layer_list[i])
+			continue;
+		switch (m_layer_list[i]->IsA())
+		{
+		case 5://group
+		{
+			DataGroup* group = (DataGroup*)m_layer_list[i];
+			group->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			for (int j = 0; j < group->GetVolumeNum(); j++)
+			{
+				VolumeData* vd = group->GetVolumeData(j);
+				if (vd)
+					vd->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			}
+
+		}
+		break;
+		case 6://mesh group
+		{
+			MeshGroup* group = (MeshGroup*)m_layer_list[i];
+			group->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			for (int j = 0; j < group->GetMeshNum(); j++)
+			{
+				MeshData* md = group->GetMeshData(j);
+				if (md)
+					md->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			}
+		}
+		break;
+		}
+	}
+}
+
+void VRenderVulkanView::SyncClippingMode()
+{
+	if (!m_sync_clipping_planes)
+		return;
+	Vector obj_ctr(m_obj_ctrx, m_obj_ctry, m_obj_ctrz);
+	Vector obj_trans(m_obj_transx, m_obj_transy, m_obj_transz);
+	for (size_t i = 0; i < m_layer_list.size(); i++)
+	{
+		if (!m_layer_list[i])
+			continue;
+		switch (m_layer_list[i]->IsA())
+		{
+		case 5://group
+		{
+			DataGroup* group = (DataGroup*)m_layer_list[i];
+			group->SetClipMode(m_clip_mode, m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+			for (int j = 0; j < group->GetVolumeNum(); j++)
+			{
+				VolumeData* vd = group->GetVolumeData(j);
+				if (vd)
+					vd->SetClipMode(m_clip_mode, m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+			}
+
+		}
+		break;
+		case 6://mesh group
+		{
+			MeshGroup* group = (MeshGroup*)m_layer_list[i];
+			group->SetClipMode(m_clip_mode, m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+			for (int j = 0; j < group->GetMeshNum(); j++)
+			{
+				MeshData* md = group->GetMeshData(j);
+				if (md)
+					md->SetClipMode(m_clip_mode, m_rotx, m_roty, m_rotz, obj_ctr, obj_trans);
+			}
+		}
+		break;
 		}
 	}
 }
@@ -17431,7 +18900,7 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 					Quaternion up2 = (-m_q) * up * m_q;
 					m_up = Vector(up2.x, up2.y, up2.z);
 
-					Q2A();
+					Q2ASync();
 
 					wxString str = wxString::Format("%.1f", 360.0-m_rotx);
 					m_vrv->m_x_rot_text->ChangeValue(str);
@@ -17493,7 +18962,7 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 					m_interactive = m_adaptive;
 					m_int_res = m_adaptive_res;
                     
-                    Q2A();
+					Q2ASync();
 
 					//SetSortBricks();
 					RefreshGL();
@@ -17775,7 +19244,7 @@ void VRenderVulkanView::SetRotations(double rotx, double roty, double rotz, bool
 	if (m_rotz<0.0)
 		m_rotz += 360.0;
 
-	A2Q();
+	A2QSync();
 
 	Quaternion cam_pos(0.0, 0.0, m_distance, 0.0);
 	Quaternion cam_pos2 = (-m_q) * cam_pos * m_q;
@@ -18406,152 +19875,541 @@ void VRenderVulkanView::GetTiledViewQuadVerts(int tileid, vector<Vulkan2dRender:
 
 void VRenderVulkanView::CalcAndSetCombinedClippingPlanes()
 {
-    int i;
-    
-    m_bounds.reset();
-    PopVolumeList();
-    PopMeshList();
-    
-    BBox bounds;
-    
-    for (i = 0; i < (int)m_vd_pop_list.size(); i++)
-    {
-        VolumeData* vd = m_vd_pop_list[i];
-        if (vd)
-        {
-            if (!vd->GetTexture())
-                continue;
-            Transform *tform = vd->GetTexture()->transform();
-            if (!tform)
-                continue;
-            Transform tform_copy;
-            double mvmat[16];
-            tform->get_trans(mvmat);
-            swap(mvmat[3], mvmat[12]);
-            swap(mvmat[7], mvmat[13]);
-            swap(mvmat[11], mvmat[14]);
-            tform_copy.set(mvmat);
-            
-            FLIVR::Point p[8] = {
-                FLIVR::Point(0.0f, 0.0f, 0.0f),
-                FLIVR::Point(1.0f, 0.0f, 0.0f),
-                FLIVR::Point(1.0f, 1.0f, 0.0f),
-                FLIVR::Point(0.0f, 1.0f, 0.0f),
-                FLIVR::Point(0.0f, 0.0f, 1.0f),
-                FLIVR::Point(1.0f, 0.0f, 1.0f),
-                FLIVR::Point(1.0f, 1.0f, 1.0f),
-                FLIVR::Point(0.0f, 1.0f, 1.0f)
-            };
-            
-            for (int j = 0; j < 8; j++)
-            {
-                p[j] = tform_copy.project(p[j]);
-                bounds.extend(p[j]);
-            }
-        }
-    }
-    
-    
-    for (i = 0; i < (int)m_md_pop_list.size(); i++)
-    {
-        m_md_pop_list[i]->RecalcBounds();
-        bounds.extend(m_md_pop_list[i]->GetBounds());
-    }
-    
-    for (size_t i=0; i<m_layer_list.size(); i++)
-    {
-        if (!m_layer_list[i])
-            continue;
-        if (m_layer_list[i]->IsA() == 4)
-        {
-            Annotations* ann = (Annotations*)m_layer_list[i];
-            if (!ann) continue;
-            if (ann->GetDisp() && ann->GetMesh())
-            {
-                ann->GetMesh()->RecalcBounds();
-                bounds.extend(ann->GetMesh()->GetBounds());
-            }
-        }
-    }
-    
-    for (i = 0; i < (int)m_vd_pop_list.size(); i++)
-    {
-        
-        VolumeData* vd = m_vd_pop_list[i];
-        if (vd)
-        {
-            FLIVR::Point pp[6] = {
-                FLIVR::Point(bounds.min().x(), 0.0, 0.0),
-                FLIVR::Point(bounds.max().x(), 0.0, 0.0),
-                FLIVR::Point(0.0, bounds.min().y(), 0.0),
-                FLIVR::Point(0.0, bounds.max().y(), 0.0),
-                FLIVR::Point(0.0, 0.0, bounds.max().z()),
-                FLIVR::Point(0.0, 0.0, bounds.min().z())
-            };
-            
-            FLIVR::Vector pn[6] = {
-                FLIVR::Vector(1.0, 0.0, 0.0),
-                FLIVR::Vector(-1.0, 0.0, 0.0),
-                FLIVR::Vector(0.0, 1.0, 0.0),
-                FLIVR::Vector(0.0, -1.0, 0.0),
-                FLIVR::Vector(0.0, 0.0, -1.0),
-                FLIVR::Vector(0.0, 0.0, 1.0)
-            };
-            
-            if (!vd->GetVR())
-                continue;
-            if (!vd->GetTexture())
-                continue;
-            Transform *tform = vd->GetTexture()->transform();
-            if (!tform)
-                continue;
-            Transform tform_copy;
-            double mvmat[16];
-            tform->get_trans(mvmat);
-            swap(mvmat[3], mvmat[12]);
-            swap(mvmat[7], mvmat[13]);
-            swap(mvmat[11], mvmat[14]);
-            tform_copy.set(mvmat);
-            
-            vector<Plane*> *planes = vd->GetVR()->get_planes();
-            
-            for (int j = 0; j < 6; j++)
-            {
-                pp[j] = tform_copy.unproject(pp[j]);
-                pn[j] = tform->project(pn[j]);
-                pn[j].safe_normalize();
-                
-                (*planes)[j]->RememberParam();
-                (*planes)[j]->ChangePlane(pp[j], pn[j]);
-            }
-            
-            (*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
-            (*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
-            (*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
-            (*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
-            (*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
-            (*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
-            
-            for (int j = 0; j < 6; j++)
-                (*planes)[j]->RestoreParam();
-        }
-    }
-    
-    for (i = 0; i < (int)m_md_pop_list.size(); i++)
-        m_md_pop_list[i]->SetBounds(bounds);
-    
-    for (size_t i=0; i<m_layer_list.size(); i++)
-    {
-        if (!m_layer_list[i])
-            continue;
-        if (m_layer_list[i]->IsA() == 4)
-        {
-            Annotations* ann = (Annotations*)m_layer_list[i];
-            if (!ann) continue;
-            if (ann->GetDisp() && ann->GetMesh())
-                ann->GetMesh()->SetBounds(bounds);
-        }
-    }
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (m_sync_clipping_planes)
+	{
+		int i;
+
+		m_bounds.reset();
+		PopVolumeList();
+		PopMeshList();
+
+		BBox bounds;
+
+		for (i = 0; i < (int)m_vd_pop_list.size(); i++)
+		{
+			VolumeData* vd = m_vd_pop_list[i];
+			if (vd)
+			{
+				if (!vd->GetTexture())
+					continue;
+				Transform* tform = vd->GetTexture()->transform();
+				if (!tform)
+					continue;
+				Transform tform_copy;
+				double mvmat[16];
+				tform->get_trans(mvmat);
+				swap(mvmat[3], mvmat[12]);
+				swap(mvmat[7], mvmat[13]);
+				swap(mvmat[11], mvmat[14]);
+				tform_copy.set(mvmat);
+
+				FLIVR::Point p[8] = {
+					FLIVR::Point(0.0f, 0.0f, 0.0f),
+					FLIVR::Point(1.0f, 0.0f, 0.0f),
+					FLIVR::Point(1.0f, 1.0f, 0.0f),
+					FLIVR::Point(0.0f, 1.0f, 0.0f),
+					FLIVR::Point(0.0f, 0.0f, 1.0f),
+					FLIVR::Point(1.0f, 0.0f, 1.0f),
+					FLIVR::Point(1.0f, 1.0f, 1.0f),
+					FLIVR::Point(0.0f, 1.0f, 1.0f)
+				};
+
+				for (int j = 0; j < 8; j++)
+				{
+					p[j] = tform_copy.project(p[j]);
+					bounds.extend(p[j]);
+				}
+			}
+		}
+
+
+		for (i = 0; i < (int)m_md_pop_list.size(); i++)
+		{
+			m_md_pop_list[i]->RecalcBounds();
+			bounds.extend(m_md_pop_list[i]->GetBounds());
+		}
+
+		for (size_t i = 0; i < m_layer_list.size(); i++)
+		{
+			if (!m_layer_list[i])
+				continue;
+			if (m_layer_list[i]->IsA() == 4)
+			{
+				Annotations* ann = (Annotations*)m_layer_list[i];
+				if (!ann) continue;
+				if (ann->GetDisp() && ann->GetMesh())
+				{
+					ann->GetMesh()->RecalcBounds();
+					bounds.extend(ann->GetMesh()->GetBounds());
+				}
+			}
+		}
+
+		for (i = 0; i < (int)m_vd_pop_list.size(); i++)
+		{
+
+			VolumeData* vd = m_vd_pop_list[i];
+			if (vd)
+			{
+				FLIVR::Point pp[6] = {
+					FLIVR::Point(bounds.min().x(), 0.0, 0.0),
+					FLIVR::Point(bounds.max().x(), 0.0, 0.0),
+					FLIVR::Point(0.0, bounds.min().y(), 0.0),
+					FLIVR::Point(0.0, bounds.max().y(), 0.0),
+					FLIVR::Point(0.0, 0.0, bounds.max().z()),
+					FLIVR::Point(0.0, 0.0, bounds.min().z())
+				};
+
+				FLIVR::Vector pn[6] = {
+					FLIVR::Vector(1.0, 0.0, 0.0),
+					FLIVR::Vector(-1.0, 0.0, 0.0),
+					FLIVR::Vector(0.0, 1.0, 0.0),
+					FLIVR::Vector(0.0, -1.0, 0.0),
+					FLIVR::Vector(0.0, 0.0, -1.0),
+					FLIVR::Vector(0.0, 0.0, 1.0)
+				};
+
+				if (!vd->GetVR())
+					continue;
+				if (!vd->GetTexture())
+					continue;
+				Transform* tform = vd->GetTexture()->transform();
+				if (!tform)
+					continue;
+				Transform tform_copy;
+				double mvmat[16];
+				tform->get_trans(mvmat);
+				swap(mvmat[3], mvmat[12]);
+				swap(mvmat[7], mvmat[13]);
+				swap(mvmat[11], mvmat[14]);
+				tform_copy.set(mvmat);
+
+				vector<Plane*>* planes = vd->GetVR()->get_planes();
+
+				for (int j = 0; j < 6; j++)
+				{
+					pp[j] = tform_copy.unproject(pp[j]);
+					pn[j] = tform->project(pn[j]);
+					pn[j].safe_normalize();
+
+					(*planes)[j]->RememberParam();
+					(*planes)[j]->ChangePlane(pp[j], pn[j]);
+				}
+
+				(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+				(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+				(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+				(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+				(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+				(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+
+				for (int j = 0; j < 6; j++)
+					(*planes)[j]->RestoreParam();
+			}
+		}
+
+		for (i = 0; i < (int)m_md_pop_list.size(); i++)
+			m_md_pop_list[i]->SetBounds(bounds);
+
+		for (i = 0; i < m_layer_list.size(); i++)
+		{
+			if (!m_layer_list[i])
+				continue;
+			if (m_layer_list[i]->IsA() == 4)
+			{
+				Annotations* ann = (Annotations*)m_layer_list[i];
+				if (!ann) continue;
+				if (ann->GetDisp() && ann->GetMesh())
+					ann->GetMesh()->SetBounds(bounds);
+			}
+		}
+
+		vector<Plane*>* planes = 0;
+		for (i = 0; i < (int)m_vd_pop_list.size(); i++)
+		{
+			VolumeData* vd = m_vd_pop_list[i];
+			if (!vd)
+				continue;
+
+			planes = 0;
+			if (vd->GetVR())
+				planes = vd->GetVR()->get_planes();
+			if (!planes)
+				continue;
+			if (planes->size() != 6)
+				continue;
+
+			for (int j = 0; j < 6; j++)
+				(*planes)[j]->SetParam(m_linked_plane_params[j]);
+
+			vd->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			vd->SetClippingFixParams(m_clip_mode, m_q_cl_zero, m_q_cl_fix, m_q_fix, m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix, m_rotx_fix, m_roty_fix, m_rotz_fix, m_trans_fix);
+		}
+		for (i = 0; i < (int)m_md_pop_list.size(); i++)
+		{
+			MeshData* md = m_md_pop_list[i];
+			if (!md)
+				continue;
+
+			planes = 0;
+			if (md->GetMR())
+				planes = md->GetMR()->get_planes();
+			if (!planes)
+				continue;
+			if (planes->size() != 6)
+				continue;
+
+			for (int j = 0; j < 6; j++)
+				(*planes)[j]->SetParam(m_linked_plane_params[j]);
+
+			md->SetClippingPlaneRotationsRaw(m_rotx_cl, m_roty_cl, m_rotz_cl);
+			md->SetClippingFixParams(m_clip_mode, m_q_cl_zero, m_q_cl_fix, m_q_fix, m_rotx_cl_fix, m_roty_cl_fix, m_rotz_cl_fix, m_rotx_fix, m_roty_fix, m_rotz_fix, m_trans_fix);
+		}
+	}
+	else
+	{
+		m_bounds.reset();
+		PopVolumeList();
+		PopMeshList();
+
+		for (size_t i = 0; i < m_layer_list.size(); i++)
+		{
+			if (!m_layer_list[i])
+				continue;
+			switch (m_layer_list[i]->IsA())
+			{
+			case 5://group
+			{
+				BBox bounds;
+				DataGroup* group = (DataGroup*)m_layer_list[i];
+				if (!group->GetSyncClippingPlanes())
+				{
+					bool spim = false;
+					for (int j = 0; j < group->GetVolumeNum(); j++)
+					{
+						VolumeData* vd = group->GetVolumeData(j);
+						if (!vd)
+							continue;
+						if (vd->GetTexture())
+						{
+							Transform* tform = vd->GetTexture()->additional_transform();
+							if (tform && !tform->is_identity())
+							{
+								spim = true;
+								break;
+							}
+						}
+					}
+
+					vector<Plane*>* planes;
+					for (int j = 0; j < group->GetVolumeNum(); j++)
+					{
+						VolumeData* vd = group->GetVolumeData(j);
+						if (!vd)
+							continue;
+
+						planes = 0;
+						if (vd->GetVR())
+							planes = vd->GetVR()->get_planes();
+						if (!planes)
+							continue;
+						if (planes->size() != 6)
+							continue;
+
+						Plane* plane = (*planes)[0];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
+						plane = (*planes)[1];
+						plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
+						plane = (*planes)[2];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
+						plane = (*planes)[3];
+						plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
+						plane = (*planes)[4];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
+						plane = (*planes)[5];
+						plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
+
+						(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+						(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+						(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+						(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+						(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+						(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+
+						for (auto p : *planes)
+						{
+							if (!spim)
+								p->SetParam(p->GetParam());
+							else
+								p->RestoreParam();
+						}
+					}
+					continue;
+				}
+
+				for (int j = 0; j < group->GetVolumeNum(); j++)
+				{
+					VolumeData* vd = group->GetVolumeData(j);
+					if (vd)
+					{
+						if (!vd->GetTexture())
+							continue;
+						Transform* tform = vd->GetTexture()->transform();
+						if (!tform)
+							continue;
+						Transform tform_copy;
+						double mvmat[16];
+						tform->get_trans(mvmat);
+						swap(mvmat[3], mvmat[12]);
+						swap(mvmat[7], mvmat[13]);
+						swap(mvmat[11], mvmat[14]);
+						tform_copy.set(mvmat);
+
+						FLIVR::Point p[8] = {
+							FLIVR::Point(0.0f, 0.0f, 0.0f),
+							FLIVR::Point(1.0f, 0.0f, 0.0f),
+							FLIVR::Point(1.0f, 1.0f, 0.0f),
+							FLIVR::Point(0.0f, 1.0f, 0.0f),
+							FLIVR::Point(0.0f, 0.0f, 1.0f),
+							FLIVR::Point(1.0f, 0.0f, 1.0f),
+							FLIVR::Point(1.0f, 1.0f, 1.0f),
+							FLIVR::Point(0.0f, 1.0f, 1.0f)
+						};
+
+						for (int k = 0; k < 8; k++)
+						{
+							p[k] = tform_copy.project(p[k]);
+							bounds.extend(p[k]);
+						}
+					}
+				}
+
+				for (int j = 0; j < group->GetVolumeNum(); j++)
+				{
+					VolumeData* vd = group->GetVolumeData(j);
+					if (vd)
+					{
+						FLIVR::Point pp[6] = {
+							FLIVR::Point(bounds.min().x(), 0.0, 0.0),
+							FLIVR::Point(bounds.max().x(), 0.0, 0.0),
+							FLIVR::Point(0.0, bounds.min().y(), 0.0),
+							FLIVR::Point(0.0, bounds.max().y(), 0.0),
+							FLIVR::Point(0.0, 0.0, bounds.max().z()),
+							FLIVR::Point(0.0, 0.0, bounds.min().z())
+						};
+
+						FLIVR::Vector pn[6] = {
+							FLIVR::Vector(1.0, 0.0, 0.0),
+							FLIVR::Vector(-1.0, 0.0, 0.0),
+							FLIVR::Vector(0.0, 1.0, 0.0),
+							FLIVR::Vector(0.0, -1.0, 0.0),
+							FLIVR::Vector(0.0, 0.0, -1.0),
+							FLIVR::Vector(0.0, 0.0, 1.0)
+						};
+
+						if (!vd->GetVR())
+							continue;
+						if (!vd->GetTexture())
+							continue;
+						Transform* tform = vd->GetTexture()->transform();
+						if (!tform)
+							continue;
+						Transform tform_copy;
+						double mvmat[16];
+						tform->get_trans(mvmat);
+						swap(mvmat[3], mvmat[12]);
+						swap(mvmat[7], mvmat[13]);
+						swap(mvmat[11], mvmat[14]);
+						tform_copy.set(mvmat);
+
+						vector<Plane*>* planes = vd->GetVR()->get_planes();
+
+						for (int k = 0; k < 6; k++)
+						{
+							pp[k] = tform_copy.unproject(pp[k]);
+							pn[k] = tform->project(pn[k]);
+							pn[k].safe_normalize();
+
+							(*planes)[k]->RememberParam();
+							(*planes)[k]->ChangePlane(pp[k], pn[k]);
+						}
+
+						(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+						(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+						(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+						(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+						(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+						(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+
+						for (int k = 0; k < 6; k++)
+							(*planes)[k]->RestoreParam();
+					}
+				}
+
+				vector<Plane*>* planes = 0;
+				for (int j = 0; j < group->GetVolumeNum(); j++)
+				{
+					VolumeData* vd = group->GetVolumeData(j);
+					if (!vd)
+						continue;
+
+					planes = 0;
+					if (vd->GetVR())
+						planes = vd->GetVR()->get_planes();
+					if (!planes)
+						continue;
+					if (planes->size() != 6)
+						continue;
+
+					for (int j = 0; j < 6; j++)
+						(*planes)[j]->SetParam(group->GetLinkedParam(j));
+
+					ClippingLayer* clayer = (ClippingLayer*)group;
+					vd->CopyClippingParams(*clayer);
+				}
+			}
+			break;
+			case 3://mesh
+			{
+				BBox bounds;
+				MeshData* md = (MeshData*)m_layer_list[i];
+
+				if (!md)
+					continue;
+
+				vector<Plane*>* planes;
+				planes = 0;
+				if (md->GetMR())
+					planes = md->GetMR()->get_planes();
+				if (!planes)
+					continue;
+				if (planes->size() != 6)
+					continue;
+
+				Plane* plane = (*planes)[0];
+				plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
+				plane = (*planes)[1];
+				plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
+				plane = (*planes)[2];
+				plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
+				plane = (*planes)[3];
+				plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
+				plane = (*planes)[4];
+				plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
+				plane = (*planes)[5];
+				plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
+
+				(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+				(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+				(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+				(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+				(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+				(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+
+				for (auto p : *planes)
+				{
+					p->SetParam(p->GetParam());
+				}
+
+				md->RecalcBounds();
+			}
+			break;
+			case 6://mesh group
+			{
+				BBox bounds;
+				MeshGroup* group = (MeshGroup*)m_layer_list[i];
+				if (!group->GetSyncClippingPlanes())
+				{
+					vector<Plane*>* planes;
+					for (int j = 0; j < group->GetMeshNum(); j++)
+					{
+						MeshData* md = group->GetMeshData(j);
+						if (!md)
+							continue;
+
+						planes = 0;
+						if (md->GetMR())
+							planes = md->GetMR()->get_planes();
+						if (!planes)
+							continue;
+						if (planes->size() != 6)
+							continue;
+
+						Plane* plane = (*planes)[0];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
+						plane = (*planes)[1];
+						plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
+						plane = (*planes)[2];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
+						plane = (*planes)[3];
+						plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
+						plane = (*planes)[4];
+						plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
+						plane = (*planes)[5];
+						plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
+
+						(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+						(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+						(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+						(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+						(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+						(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+
+						for (auto p : *planes)
+						{
+							p->SetParam(p->GetParam());
+						}
+					}
+					continue;
+				}
+				for (int j = 0; j < group->GetMeshNum(); j++)
+				{
+					MeshData* md = group->GetMeshData(j);
+					if (md)
+					{
+						md->RecalcBounds();
+						bounds.extend(md->GetBounds());
+					}
+				}
+
+				for (int j = 0; j < group->GetMeshNum(); j++)
+				{
+					MeshData* md = group->GetMeshData(j);
+					if (md)
+					{
+						md->SetBounds(bounds);
+					}
+				}
+
+				vector<Plane*>* planes = 0;
+				for (int j = 0; j < group->GetMeshNum(); j++)
+				{
+					MeshData* md = group->GetMeshData(j);
+					if (!md)
+						continue;
+
+					planes = 0;
+					if (md->GetMR())
+						planes = md->GetMR()->get_planes();
+					if (!planes)
+						continue;
+					if (planes->size() != 6)
+						continue;
+
+					for (int j = 0; j < 6; j++)
+						(*planes)[j]->SetParam(group->GetLinkedParam(j));
+
+					ClippingLayer* clayer = (ClippingLayer*)group;
+					md->CopyClippingParams(*clayer);
+				}
+			}
+			break;
+			}
+		}
+	}
+
+	SetRotations(m_rotx, m_roty, m_rotz);
 }
 
 void VRenderVulkanView::ImportBigWarpCSV(wxString inputpath)
@@ -18600,12 +20458,18 @@ void VRenderVulkanView::ImportBigWarpCSV(wxString inputpath)
             p2.z(-dval);
             
             Ruler* ruler = new Ruler();
-            ruler->SetRulerType(m_ruler_type);
             ruler->AddPoint(p1);
             ruler->SetTimeDep(m_ruler_time_dep);
             ruler->SetTime(m_tseq_cur_num);
-            if (p1 != p2) // 2 points
-                ruler->AddPoint(p2);
+			if (p1 != p2) // 2 points
+			{
+				ruler->SetRulerType(0);
+				ruler->AddPoint(p2);
+			}
+			else
+			{
+				ruler->SetRulerType(2);
+			}
             m_ruler_list.push_back(ruler);
         }
         line = csv.GetNextLine();
@@ -18795,6 +20659,111 @@ void VRenderVulkanView::WarpCurrentVolume()
             vframe->RunPlugin(fi_name, command);
         }
     }
+}
+
+void VRenderVulkanView::ScatterRulers(long density)
+{
+	if (!m_cur_vol)
+		return;
+	Texture* tex = m_cur_vol->GetTexture();
+	if (!tex) return;
+	Nrrd* nrrd = tex->get_nrrd_raw(0);
+	if (!nrrd) return;
+	void* data = nrrd->data;
+	if (!data && !tex->isBrxml()) return;
+
+	//volume res
+	int xx = -1;
+	int yy = -1;
+	int zz = -1;
+	int resx, resy, resz;
+	m_cur_vol->GetResolution(resx, resy, resz);
+	//volume bounding box
+	BBox bbox = m_cur_vol->GetBounds();
+	vector<Plane*>* planes = 0;
+	if (m_cur_vol->GetVR())
+		planes = m_cur_vol->GetVR()->get_planes();
+	Transform* textrans = tex->transform();
+
+	UniformDensityPointGenerator generator(density, resx, resy, resz);
+	std::vector<Point> points = generator.generatePoints();
+
+	Point mp;
+
+	m_cur_vol->GetVR()->return_mask();
+	//find labels in the old that are selected by the current mask
+	auto mask_nrrd = m_cur_vol->GetMask(true);
+	unsigned char* mask_data = NULL;
+	if (mask_nrrd && mask_nrrd->getNrrd())
+	{
+		mask_data = (unsigned char*)(mask_nrrd->getNrrd()->data);
+		if (!mask_data)
+			return;
+	}
+
+	for(Point &p : points)
+	{
+		xx = int(p.x());
+		yy = int(p.y());
+		zz = int(p.z());
+
+		//out of bound, skip
+		if (xx<0 || xx>resx ||
+			yy<0 || yy>resy ||
+			zz<0 || zz>resz)
+			continue;
+
+		bool inside = true;
+		if (planes)
+		{
+			Point tx_p = p;
+			tx_p.x(p.x() / resx);
+			tx_p.y(p.y() / resy);
+			tx_p.z(p.z() / resz);
+			for (int i = 0; i < 6; i++)
+			{
+				if ((*planes)[i] &&
+					(*planes)[i]->eval_point(tx_p) < 0.0)
+				{
+					inside = false;
+					break;
+				}
+			}
+		}
+		if (mask_data)
+		{
+			xx = xx == resx ? resx - 1 : xx;
+			yy = yy == resy ? resy - 1 : yy;
+			zz = zz == resz ? resz - 1 : zz;
+
+			int index = resx * resy * zz + resx * yy + xx;
+			if (mask_data[index] <= 0)
+				inside = false;
+		}
+
+		if (inside)
+		{
+			xx = xx == resx ? resx - 1 : xx;
+			yy = yy == resy ? resy - 1 : yy;
+			zz = zz == resz ? resz - 1 : zz;
+
+			mp = Point((xx + 0.5) / resx, (yy + 0.5) / resy, (zz + 0.5) / resz);
+			mp = textrans->project(mp);
+			
+			Ruler* ruler = new Ruler();
+			ruler->SetRulerType(m_ruler_type);
+			ruler->AddPoint(mp);
+			ruler->SetTimeDep(m_ruler_time_dep);
+			ruler->SetTime(m_tseq_cur_num);
+			m_ruler_list.push_back(ruler);
+		}
+	}
+
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (m_vrv && vr_frame && vr_frame->GetMeasureDlg())
+		vr_frame->GetMeasureDlg()->GetSettings(m_vrv);
+
+	RefreshGLOverlays();
 }
 
 

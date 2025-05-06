@@ -33,6 +33,7 @@ DEALINGS IN THE SOFTWARE.
 
 BEGIN_EVENT_TABLE(ClippingView, wxPanel)
 	EVT_CHECKBOX(ID_LinkChannelsChk, ClippingView::OnLinkChannelsCheck)
+	EVT_CHECKBOX(ID_LinkGroupChk, ClippingView::OnLinkGroupCheck)
 	EVT_COMBOBOX(ID_PlaneModesCombo, ClippingView::OnPlaneModesCombo)
 	EVT_BUTTON(ID_SetZeroBtn, ClippingView::OnSetZeroBtn)
 	EVT_CHECKBOX(ID_FixRotsChk, ClippingView::OnFixRotsCheck)
@@ -104,7 +105,9 @@ m_mouse_in(false),
 m_update_only_ui(false),
 m_x_factor(1.0),
 m_y_factor(1.0),
-m_z_factor(1.0)
+m_z_factor(1.0),
+m_group(NULL),
+m_vrv(NULL)
 {
 	SetEvtHandlerEnabled(false);
 	Freeze();
@@ -131,6 +134,13 @@ m_z_factor(1.0)
 	m_link_channels->SetValue(false);
 	sizer_1->Add(5, 5, 0);
 	sizer_1->Add(m_link_channels, 0, wxALIGN_CENTER, 0);
+
+	//sync group
+	wxBoxSizer* sizer_1_1 = new wxBoxSizer(wxHORIZONTAL);
+	m_link_group = new wxCheckBox(this, ID_LinkGroupChk, "Sync Group");
+	m_link_group->SetValue(false);
+	sizer_1_1->Add(5, 5, 0);
+	sizer_1_1->Add(m_link_group, 0, wxALIGN_CENTER, 0);
 
 	wxBoxSizer* sizer_pm = new wxBoxSizer(wxVERTICAL);
 	// display mode chooser
@@ -441,6 +451,8 @@ m_z_factor(1.0)
 	sizer_v->Add(5, 5, 0);
 	sizer_v->Add(sizer_1, 0, wxALIGN_LEFT);
 	sizer_v->Add(5, 5, 0);
+	sizer_v->Add(sizer_1_1, 0, wxALIGN_LEFT);
+	sizer_v->Add(5, 5, 0);
 	sizer_v->Add(sizer_pm, 0, wxALIGN_CENTER);
 	sizer_v->Add(5, 5, 0);
     sizer_v->Add(sizer_4, 0, wxALIGN_CENTER);
@@ -511,6 +523,48 @@ MeshData* ClippingView::GetMeshData()
 void ClippingView::SetVolumeData(VolumeData* vd)
 {
 	if (!vd) return;
+
+	m_vrv = NULL;
+	m_group = NULL;
+
+	bool found = false;
+	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
+	if (vrender_frame)
+	{
+		for (int i = 0; i < (int)vrender_frame->GetViewList()->size() && !found; i++)
+		{
+			VRenderView* vrv = (*vrender_frame->GetViewList())[i];
+			if (vrv)
+			{
+				m_vrv = vrv;
+				for (size_t i = 0; i < vrv->GetLayerNum() && !found; i++)
+				{
+					TreeLayer* layer = vrv->GetLayer(i);
+					if (!layer)
+						continue;
+					switch (layer->IsA())
+					{
+					case 5://group
+					{
+						DataGroup* group = (DataGroup*)layer;
+						for (int j = 0; j < group->GetVolumeNum(); j++)
+						{
+							if (vd == group->GetVolumeData(j))
+							{
+								m_group = group;
+								found = true;
+								break;
+							}	
+						}
+
+					}
+					break;
+					}
+				}
+			}
+		}
+	}
+
 	m_vd = vd;
 	m_md = NULL;
 	m_sel_type = 2;
@@ -520,6 +574,47 @@ void ClippingView::SetVolumeData(VolumeData* vd)
 void ClippingView::SetMeshData(MeshData* md)
 {
 	if (!md) return;
+
+	m_vrv = NULL;
+	m_group = NULL;
+
+	bool found = false;
+	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
+	if (vrender_frame)
+	{
+		for (int i = 0; i < (int)vrender_frame->GetViewList()->size() && !found; i++)
+		{
+			VRenderView* vrv = (*vrender_frame->GetViewList())[i];
+			if (vrv)
+			{
+				m_vrv = vrv;
+				for (size_t i = 0; i < vrv->GetLayerNum() && !found; i++)
+				{
+					TreeLayer* layer = vrv->GetLayer(i);
+					if (!layer)
+						continue;
+					switch (layer->IsA())
+					{
+					case 6://mesh group
+					{
+						MeshGroup* group = (MeshGroup*)layer;
+						for (int j = 0; j < group->GetMeshNum(); j++)
+						{
+							if (md == group->GetMeshData(j))
+							{
+								m_group = group;
+								found = true;
+								break;
+							}
+						}
+					}
+					break;
+					}
+				}
+			}
+		}
+	}
+
 	m_md = md;
 	m_vd = NULL;
 	m_sel_type = 3;
@@ -589,8 +684,14 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
     double min_spcx = DBL_MAX;
     double min_spcy = DBL_MAX;
     double min_spcz = DBL_MAX;
+
+	double max_w = 0.0;
+	double max_h = 0.0;
+	double max_d = 0.0;
+
+	bool linked = false;
     
-    if (m_link_channels->GetValue() && m_mgr)
+    if (m_vrv && m_vrv->GetSyncClippingPlanes())
     {
         for (int i=0; i<m_mgr->GetVolumeNum(); i++)
         {
@@ -604,8 +705,46 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
             min_spcx = min_spcx > spcx ? spcx : min_spcx;
             min_spcy = min_spcy > spcy ? spcy : min_spcy;
             min_spcz = min_spcz > spcz ? spcz : min_spcz;
+
+			int vw = 0;
+			int vh = 0;
+			int vz = 0;
+			vd->GetResolution(vw, vh, vz);
+			max_w = max_w < vw ? vw : max_w;
+			max_h = max_h < vh ? vh : max_h;
+			max_d = max_d < vz ? vz : max_d;
+
+			linked = true;
         }
     }
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		DataGroup* group = (DataGroup*)m_group;
+		for (int i = 0; i < group->GetVolumeNum(); i++)
+		{
+			VolumeData* vd = group->GetVolumeData(i);
+			if (!vd)
+				continue;
+			double spcx = DBL_MAX;
+			double spcy = DBL_MAX;
+			double spcz = DBL_MAX;
+			vd->GetSpacings(spcx, spcy, spcz, 0);
+			min_spcx = min_spcx > spcx ? spcx : min_spcx;
+			min_spcy = min_spcy > spcy ? spcy : min_spcy;
+			min_spcz = min_spcz > spcz ? spcz : min_spcz;
+
+			int vw = 0;
+			int vh = 0;
+			int vz = 0;
+			vd->GetResolution(vw, vh, vz);
+			max_w = max_w < vw ? vw : max_w;
+			max_h = max_h < vh ? vh : max_h;
+			max_d = max_d < vz ? vz : max_d;
+
+			linked = true;
+		}
+	}
+
     if (min_spcx == DBL_MAX) min_spcx = 1.0;
     if (min_spcy == DBL_MAX) min_spcy = 1.0;
     if (min_spcz == DBL_MAX) min_spcz = 1.0;
@@ -642,7 +781,7 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
     {
         case 2:    //volume
             m_vd->GetResolution(resx, resy, resz);
-            if (m_link_channels->GetValue())
+            if (linked)
             {
                 double mvmat[16];
                 tform.get_trans(mvmat);
@@ -664,9 +803,13 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
                     p1 = tform.project(p1);
                     dims[j] = (p1 - p0).length();
                 }
-                w = dims[0] / min_spcx;
-                h = dims[1] / min_spcy;
-                d = dims[2] / min_spcz;
+                double tmp_w = dims[0] / min_spcx;
+				double tmp_h = dims[1] / min_spcy;
+				double tmp_d = dims[2] / min_spcz;
+
+				w = max(max_w, tmp_w);
+				h = max(max_h, tmp_h);
+				d = max(max_d, tmp_d);
             }
             else
             {
@@ -680,7 +823,7 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
             if (m_md)
             {
                 Vector dim = m_md->GetBounds().diagonal();
-                if (m_link_channels->GetValue())
+                if (linked)
                 {
                     double dims[3];
                     for (int j = 0; j < 3; j++)
@@ -712,6 +855,13 @@ void ClippingView::CalcBoundingBoxDemensions(double &w, double &h, double &d)
     w = w > 0 ? w : 1;
     h = h > 0 ? h : 1;
     d = d > 0 ? d : 1;
+}
+
+double NormalizeAngle(double angle) {
+	angle = fmod(angle + 180.0, 360.0);
+	if (angle < 0)
+		angle += 360.0;
+	return angle - 180.0;
 }
 
 void ClippingView::GetSettings()
@@ -750,6 +900,7 @@ void ClippingView::GetSettings()
     tform.load_identity();
     int resx, resy, resz;
     resx = resy = resz = 0;
+	ClippingLayer* clipping_data = NULL;
     switch (m_sel_type)
     {
         case 2:    //volume
@@ -758,6 +909,7 @@ void ClippingView::GetSettings()
                 planes = m_vd->GetVR()->get_planes();
                 tform = *m_vd->GetTexture()->transform();
                 m_vd->GetResolution(resx, resy, resz);
+				clipping_data = (ClippingLayer*)m_vd;
             }
             break;
         case 3:    //mesh
@@ -771,6 +923,7 @@ void ClippingView::GetSettings()
                 resx = dim.x();
                 resy = dim.y();
                 resz = dim.z();
+				clipping_data = (ClippingLayer*)m_md;
             }
             break;
     }
@@ -790,9 +943,9 @@ void ClippingView::GetSettings()
     int bdhi = round(bdh);
     int bddi = round(bdd);
     
-    m_x_factor = (int)resx/(double)bdwi;
-    m_y_factor = (int)resy/(double)bdhi;
-    m_z_factor = (int)resz/(double)bddi;
+    m_x_factor = resx/(double)bdwi;
+    m_y_factor = resy/(double)bdhi;
+    m_z_factor = resz/(double)bddi;
     if (abs(m_x_factor - 1.0) < 1e-7)
         m_x_factor = 1.0;
     if (abs(m_y_factor - 1.0) < 1e-7)
@@ -812,45 +965,78 @@ void ClippingView::GetSettings()
     double eps = 1e-7;
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_x1_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resx));
+        vald_fp->SetRange(0, resx);
         if (m_x_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_x2_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resx));
+        vald_fp->SetRange(0, resx);
         if (m_x_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_y1_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resy));
+        vald_fp->SetRange(0, resy);
         if (m_y_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_y2_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resy));
+        vald_fp->SetRange(0, resy);
         if (m_y_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_z1_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resz));
+        vald_fp->SetRange(0, resz);
         if (m_z_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 	if ((vald_fp = (wxFloatingPointValidator<double>*)m_z2_clip_text->GetValidator()))
     {
-        vald_fp->SetRange(0, int(resz));
+        vald_fp->SetRange(0, resz);
         if (m_z_factor != 1.0)
             vald_fp->SetPrecision(2);
     }
 
 	//clip distance
-	switch (m_sel_type)
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
 	{
-	case 2:	//volume
+		int distx, disty, distz;
+		m_vrv->GetClipDistance(distx, disty, distz);
+		if (distx == 0) distx = 1;
+		if (disty == 0) disty = 1;
+		if (distz == 0) distz = 1;
+		m_yz_dist_text->SetValue(
+			wxString::Format("%d", distx));
+		m_xz_dist_text->SetValue(
+			wxString::Format("%d", disty));
+		m_xy_dist_text->SetValue(
+			wxString::Format("%d", distz));
+		m_vrv->SetClipDistance(distx, disty, distz);
+	}
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		int distx, disty, distz;
+		m_group->GetClipDistance(distx, disty, distz);
+		if (distx == 0) distx = 1;
+		if (disty == 0) disty = 1;
+		if (distz == 0) distz = 1;
+		m_yz_dist_text->SetValue(
+			wxString::Format("%d", distx));
+		m_xz_dist_text->SetValue(
+			wxString::Format("%d", disty));
+		m_xy_dist_text->SetValue(
+			wxString::Format("%d", distz));
+		m_group->SetClipDistance(distx, disty, distz);
+	}
+	else
+	{
+		switch (m_sel_type)
+		{
+		case 2:	//volume
 		{
 			int distx, disty, distz;
 			m_vd->GetClipDistance(distx, disty, distz);
@@ -866,7 +1052,7 @@ void ClippingView::GetSettings()
 			m_vd->SetClipDistance(distx, disty, distz);
 		}
 		break;
-	case 3:	//mesh
+		case 3:	//mesh
 		{
 			int distx, disty, distz;
 			m_md->GetClipDistance(distx, disty, distz);
@@ -882,6 +1068,7 @@ void ClippingView::GetSettings()
 			m_md->SetClipDistance(distx, disty, distz);
 		}
 		break;
+		}
 	}
 
 	wxString str;
@@ -891,20 +1078,24 @@ void ClippingView::GetSettings()
 
 	//x1
 	plane = (*planes)[0];
-    if (m_link_channels->GetValue())
-        param = m_linked_plane_params[0];
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = m_vrv->GetLinkedParam(0);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = m_group->GetLinkedParam(0);
     else
         param = plane->GetParam();
 	val = fabs(param*bdwi)+0.499;
 	m_x1_clip_sldr->SetValue(val);
 	double percent = (double)val/(double)m_x1_clip_sldr->GetMax();
 	int barsize = (m_x1_clip_sldr->GetSize().GetHeight() - 20);
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_x_factor);
 	m_x1_clip_text->ChangeValue(str);
 	//x2
 	plane = (*planes)[1];
-    if (m_link_channels->GetValue())
-        param = 1.0 - m_linked_plane_params[1];
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = 1.0 - m_vrv->GetLinkedParam(1);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = 1.0 - m_group->GetLinkedParam(1);
     else
         param = 1.0 - plane->GetParam();
     val = fabs(param*bdwi)+0.499;
@@ -912,24 +1103,28 @@ void ClippingView::GetSettings()
 	m_xBar->SetPosition(wxPoint(sldr_w,10+percent*barsize));
 	m_xBar->SetSize(wxSize(3,barsize*((double)
 		(val - m_x1_clip_sldr->GetValue())/(double)m_x1_clip_sldr->GetMax())));
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_x_factor);
 	m_x2_clip_text->ChangeValue(str);
 	//y1
 	plane = (*planes)[2];
-    if (m_link_channels->GetValue())
-        param = m_linked_plane_params[2];
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = m_vrv->GetLinkedParam(2);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = m_group->GetLinkedParam(2);
     else
         param = plane->GetParam();
     val = fabs(param*bdhi)+0.499;
 	m_y1_clip_sldr->SetValue(val);
 	percent = (double)val/(double)m_y1_clip_sldr->GetMax();
 	barsize = (m_y1_clip_sldr->GetSize().GetHeight() - 20);
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_y_factor);
 	m_y1_clip_text->ChangeValue(str);
 	//y2
 	plane = (*planes)[3];
-    if (m_link_channels->GetValue())
-        param = 1.0 - m_linked_plane_params[3];
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = 1.0 - m_vrv->GetLinkedParam(3);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = 1.0 - m_group->GetLinkedParam(3);
     else
         param = 1.0 - plane->GetParam();
     val = fabs(param*bdhi)+0.499;
@@ -937,24 +1132,28 @@ void ClippingView::GetSettings()
 	m_yBar->SetPosition(wxPoint(sldr_w,10+percent*barsize));
 	m_yBar->SetSize(wxSize(3,barsize*((double)
 		(val - m_y1_clip_sldr->GetValue())/(double)m_y1_clip_sldr->GetMax())));
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_y_factor);
 	m_y2_clip_text->ChangeValue(str);
 	//z1
 	plane = (*planes)[4];
-    if (m_link_channels->GetValue())
-        param = m_linked_plane_params[4];
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = m_vrv->GetLinkedParam(4);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = m_group->GetLinkedParam(4);
     else
         param = plane->GetParam();
     val = fabs(param*bddi)+0.499;
 	m_z1_clip_sldr->SetValue(val);
 	percent = (double)val/(double)m_z1_clip_sldr->GetMax();
 	barsize = (m_z1_clip_sldr->GetSize().GetHeight() - 20);
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_z_factor);
 	m_z1_clip_text->ChangeValue(str);
 	//z2
 	plane = (*planes)[5];
-    if (m_link_channels->GetValue())
-        param = 1.0 - m_linked_plane_params[5];
+    if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		param = 1.0 - m_vrv->GetLinkedParam(5);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		param = 1.0 - m_group->GetLinkedParam(5);
     else
         param = 1.0 - plane->GetParam();
     val = fabs(param*bddi)+0.499;
@@ -962,8 +1161,57 @@ void ClippingView::GetSettings()
 	m_zBar->SetSize(wxSize(3,barsize*((double)
 		(val - m_z1_clip_sldr->GetValue())/(double)m_z1_clip_sldr->GetMax())));
 	m_z2_clip_sldr->SetValue(val);
-	str = wxString::Format("%d", val);
+	str = wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)val * m_z_factor);
 	m_z2_clip_text->ChangeValue(str);
+
+	bool bval = false;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		bval = m_vrv->GetClippingLinkX();
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		bval = m_group->GetClippingLinkX();
+	else if (clipping_data)
+		bval = clipping_data->GetClippingLinkX();
+	m_link_x_chk->SetValue(bval);
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		bval = m_vrv->GetClippingLinkY();
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		bval = m_group->GetClippingLinkY();
+	else if (clipping_data)
+		bval = clipping_data->GetClippingLinkY();
+	m_link_y_chk->SetValue(bval);
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		bval = m_vrv->GetClippingLinkZ();
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		bval = m_group->GetClippingLinkZ();
+	else if (clipping_data)
+		bval = clipping_data->GetClippingLinkZ();
+	m_link_z_chk->SetValue(bval);
+
+	double rotx, roty, rotz;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->GetClippingPlaneRotations(rotx, roty, rotz);
+	else if (clipping_data)
+		clipping_data->GetClippingPlaneRotations(rotx, roty, rotz);
+
+	rotx = NormalizeAngle(rotx);
+	roty = NormalizeAngle(roty);
+	rotz = NormalizeAngle(rotz);
+
+	m_x_rot_sldr->SetValue(int(rotx));
+	m_y_rot_sldr->SetValue(int(roty));
+	m_z_rot_sldr->SetValue(int(rotz));
+	m_x_rot_text->ChangeValue(wxString::Format("%.1f", rotx));
+	m_y_rot_text->ChangeValue(wxString::Format("%.1f", roty));
+	m_z_rot_text->ChangeValue(wxString::Format("%.1f", rotz));
+
+	if (m_vrv)
+		m_link_channels->SetValue(m_vrv->GetSyncClippingPlanes());
+	if (m_group)
+		m_link_group->SetValue(m_group->GetSyncClippingPlanes());
 
 	SetEvtHandlerEnabled(true);
     
@@ -975,6 +1223,7 @@ void ClippingView::GetSettings()
             VRenderView *vrv = (*vrender_frame->GetViewList())[i];
             if (vrv)
             {
+				vrv->CalcAndSetCombinedClippingPlanes();
                 double rotx, roty, rotz;
                 vrv->GetClippingPlaneRotations(rotx, roty, rotz);
                 vrv->SetClippingPlaneRotations(rotx, roty, rotz);
@@ -982,6 +1231,21 @@ void ClippingView::GetSettings()
             }
         }
     }
+}
+
+void ClippingView::SetGroup(ClippingLayer* group)
+{
+	m_group = group;
+	if (m_group)
+	{
+		m_sync_group = m_group->GetSyncClippingPlanes();
+		m_link_group->SetValue(m_sync_group);
+	}
+}
+
+ClippingLayer* ClippingView::GetGroup()
+{
+	return m_group;
 }
 
 void ClippingView::CalcAndSetCombinedClippingPlanes()
@@ -1001,81 +1265,7 @@ void ClippingView::CalcAndSetCombinedClippingPlanes()
             }
         }
     }
-    if (m_mgr)
-    {
-        int i;
-        bool spim = false;
-        for (i=0; i<m_mgr->GetVolumeNum(); i++)
-        {
-            VolumeData* vd = m_mgr->GetVolumeData(i);
-            if (!vd)
-                continue;
-            if (vd->GetTexture())
-            {
-                Transform *tform = vd->GetTexture()->additional_transform();
-                if (tform && !tform->is_identity())
-                {
-                    spim = true;
-                    break;
-                }
-            }
-        }
-        
-        vector<Plane*> *planes = 0;
-        if (!spim)
-        {
-            if (m_sel_type == 2)
-            {
-                if (m_vd->GetVR())
-                    planes = m_vd->GetVR()->get_planes();
-            }
-            else if (m_sel_type == 3)
-            {
-                if (m_md->GetMR())
-                    planes = m_md->GetMR()->get_planes();
-            }
-            if(planes && planes->size() == 6)
-            {
-                for (i = 0; i < 6; i++)
-                    m_linked_plane_params[i] = (*planes)[i]->GetParam();
-            }
-        }
-
-        for (i=0; i<m_mgr->GetVolumeNum(); i++)
-        {
-            VolumeData* vd = m_mgr->GetVolumeData(i);
-            if (!vd)
-                continue;
-            
-            planes = 0;
-            if (vd->GetVR())
-                planes = vd->GetVR()->get_planes();
-            if (!planes)
-                continue;
-            if (planes->size() != 6)
-                continue;
-            
-            for (int j = 0; j < 6; j++)
-                (*planes)[j]->SetParam(m_linked_plane_params[j]);
-        }
-        for (i=0; i<m_mgr->GetMeshNum(); i++)
-        {
-            MeshData* md = m_mgr->GetMeshData(i);
-            if (!md)
-                continue;
-            
-            planes = 0;
-            if (md->GetMR())
-                planes = md->GetMR()->get_planes();
-            if (!planes)
-                continue;
-            if (planes->size() != 6)
-                continue;
-            
-            for (int j = 0; j < 6; j++)
-                (*planes)[j]->SetParam(m_linked_plane_params[j]);
-        }
-    }
+    
     GetSettings();
 }
 
@@ -1084,126 +1274,94 @@ void ClippingView::SyncClippingPlanes()
     if ( !((m_sel_type==2 && m_vd) || (m_sel_type==3 && m_md)) )
         return;
 
-    if (m_link_channels->GetValue())
-    {
-        CalcAndSetCombinedClippingPlanes();
-    }
-    else
-    {
-        if (m_mgr)
-        {
-            int i;
-            bool spim = false;
-            for (i=0; i<m_mgr->GetVolumeNum(); i++)
-            {
-                VolumeData* vd = m_mgr->GetVolumeData(i);
-                if (!vd)
-                    continue;
-                if (vd->GetTexture())
-                {
-                    Transform *tform = vd->GetTexture()->additional_transform();
-                    if (tform && !tform->is_identity())
-                    {
-                        spim = true;
-                        break;
-                    }
-                }
-            }
-            
-            vector<Plane*> *planes;
-            for (i=0; i<m_mgr->GetVolumeNum(); i++)
-            {
-                VolumeData* vd = m_mgr->GetVolumeData(i);
-                if (!vd)
-                    continue;
-                
-                planes = 0;
-                if (vd->GetVR())
-                    planes = vd->GetVR()->get_planes();
-                if (!planes)
-                    continue;
-                if (planes->size() != 6)
-                    continue;
-                
-                Plane* plane = (*planes)[0];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
-                plane = (*planes)[1];
-                plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
-                plane = (*planes)[2];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
-                plane = (*planes)[3];
-                plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
-                plane = (*planes)[4];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
-                plane = (*planes)[5];
-                plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
-                
-                (*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
-                (*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
-                (*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
-                (*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
-                (*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
-                (*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
-                
-                    for (auto p : *planes)
-                    {
-                        if (!spim)
-                            p->SetParam(p->GetParam());
-                        else
-                            p->RestoreParam();
-                    }
-            }
-            for (i=0; i<m_mgr->GetMeshNum(); i++)
-            {
-                MeshData* md = m_mgr->GetMeshData(i);
-                if (!md)
-                    continue;
-                
-                planes = 0;
-                if (md->GetMR())
-                    planes = md->GetMR()->get_planes();
-                if (!planes)
-                    continue;
-                if (planes->size() != 6)
-                    continue;
-                
-                Plane* plane = (*planes)[0];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
-                plane = (*planes)[1];
-                plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
-                plane = (*planes)[2];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
-                plane = (*planes)[3];
-                plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
-                plane = (*planes)[4];
-                plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
-                plane = (*planes)[5];
-                plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
-                
-                (*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
-                (*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
-                (*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
-                (*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
-                (*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
-                (*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
-                
-                for (auto p : *planes)
-                {
-                    if (!spim)
-                        p->SetParam(p->GetParam());
-                    else
-                        p->RestoreParam();
-                }
-            }
-        }
-        GetSettings();
-    }
+    CalcAndSetCombinedClippingPlanes();
+    GetSettings();
     RefreshVRenderViews();
 }
 
 void ClippingView::OnLinkChannelsCheck(wxCommandEvent &event)
 {
+	bool bval = m_link_channels->GetValue();
+
+	if (!m_vrv)
+		return;
+
+	if (bval)
+	{
+		switch (m_sel_type)
+		{
+		case 2:	//volume
+		{
+			if (m_vd)
+				m_vrv->SetSyncClippingPlanes(bval, m_vd);
+		}
+		break;
+		case 3:	//mesh
+		{
+			if (m_md)
+				m_vrv->SetSyncClippingPlanes(bval, m_md);
+		}
+		break;
+		}
+	}
+	else
+		m_vrv->SetSyncClippingPlanes(bval);
+
     SyncClippingPlanes();
+}
+
+void ClippingView::OnLinkGroupCheck(wxCommandEvent& event)
+{
+	bool bval = m_link_group->GetValue();
+	if (!m_group)
+		return;
+	
+	if (bval)
+	{
+		ClippingLayer* copy = NULL;
+		vector<Plane*>* planes = 0;
+		switch (m_sel_type)
+		{
+		case 2:	//volume
+		{
+			copy = (ClippingLayer*)m_vd;
+			m_group->SetSyncClippingPlanes(bval);
+			if (copy)
+				m_group->CopyClippingParams(*copy);
+			
+			if (m_vd->GetVR())
+				planes = m_vd->GetVR()->get_planes();
+			if (!planes)
+				break;
+			if (planes->size() != 6)
+				break;
+			for (int i = 0; i < 6; i++)
+				m_group->SetLinkedParam(i, (*planes)[i]->GetParam());
+		}
+		break;
+		case 3:	//mesh
+		{
+			copy = (ClippingLayer*)m_md;
+			m_group->SetSyncClippingPlanes(bval);
+			if (copy)
+				m_group->CopyClippingParams(*copy);
+
+			if (m_md->GetMR())
+				planes = m_md->GetMR()->get_planes();
+			if (!planes)
+				break;
+			if (planes->size() != 6)
+				break;
+			for (int i = 0; i < 6; i++)
+				m_group->SetLinkedParam(i, (*planes)[i]->GetParam());
+		}
+		break;
+		}
+	}
+	else
+		m_group->SetSyncClippingPlanes(bval);
+
+	SyncClippingPlanes();
 }
 
 void ClippingView::OnPlaneModesCombo(wxCommandEvent &event)
@@ -1228,48 +1386,80 @@ void ClippingView::OnClipResetBtn(wxCommandEvent &event)
     
 	vector<Plane*> *planes = 0;
 
-	if (m_sel_type == 2)
+	if (m_link_channels->GetValue())
 	{
-		if (m_vd->GetVR())
-			planes = m_vd->GetVR()->get_planes();
+		for (int id = 0; id < 6; id++)
+			m_vrv->SetLinkedParam(id, 0.0);
+		m_vrv->SetClippingLinkX(false);
+		m_vrv->SetClippingLinkY(false);
+		m_vrv->SetClippingLinkZ(false);
+
+		m_vrv->SetClippingPlaneRotations(0.0, 0.0, 0.0);
 	}
-	else if (m_sel_type == 3)
+	else if (m_link_group->GetValue())
 	{
-		if (m_md->GetMR())
-			planes = m_md->GetMR()->get_planes();
+		for (int id = 0; id < 6; id++)
+			m_group->SetLinkedParam(id, 0.0);
+		m_group->SetClippingLinkX(false);
+		m_group->SetClippingLinkY(false);
+		m_group->SetClippingLinkZ(false);
+
+		m_group->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+	}
+	else
+	{
+
+		if (m_sel_type == 2)
+		{
+			if (m_vd->GetVR())
+				planes = m_vd->GetVR()->get_planes();
+			m_vd->SetClippingLinkX(false);
+			m_vd->SetClippingLinkY(false);
+			m_vd->SetClippingLinkZ(false);
+			m_vd->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+		}
+		else if (m_sel_type == 3)
+		{
+			if (m_md->GetMR())
+				planes = m_md->GetMR()->get_planes();
+			m_md->SetClippingLinkX(false);
+			m_md->SetClippingLinkY(false);
+			m_md->SetClippingLinkZ(false);
+			m_md->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+		}
+
+		if (!planes)
+			return;
+		if (planes->size() != 6)
+			return;
+
+		Plane* plane = (*planes)[0];
+		plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
+		plane = (*planes)[1];
+		plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
+		plane = (*planes)[2];
+		plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
+		plane = (*planes)[3];
+		plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
+		plane = (*planes)[4];
+		plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
+		plane = (*planes)[5];
+		plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
+
+		(*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
+		(*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
+		(*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
+		(*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
+		(*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
+		(*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
+		for (auto p : *planes)
+		{
+			p->SetParam(0.0);
+			p->RememberParam();
+		}
+
 	}
 
-	if(!planes)
-		return;
-	if (planes->size()!=6)
-		return;
-
-	Plane* plane = (*planes)[0];
-	plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0));
-	plane = (*planes)[1];
-	plane->ChangePlane(Point(1.0, 0.0, 0.0), Vector(-1.0, 0.0, 0.0));
-	plane = (*planes)[2];
-	plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0));
-	plane = (*planes)[3];
-	plane->ChangePlane(Point(0.0, 1.0, 0.0), Vector(0.0, -1.0, 0.0));
-	plane = (*planes)[4];
-	plane->ChangePlane(Point(0.0, 0.0, 0.0), Vector(0.0, 0.0, 1.0));
-	plane = (*planes)[5];
-	plane->ChangePlane(Point(0.0, 0.0, 1.0), Vector(0.0, 0.0, -1.0));
-    
-    (*planes)[0]->SetRange((*planes)[0]->get_point(), (*planes)[0]->normal(), (*planes)[1]->get_point(), (*planes)[1]->normal());
-    (*planes)[1]->SetRange((*planes)[1]->get_point(), (*planes)[1]->normal(), (*planes)[0]->get_point(), (*planes)[0]->normal());
-    (*planes)[2]->SetRange((*planes)[2]->get_point(), (*planes)[2]->normal(), (*planes)[3]->get_point(), (*planes)[3]->normal());
-    (*planes)[3]->SetRange((*planes)[3]->get_point(), (*planes)[3]->normal(), (*planes)[2]->get_point(), (*planes)[2]->normal());
-    (*planes)[4]->SetRange((*planes)[4]->get_point(), (*planes)[4]->normal(), (*planes)[5]->get_point(), (*planes)[5]->normal());
-    (*planes)[5]->SetRange((*planes)[5]->get_point(), (*planes)[5]->normal(), (*planes)[4]->get_point(), (*planes)[4]->normal());
-    for (auto p : *planes)
-    {
-        p->SetParam(0.0);
-        p->RememberParam();
-    }
-    
-	//links
 	m_link_x = false;
 	m_link_y = false;
 	m_link_z = false;
@@ -1361,7 +1551,7 @@ void ClippingView::OnClipResetBtn(wxCommandEvent &event)
 void ClippingView::OnX1ClipChange(wxScrollEvent &event)
 {
 	int ival = event.GetPosition();
-    m_x1_clip_text->SetValue(wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", ival*m_x_factor));
+    m_x1_clip_text->SetValue(wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_x_factor));
 }
 
 void ClippingView::OnX1ClipEdit(wxCommandEvent &event)
@@ -1395,8 +1585,9 @@ void ClippingView::OnX1ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_x1_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_x_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+    ival = (long)(tmp_dval / m_x_factor + 0.5);
 	int ival2 = m_x2_clip_sldr->GetValue();
 	double val, val2;
 
@@ -1414,8 +1605,6 @@ void ClippingView::OnX1ClipEdit(wxCommandEvent &event)
 		ival = ival2;
 
 	val = (double)ival/(double)resx;
-	//str = wxString::Format("%d", ival);
-	//m_x1_clip_text->ChangeValue(str);
 	m_x1_clip_sldr->SetValue(ival);
 	int barsize = (m_x1_clip_sldr->GetSize().GetHeight() - 20);
 	m_xBar->SetPosition(wxPoint(sldr_w,10+val*barsize));
@@ -1423,66 +1612,31 @@ void ClippingView::OnX1ClipEdit(wxCommandEvent &event)
 		(m_x2_clip_sldr->GetValue()-ival)/(double)m_x1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[0];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[0] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(0, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(0, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_x)
 	{
 		val2 = 1.0 - (double)ival2/(double)resx;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_x_factor);
 		m_x2_clip_text->ChangeValue(str);
 		m_x2_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[1];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[1] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(1, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(1, val2);
+		else
+			plane->SetParam(val2);
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[0]->SetParam(val);
-				if (m_link_x)
-					(*planes)[1]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[0]->SetParam(val);
-                if (m_link_x)
-                    (*planes)[1]->SetParam(val2);
-			}
-		}
-	}
+	if ( m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes() )
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -1516,7 +1670,7 @@ void ClippingView::OnX2ClipChange(wxScrollEvent &event)
 		ival = ival2;
 		m_x2_clip_sldr->SetValue(ival);
 	}
-	m_x2_clip_text->SetValue(wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", ival*m_x_factor));
+	m_x2_clip_text->SetValue(wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_x_factor));
 }
 
 void ClippingView::OnX2ClipEdit(wxCommandEvent &event)
@@ -1550,8 +1704,9 @@ void ClippingView::OnX2ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_x2_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_x_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+	ival = (long)(tmp_dval / m_x_factor + 0.5);
 	int ival2 = m_x1_clip_sldr->GetValue();
 	double val, val2;
 
@@ -1579,66 +1734,31 @@ void ClippingView::OnX2ClipEdit(wxCommandEvent &event)
 		(ival - m_x1_clip_sldr->GetValue())/(double)m_x1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[1];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[1] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(1, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(1, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_x)
 	{
 		val2 = (double)ival2/(double)resx;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_x_factor);
 		m_x1_clip_text->ChangeValue(str);
 		m_x1_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[0];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[0] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(0, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(0, val2);
+		else
+			plane->SetParam(val2);
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-                
-                (*planes)[1]->SetParam(val);
-                if (m_link_x)
-                    (*planes)[0]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-                
-                (*planes)[1]->SetParam(val);
-                if (m_link_x)
-                    (*planes)[0]->SetParam(val2);
-			}
-		}
-	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -1666,7 +1786,7 @@ void ClippingView::OnX2ClipEdit(wxCommandEvent &event)
 void ClippingView::OnY1ClipChange(wxScrollEvent &event)
 {
 	int ival = event.GetPosition();
-	m_y1_clip_text->SetValue(wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", ival*m_y_factor));
+	m_y1_clip_text->SetValue(wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_y_factor));
 }
 
 void ClippingView::OnY1ClipEdit(wxCommandEvent &event)
@@ -1700,8 +1820,9 @@ void ClippingView::OnY1ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_y1_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_y_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+	ival = (long)(tmp_dval / m_y_factor + 0.5);
 	int ival2 = m_y2_clip_sldr->GetValue();
 	double val, val2;
 
@@ -1728,66 +1849,31 @@ void ClippingView::OnY1ClipEdit(wxCommandEvent &event)
 		(m_y2_clip_sldr->GetValue()-ival)/(double)m_y1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[2];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[2] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(2, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(2, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_y)
 	{
 		val2 = 1.0 - (double)ival2/(double)resy;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_y_factor);
 		m_y2_clip_text->ChangeValue(str);
 		m_y2_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[3];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[3] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(3, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(3, val2);
+		else
+			plane->SetParam(val2);
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[2]->SetParam(val);
-                if (m_link_y)
-                    (*planes)[3]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[2]->SetParam(val);
-                if (m_link_y)
-                    (*planes)[3]->SetParam(val2);
-			}
-		}
-	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -1822,7 +1908,7 @@ void ClippingView::OnY2ClipChange(wxScrollEvent &event)
 		ival = ival2;
 		m_y2_clip_sldr->SetValue(ival);
 	}
-	m_y2_clip_text->SetValue(wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", ival*m_y_factor));
+	m_y2_clip_text->SetValue(wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_y_factor));
 }
 
 void ClippingView::OnY2ClipEdit(wxCommandEvent &event)
@@ -1856,8 +1942,9 @@ void ClippingView::OnY2ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_y2_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_y_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+	ival = (long)(tmp_dval / m_y_factor + 0.5);
 	int ival2 = m_y1_clip_sldr->GetValue();
 	double val, val2;
 
@@ -1885,66 +1972,31 @@ void ClippingView::OnY2ClipEdit(wxCommandEvent &event)
 		(ival - m_y1_clip_sldr->GetValue())/(double)m_y1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[3];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[3] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(3, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(3, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_y)
 	{
 		val2 = (double)ival2/(double)resy;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_y_factor);
 		m_y1_clip_text->ChangeValue(str);
 		m_y1_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[2];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[2] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(2, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(2, val2);
+		else
+			plane->SetParam(val2);
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[3]->SetParam(val);
-                if (m_link_y)
-                    (*planes)[2]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[3]->SetParam(val);
-                if (m_link_y)
-                    (*planes)[2]->SetParam(val2);
-			}
-		}
-	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -1972,7 +2024,7 @@ void ClippingView::OnY2ClipEdit(wxCommandEvent &event)
 void ClippingView::OnZ1ClipChange(wxScrollEvent &event)
 {
 	int ival = event.GetPosition();
-	m_z1_clip_text->SetValue(wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", ival*m_z_factor));
+	m_z1_clip_text->SetValue(wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_z_factor));
 }
 
 void ClippingView::OnZ1ClipEdit(wxCommandEvent &event)
@@ -2006,8 +2058,9 @@ void ClippingView::OnZ1ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_z1_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_z_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+	ival = (long)(tmp_dval / m_z_factor + 0.5);
 	int ival2 = m_z2_clip_sldr->GetValue();
 	double val, val2;
 
@@ -2034,66 +2087,31 @@ void ClippingView::OnZ1ClipEdit(wxCommandEvent &event)
 		(m_z2_clip_sldr->GetValue()-ival)/(double)m_z1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[4];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[4] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(4, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(4, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_z)
 	{
 		val2 = 1.0 - (double)ival2/(double)resz;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_z_factor);
 		m_z2_clip_text->ChangeValue(str);
 		m_z2_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[5];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[5] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(5, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(5, val2);
+		else
+			plane->SetParam(val2);
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[4]->SetParam(val);
-                if (m_link_z)
-                    (*planes)[5]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[4]->SetParam(val);
-                if (m_link_z)
-                    (*planes)[5]->SetParam(val2);
-			}
-		}
-	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -2128,7 +2146,7 @@ void ClippingView::OnZ2ClipChange(wxScrollEvent &event)
 		ival = ival2;
 		m_z2_clip_sldr->SetValue(ival);
 	}
-	m_z2_clip_text->SetValue(wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", ival*m_z_factor));
+	m_z2_clip_text->SetValue(wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)ival * m_z_factor));
 }
 
 void ClippingView::OnZ2ClipEdit(wxCommandEvent &event)
@@ -2162,8 +2180,9 @@ void ClippingView::OnZ2ClipEdit(wxCommandEvent &event)
 
 	wxString str = m_z2_clip_text->GetValue();
 	long ival = 0;
-	str.ToLong(&ival);
-    ival = (long)(ival / m_z_factor);
+	double tmp_dval = 0.0;
+	str.ToDouble(&tmp_dval);
+	ival = (long)(tmp_dval / m_z_factor + 0.5);
 	int ival2 = m_z1_clip_sldr->GetValue();
 	double val, val2;
 
@@ -2191,67 +2210,32 @@ void ClippingView::OnZ2ClipEdit(wxCommandEvent &event)
 		(ival - m_z1_clip_sldr->GetValue())/(double)m_z1_clip_sldr->GetMax())));
 	
     Plane* plane = (*planes)[5];
-    if (m_link_channels->GetValue())
-        m_linked_plane_params[5] = val;
-    plane->SetParam(val);
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetLinkedParam(5, val);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetLinkedParam(5, val);
+	else
+		plane->SetParam(val);
     
 	if (m_link_z)
 	{
 		val2 = (double)ival2/(double)resz;
-		str = wxString::Format("%d", ival2);
+		str = wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)ival2 * m_z_factor);
 		m_z1_clip_text->ChangeValue(str);
 		m_z1_clip_sldr->SetValue(ival2);
 		
         plane = (*planes)[4];
-        if (m_link_channels->GetValue())
-            m_linked_plane_params[4] = val2;
-        plane->SetParam(val2);
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+			m_vrv->SetLinkedParam(4, val2);
+		else if (m_group && m_group->GetSyncClippingPlanes())
+			m_group->SetLinkedParam(4, val2);
+		else
+			plane->SetParam(val2);
         
 	}
 
-	if (m_link_channels->GetValue())
-	{
-		if (m_mgr)
-		{
-			int i;
-			for (i=0; i<m_mgr->GetVolumeNum(); i++)
-			{
-				VolumeData* vd = m_mgr->GetVolumeData(i);
-				if (!vd || vd == m_vd)
-					continue;
-
-				planes = 0;
-				if (vd->GetVR())
-					planes = vd->GetVR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[5]->SetParam(val);
-                if (m_link_z)
-                    (*planes)[4]->SetParam(val2);
-			}
-			for (i=0; i<m_mgr->GetMeshNum(); i++)
-			{
-				MeshData* md = m_mgr->GetMeshData(i);
-				if (!md || md == m_md)
-					continue;
-
-				planes = 0;
-				if (md->GetMR())
-					planes = md->GetMR()->get_planes();
-				if (!planes)
-					continue;
-				if (planes->size() != 6)
-					continue;
-
-                (*planes)[5]->SetParam(val);
-                if (m_link_z)
-                    (*planes)[4]->SetParam(val2);
-			}
-		}
-	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
 
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
@@ -2406,6 +2390,19 @@ void ClippingView::OnIdle(wxTimerEvent& event)
 void ClippingView::OnLinkXCheck(wxCommandEvent &event)
 {
 	m_link_x = m_link_x_chk->GetValue();
+	
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetClippingLinkX(m_link_x);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetClippingLinkX(m_link_x);
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+			m_vd->SetClippingLinkX(m_link_x);
+		if (m_sel_type == 3 && m_md)
+			m_md->SetClippingLinkX(m_link_x);
+	}
+
 	if (m_link_x)
 	{
 		m_x_sldr_dist = m_x2_clip_sldr->GetValue() -
@@ -2416,6 +2413,19 @@ void ClippingView::OnLinkXCheck(wxCommandEvent &event)
 void ClippingView::OnLinkYCheck(wxCommandEvent &event)
 {
 	m_link_y = m_link_y_chk->GetValue();
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetClippingLinkY(m_link_y);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetClippingLinkY(m_link_y);
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+			m_vd->SetClippingLinkY(m_link_y);
+		if (m_sel_type == 3 && m_md)
+			m_md->SetClippingLinkY(m_link_y);
+	}
+
 	if (m_link_y)
 	{
 		m_y_sldr_dist = m_y2_clip_sldr->GetValue() -
@@ -2426,6 +2436,19 @@ void ClippingView::OnLinkYCheck(wxCommandEvent &event)
 void ClippingView::OnLinkZCheck(wxCommandEvent &event)
 {
 	m_link_z = m_link_z_chk->GetValue();
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		m_vrv->SetClippingLinkZ(m_link_z);
+	else if (m_group && m_group->GetSyncClippingPlanes())
+		m_group->SetClippingLinkZ(m_link_z);
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+			m_vd->SetClippingLinkZ(m_link_z);
+		if (m_sel_type == 3 && m_md)
+			m_md->SetClippingLinkZ(m_link_z);
+	}
+
 	if (m_link_z)
 	{
 		m_z_sldr_dist = m_z2_clip_sldr->GetValue() -
@@ -2435,6 +2458,55 @@ void ClippingView::OnLinkZCheck(wxCommandEvent &event)
 
 void ClippingView::OnSetZeroBtn(wxCommandEvent &event)
 {
+	double rotx, roty, rotz;
+	double cam_rotx, cam_roty, cam_rotz;
+	Vector obj_ctr, obj_trans;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->SetClipMode(2);
+		m_vrv->RefreshGL();
+		m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+	}
+	else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		((DataGroup*)m_group)->SetClipMode(2, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		m_group->GetClippingPlaneRotations(rotx, roty, rotz);
+	}
+	else if (m_vrv)
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			m_vd->SetClipMode(2, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			m_vd->GetClippingPlaneRotations(rotx, roty, rotz);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			m_md->SetClipMode(2, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			m_md->GetClippingPlaneRotations(rotx, roty, rotz);
+		}
+	}
+
+	m_x_rot_sldr->SetValue(int(rotx));
+	m_y_rot_sldr->SetValue(int(roty));
+	m_z_rot_sldr->SetValue(int(rotz));
+	m_x_rot_text->ChangeValue(wxString::Format("%.1f", rotx));
+	m_y_rot_text->ChangeValue(wxString::Format("%.1f", roty));
+	m_z_rot_text->ChangeValue(wxString::Format("%.1f", rotz));
+
+	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
+	if (vrender_frame)
+	{
+		for (int i = 0; i < (int)vrender_frame->GetViewList()->size(); i++)
+		{
+			VRenderView* vrv = (*vrender_frame->GetViewList())[i];
+			vrv->RefreshGL();
+		}
+	}
+
+	/*
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
 	{
@@ -2456,10 +2528,55 @@ void ClippingView::OnSetZeroBtn(wxCommandEvent &event)
 			}
 		}
 	}
+	*/
 }
 
 void ClippingView::OnRotResetBtn(wxCommandEvent &event)
 {
+	double rotx, roty, rotz;
+	double cam_rotx, cam_roty, cam_rotz;
+	Vector obj_ctr, obj_trans;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+	}
+	else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+	}
+	else if (m_vrv)
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->SetClippingPlaneRotations(0.0, 0.0, 0.0);
+		}
+	}
+
+	wxString str = "0.0";
+	m_x_rot_sldr->SetValue(0);
+	m_x_rot_text->ChangeValue(str);
+	m_y_rot_sldr->SetValue(0);
+	m_y_rot_text->ChangeValue(str);
+	m_z_rot_sldr->SetValue(0);
+	m_z_rot_text->ChangeValue(str);
+
+	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
+	if (vrender_frame)
+	{
+		for (int i = 0; i < (int)vrender_frame->GetViewList()->size(); i++)
+		{
+			VRenderView* vrv = (*vrender_frame->GetViewList())[i];
+			vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+			vrv->SetClippingPlaneRotations(rotx, roty, rotz);
+			vrv->RefreshGL();
+		}
+	}
+
+	/*
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
 	{
@@ -2481,6 +2598,7 @@ void ClippingView::OnRotResetBtn(wxCommandEvent &event)
 	m_y_rot_text->ChangeValue(str);
 	m_z_rot_sldr->SetValue(0);
 	m_z_rot_text->ChangeValue(str);
+	*/
 }
 
 void ClippingView::OnXRotChange(wxScrollEvent &event)
@@ -2500,6 +2618,34 @@ void ClippingView::OnXRotEdit(wxCommandEvent &event)
 	if (m_update_only_ui)
 		return;
 
+	double rotx, roty, rotz;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_vrv->SetClippingPlaneRotations(val, roty, rotz);
+	}
+	else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_group->SetClippingPlaneRotations(val, roty, rotz);
+	}
+	else if (m_vrv)
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_vd->SetClippingPlaneRotations(val, roty, rotz);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_md->SetClippingPlaneRotations(val, roty, rotz);
+		}
+	}
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
+
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
 	{
@@ -2510,7 +2656,7 @@ void ClippingView::OnXRotEdit(wxCommandEvent &event)
 			{
 				double rotx, roty, rotz;
 				vrv->GetClippingPlaneRotations(rotx, roty, rotz);
-				vrv->SetClippingPlaneRotations(val, roty, rotz);
+				vrv->SetClippingPlaneRotations(rotx, roty, rotz);
 				vrv->RefreshGL();
 			}
 		}
@@ -2534,6 +2680,34 @@ void ClippingView::OnYRotEdit(wxCommandEvent &event)
 	if (m_update_only_ui)
 		return;
 
+	double rotx, roty, rotz;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_vrv->SetClippingPlaneRotations(rotx, val, rotz);
+	}
+	else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_group->SetClippingPlaneRotations(rotx, val, rotz);
+	}
+	else if (m_vrv)
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_vd->SetClippingPlaneRotations(rotx, val, rotz);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_md->SetClippingPlaneRotations(rotx, val, rotz);
+		}
+	}
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
+
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
 	{
@@ -2544,7 +2718,7 @@ void ClippingView::OnYRotEdit(wxCommandEvent &event)
 			{
 				double rotx, roty, rotz;
 				vrv->GetClippingPlaneRotations(rotx, roty, rotz);
-				vrv->SetClippingPlaneRotations(rotx, val, rotz);
+				vrv->SetClippingPlaneRotations(rotx, roty, rotz);
 				vrv->RefreshGL();
 			}
 		}
@@ -2568,6 +2742,34 @@ void ClippingView::OnZRotEdit(wxCommandEvent &event)
 	if (m_update_only_ui)
 		return;
 
+	double rotx, roty, rotz;
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_vrv->SetClippingPlaneRotations(rotx, roty, val);
+	}
+	else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->GetClippingPlaneRotations(rotx, roty, rotz);
+		m_group->SetClippingPlaneRotations(rotx, roty, val);
+	}
+	else if (m_vrv)
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_vd->SetClippingPlaneRotations(rotx, roty, val);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->GetClippingPlaneRotations(rotx, roty, rotz);
+			m_md->SetClippingPlaneRotations(rotx, roty, val);
+		}
+	}
+
+	if (m_vrv && m_vrv->GetSyncClippingPlanes() || m_group && m_group->GetSyncClippingPlanes())
+		CalcAndSetCombinedClippingPlanes();
+
 	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
 	if (vrender_frame)
 	{
@@ -2578,7 +2780,7 @@ void ClippingView::OnZRotEdit(wxCommandEvent &event)
 			{
 				double rotx, roty, rotz;
 				vrv->GetClippingPlaneRotations(rotx, roty, rotz);
-				vrv->SetClippingPlaneRotations(rotx, roty, val);
+				vrv->SetClippingPlaneRotations(rotx, roty, rotz);
 				vrv->RefreshGL();
 			}
 		}
@@ -2657,18 +2859,6 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
     resx = round(bdw);
     resy = round(bdh);
     resz = round(bdd);
-    
-    vector<Plane*> *planes = 0;
-    if (m_sel_type == 2)
-    {
-        if (m_vd->GetVR())
-            planes = m_vd->GetVR()->get_planes();
-    }
-    else if (m_sel_type == 3)
-    {
-        if (m_md->GetMR())
-            planes = m_md->GetMR()->get_planes();
-    }
 
 	int id = event.GetId();
 
@@ -2699,11 +2889,12 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_x1_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_x_factor + 0.5) + 1.0) * m_x_factor;
 		if (val < resx)
 		{
 			SetXLink(false);
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", (int)(val+1.0)));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetXLink(true);
 		}
 		m_x1_clip_sldr->SetFocus();
@@ -2712,11 +2903,12 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_x2_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_x_factor + 0.5) - 1.0) * m_x_factor;
 		if (val > 0)
 		{
 			SetXLink(false);
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", (int)(val-1.0)));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetXLink(true);
 		}
 		m_x2_clip_sldr->SetFocus();
@@ -2725,11 +2917,12 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_y1_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_y_factor + 0.5) + 1.0) * m_y_factor;
 		if (val < resy)
 		{
 			SetYLink(false);
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", (int)(val+1.0)));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetYLink(true);
 		}
 		m_y1_clip_sldr->SetFocus();
@@ -2738,11 +2931,12 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_y2_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_y_factor + 0.5) - 1.0) * m_y_factor;
 		if (val > 0)
 		{
 			SetYLink(false);
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", (int)(val-1.0)));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetYLink(true);
 		}
 		m_y2_clip_sldr->SetFocus();
@@ -2751,11 +2945,12 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_z1_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_z_factor + 0.5) + 1.0) * m_z_factor;
 		if (val < resz)
 		{
 			SetZLink(false);
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", (int)(val+1.0)));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetZLink(true);
 		}
 		m_z1_clip_sldr->SetFocus();
@@ -2764,63 +2959,127 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	{
 		str = m_z2_clip_text->GetValue();
 		str.ToDouble(&val);
+		val = ((int)(val / m_z_factor + 0.5) - 1.0) * m_z_factor;
 		if (val > 0)
 		{
 			SetZLink(false);
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", (int)(val-1.0)));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", val));
 			SetZLink(true);
 		}
 		m_z2_clip_sldr->SetFocus();
 	}
 
-	//reset others
-	if(!planes)
-		return;
-	if (planes->size()!=6)
-		return;
-
 	if (id == ID_X1ClipSldr ||
 		id == ID_X2ClipSldr)
 	{
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		{
+			m_vrv->SetClippingLinkY(false);
+			m_vrv->SetClippingLinkZ(false);
+		}
+		else if (m_group && m_group->GetSyncClippingPlanes())
+		{
+			m_group->SetClippingLinkY(false);
+			m_group->SetClippingLinkZ(false);
+		}
+		else
+		{
+			if (m_sel_type == 2 && m_vd)
+			{
+				m_vd->SetClippingLinkY(false);
+				m_vd->SetClippingLinkZ(false);
+			}
+			if (m_sel_type == 3 && m_md)
+			{
+				m_md->SetClippingLinkY(false);
+				m_md->SetClippingLinkZ(false);
+			}
+		}
 		m_link_y = false;
 		m_link_y_chk->SetValue(false);
 		m_link_z = false;
 		m_link_z_chk->SetValue(false);
 		m_y1_clip_text->SetValue("0");
 		m_y2_clip_text->SetValue(
-			wxString::Format("%d", resy));
+			wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy* m_y_factor));
 		m_z1_clip_text->SetValue("0");
 		m_z2_clip_text->SetValue(
-			wxString::Format("%d", resz));
+			wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz* m_z_factor));
 	}
 	else if (id == ID_Y1ClipSldr ||
 		id == ID_Y2ClipSldr)
 	{
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		{
+			m_vrv->SetClippingLinkX(false);
+			m_vrv->SetClippingLinkZ(false);
+		}
+		else if (m_group && m_group->GetSyncClippingPlanes())
+		{
+			m_group->SetClippingLinkX(false);
+			m_group->SetClippingLinkZ(false);
+		}
+		else
+		{
+			if (m_sel_type == 2 && m_vd)
+			{
+				m_vd->SetClippingLinkX(false);
+				m_vd->SetClippingLinkZ(false);
+			}
+			if (m_sel_type == 3 && m_md)
+			{
+				m_md->SetClippingLinkX(false);
+				m_md->SetClippingLinkZ(false);
+			}
+		}
 		m_link_x = false;
 		m_link_x_chk->SetValue(false);
 		m_link_z = false;
 		m_link_z_chk->SetValue(false);
 		m_x1_clip_text->SetValue("0");
 		m_x2_clip_text->SetValue(
-			wxString::Format("%d", resx));
+			wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx* m_x_factor));
 		m_z1_clip_text->SetValue("0");
 		m_z2_clip_text->SetValue(
-			wxString::Format("%d", resz));
+			wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 	}
 	else if (id == ID_Z1ClipSldr ||
 		id == ID_Z2ClipSldr)
 	{
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		{
+			m_vrv->SetClippingLinkX(false);
+			m_vrv->SetClippingLinkY(false);
+		}
+		else if (m_group && m_group->GetSyncClippingPlanes())
+		{
+			m_group->SetClippingLinkX(false);
+			m_group->SetClippingLinkY(false);
+		}
+		else
+		{
+			if (m_sel_type == 2 && m_vd)
+			{
+				m_vd->SetClippingLinkX(false);
+				m_vd->SetClippingLinkY(false);
+			}
+			if (m_sel_type == 3 && m_md)
+			{
+				m_md->SetClippingLinkX(false);
+				m_md->SetClippingLinkY(false);
+			}
+		}
 		m_link_x = false;
 		m_link_x_chk->SetValue(false);
 		m_link_y = false;
 		m_link_y_chk->SetValue(false);
 		m_x1_clip_text->SetValue("0");
 		m_x2_clip_text->SetValue(
-			wxString::Format("%d", resx));
+			wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx* m_x_factor));
 		m_y1_clip_text->SetValue("0");
 		m_y2_clip_text->SetValue(
-			wxString::Format("%d", resy));
+			wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy* m_y_factor));
 	}
 }
 
@@ -2844,16 +3103,39 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 	str.ToLong(&dist);
 
 	//reset yz
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->SetClippingLinkY(false);
+		m_vrv->SetClippingLinkZ(false);
+	}
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->SetClippingLinkY(false);
+		m_group->SetClippingLinkZ(false);
+	}
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->SetClippingLinkY(false);
+			m_vd->SetClippingLinkZ(false);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->SetClippingLinkY(false);
+			m_md->SetClippingLinkZ(false);
+		}
+	}
 	m_link_y = false;
-	m_link_y_chk->SetValue(false);
 	m_link_z = false;
+	m_link_y_chk->SetValue(false);
 	m_link_z_chk->SetValue(false);
 	m_y1_clip_text->SetValue("0");
 	m_y2_clip_text->SetValue(
-		wxString::Format("%d", resy));
+		wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy * m_y_factor));
 	m_z1_clip_text->SetValue("0");
 	m_z2_clip_text->SetValue(
-		wxString::Format("%d", resz));
+		wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 
 	//set x
 	SetXLink(false);
@@ -2864,16 +3146,16 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 		if (cur_x1 + dist <= resx)
 		{
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", cur_x1));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)cur_x1 * m_x_factor));
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", cur_x1 + dist));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)(cur_x1 + dist) * m_x_factor));
 		}
 		else
 		{
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", resx - dist));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)(resx - dist) * m_x_factor));
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", resx));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx * m_x_factor));
 		}
 		SetXLink(true);
 		int distx, disty, distz;
@@ -2892,7 +3174,7 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 	{
 		m_x1_clip_text->SetValue("0");
 		m_x2_clip_text->SetValue(
-			wxString::Format("%d", resx));
+			wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx * m_x_factor));
 	}
 
 	m_x1_clip_sldr->SetFocus();
@@ -2918,16 +3200,39 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 	str.ToLong(&dist);
 
 	//reset xz
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->SetClippingLinkX(false);
+		m_vrv->SetClippingLinkZ(false);
+	}
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->SetClippingLinkX(false);
+		m_group->SetClippingLinkZ(false);
+	}
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->SetClippingLinkX(false);
+			m_vd->SetClippingLinkZ(false);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->SetClippingLinkX(false);
+			m_md->SetClippingLinkZ(false);
+		}
+	}
 	m_link_x = false;
-	m_link_x_chk->SetValue(false);
 	m_link_z = false;
+	m_link_x_chk->SetValue(false);
 	m_link_z_chk->SetValue(false);
 	m_x1_clip_text->SetValue("0");
 	m_x2_clip_text->SetValue(
-		wxString::Format("%d", resx));
+		wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx * m_x_factor));
 	m_z1_clip_text->SetValue("0");
 	m_z2_clip_text->SetValue(
-		wxString::Format("%d", resz));
+		wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 
 	//set y
 	SetYLink(false);
@@ -2938,16 +3243,16 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 		if (cur_y1 + dist <= resy)
 		{
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", cur_y1));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)cur_y1 * m_y_factor));
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", cur_y1 + dist));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)(cur_y1 + dist) * m_y_factor));
 		}
 		else
 		{
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", resy - dist));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)(resy - dist) * m_y_factor));
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", resy));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy * m_y_factor));
 		}
 		SetYLink(true);
 		int distx, disty, distz;
@@ -2966,7 +3271,7 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 	{
 		m_y1_clip_text->SetValue("0");
 		m_y2_clip_text->SetValue(
-			wxString::Format("%d", resy));
+			wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy * m_y_factor));
 	}
 
 	m_y1_clip_sldr->SetFocus();
@@ -2992,16 +3297,39 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 	str.ToLong(&dist);
 
 	//reset xy
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->SetClippingLinkX(false);
+		m_vrv->SetClippingLinkY(false);
+	}
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->SetClippingLinkX(false);
+		m_group->SetClippingLinkY(false);
+	}
+	else
+	{
+		if (m_sel_type == 2 && m_vd)
+		{
+			m_vd->SetClippingLinkX(false);
+			m_vd->SetClippingLinkY(false);
+		}
+		if (m_sel_type == 3 && m_md)
+		{
+			m_md->SetClippingLinkX(false);
+			m_md->SetClippingLinkY(false);
+		}
+	}
 	m_link_x = false;
-	m_link_x_chk->SetValue(false);
 	m_link_y = false;
+	m_link_x_chk->SetValue(false);
 	m_link_y_chk->SetValue(false);
 	m_x1_clip_text->SetValue("0");
 	m_x2_clip_text->SetValue(
-		wxString::Format("%d", resx));
+		wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx * m_x_factor));
 	m_y1_clip_text->SetValue("0");
 	m_y2_clip_text->SetValue(
-		wxString::Format("%d", resy));
+		wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy * m_y_factor));
 
 	//set z
 	SetZLink(false);
@@ -3012,16 +3340,16 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 		if (cur_z1 + dist <= cur_z2)
 		{
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", cur_z1));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)cur_z1 * m_z_factor));
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", cur_z1 + dist));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)(cur_z1 + dist) * m_z_factor));
 		}
 		else
 		{
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", resz - dist));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)(resz - dist) * m_z_factor));
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", resz));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 		}
 		SetZLink(true);
 		int distx, disty, distz;
@@ -3040,7 +3368,7 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 	{
 		m_z1_clip_text->SetValue("0");
 		m_z2_clip_text->SetValue(
-			wxString::Format("%d", resz));
+			wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 	}
 
 	m_z1_clip_sldr->SetFocus();
@@ -3072,33 +3400,39 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 			dist = (long)(m_x2_clip_sldr->GetValue() - m_x1_clip_sldr->GetValue());
 			str = m_x1_clip_text->GetValue();
 			long x1;
-			str.ToLong(&x1);
+			double dval;
+			str.ToDouble(&dval);
+			x1 = (long)(dval / m_x_factor + 0.5);
 			x1 = x1 - dist;
 			x1 = x1<0?0:x1;
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", x1));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)x1 * m_x_factor));
 		}
 		if (m_link_y)
 		{
 			dist = (long)(m_y2_clip_sldr->GetValue() - m_y1_clip_sldr->GetValue());
 			str = m_y1_clip_text->GetValue();
 			long y1;
-			str.ToLong(&y1);
+			double dval;
+			str.ToDouble(&dval);
+			y1 = (long)(dval / m_y_factor + 0.5);
 			y1 = y1 - dist;
 			y1 = y1<0?0:y1;
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", y1));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)y1 * m_y_factor));
 		}
 		if (m_link_z)
 		{
 			dist = (long)(m_z2_clip_sldr->GetValue() - m_z1_clip_sldr->GetValue());
 			str = m_z1_clip_text->GetValue();
 			long z1;
-			str.ToLong(&z1);
+			double dval;
+			str.ToDouble(&dval);
+			z1 = (long)(dval / m_z_factor + 0.5);
 			z1 = z1 - dist;
 			z1 = z1<0?0:z1;
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", z1));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)z1 * m_z_factor));
 		}
 	}
 	else
@@ -3109,11 +3443,13 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 			dist = (long)(m_x2_clip_sldr->GetValue() - m_x1_clip_sldr->GetValue());
 			str = m_x2_clip_text->GetValue();
 			long x2;
-			str.ToLong(&x2);
+			double dval;
+			str.ToDouble(&dval);
+			x2 = (long)(dval / m_x_factor + 0.5);
 			x2 = x2 + dist;
 			x2 = x2>resx?resx:x2;
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", x2));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)x2 * m_x_factor));
 		}
 		if (m_link_y)
 		{
@@ -3121,11 +3457,13 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 			str.ToLong(&dist);
 			str = m_y2_clip_text->GetValue();
 			long y2;
-			str.ToLong(&y2);
+			double dval;
+			str.ToDouble(&dval);
+			y2 = (long)(dval / m_y_factor + 0.5);
 			y2 = y2 + dist;
 			y2 = y2>resy?resy:y2;
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", y2));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)y2* m_y_factor));
 		}
 		if (m_link_z)
 		{
@@ -3133,11 +3471,13 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 			str.ToLong(&dist);
 			str = m_z2_clip_text->GetValue();
 			long z2;
-			str.ToLong(&z2);
+			double dval;
+			str.ToDouble(&dval);
+			z2 = (long)(dval / m_z_factor + 0.5);
 			z2 = z2 + dist;
 			z2 = z2>resz?resz:z2;
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", z2));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)z2* m_z_factor));
 		}
 	}
 }
@@ -3177,11 +3517,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_x2_clip_sldr->GetValue() - m_x1_clip_sldr->GetValue());
 			str = m_x1_clip_text->GetValue();
 			long x1;
-			str.ToLong(&x1);
+			double dval;
+			str.ToDouble(&dval);
+			x1 = (long)(dval / m_x_factor + 0.5);
 			x1 = x1 - dist;
 			x1 = x1<0?0:x1;
 			m_x1_clip_text->SetValue(
-				wxString::Format("%d", x1));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)x1 * m_x_factor));
 		}
 		else if (id == ID_Y1ClipSldr ||
 			id == ID_Y2ClipSldr)
@@ -3195,11 +3537,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_y2_clip_sldr->GetValue() - m_y1_clip_sldr->GetValue());
 			str = m_y1_clip_text->GetValue();
 			long y1;
-			str.ToLong(&y1);
+			double dval;
+			str.ToDouble(&dval);
+			y1 = (long)(dval / m_y_factor + 0.5);
 			y1 = y1 - dist;
 			y1 = y1<0?0:y1;
 			m_y1_clip_text->SetValue(
-				wxString::Format("%d", y1));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)y1 * m_y_factor));
 		}
 		else if (id == ID_Z1ClipSldr ||
 			id == ID_Z2ClipSldr)
@@ -3213,11 +3557,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_z2_clip_sldr->GetValue() - m_z1_clip_sldr->GetValue());
 			str = m_z1_clip_text->GetValue();
 			long z1;
-			str.ToLong(&z1);
+			double dval;
+			str.ToDouble(&dval);
+			z1 = (long)(dval / m_z_factor + 0.5);
 			z1 = z1 - dist;
 			z1 = z1<0?0:z1;
 			m_z1_clip_text->SetValue(
-				wxString::Format("%d", z1));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)z1 * m_z_factor));
 		}
 	}
 	else if (key == wxKeyCode('.'))
@@ -3234,11 +3580,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_x2_clip_sldr->GetValue() - m_x1_clip_sldr->GetValue());
 			str = m_x2_clip_text->GetValue();
 			long x2;
-			str.ToLong(&x2);
+			double dval;
+			str.ToDouble(&dval);
+			x2 = (long)(dval / m_x_factor + 0.5);
 			x2 = x2 + dist;
 			x2 = x2>resx?resx:x2;
 			m_x2_clip_text->SetValue(
-				wxString::Format("%d", x2));
+				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)x2 * m_x_factor));
 		}
 		else if (id == ID_Y1ClipSldr ||
 			id == ID_Y2ClipSldr)
@@ -3252,11 +3600,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_y2_clip_sldr->GetValue() - m_y1_clip_sldr->GetValue());
 			str = m_y2_clip_text->GetValue();
 			long y2;
-			str.ToLong(&y2);
+			double dval;
+			str.ToDouble(&dval);
+			y2 = (long)(dval / m_y_factor + 0.5);
 			y2 = y2 + dist;
 			y2 = y2>resy?resy:y2;
 			m_y2_clip_text->SetValue(
-				wxString::Format("%d", y2));
+				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)y2* m_y_factor));
 		}
 		else if (id == ID_Z1ClipSldr ||
 			id == ID_Z2ClipSldr)
@@ -3270,11 +3620,13 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 			dist = (long)(m_z2_clip_sldr->GetValue() - m_z1_clip_sldr->GetValue());
 			str = m_z2_clip_text->GetValue();
 			long z2;
-			str.ToLong(&z2);
+			double dval;
+			str.ToDouble(&dval);
+			z2 = (long)(dval / m_z_factor + 0.5);
 			z2 = z2 + dist;
 			z2 = z2>resz?resz:z2;
 			m_z2_clip_text->SetValue(
-				wxString::Format("%d", z2));
+				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)z2* m_z_factor));
 		}
 	}
 
@@ -3283,51 +3635,78 @@ void ClippingView::OnSliderKeyDown(wxKeyEvent& event)
 
 void ClippingView::OnFixRotsCheck(wxCommandEvent& event)
 {
-	VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
-
-	if (vrender_frame)
+	double rotx, roty, rotz;
+	double cam_rotx, cam_roty, cam_rotz;
+	Vector obj_ctr, obj_trans;		
+	if (m_fix_rots_chk->GetValue())
 	{
-		if (m_fix_rots_chk->GetValue())
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
 		{
-			for (int i = 0; i < (int)vrender_frame->GetViewList()->size(); i++)
-			{
-				VRenderView* vrv = (*vrender_frame->GetViewList())[i];
-				if (vrv)
-				{
-					vrv->SetClipMode(3);
-					vrv->RefreshGL();
-					double rotx, roty, rotz;
-					vrv->GetClippingPlaneRotations(rotx, roty, rotz);
-					m_x_rot_sldr->SetValue(int(rotx));
-					m_y_rot_sldr->SetValue(int(roty));
-					m_z_rot_sldr->SetValue(int(rotz));
-					m_x_rot_text->ChangeValue(wxString::Format("%.1f", rotx));
-					m_y_rot_text->ChangeValue(wxString::Format("%.1f", roty));
-					m_z_rot_text->ChangeValue(wxString::Format("%.1f", rotz));
-                    vrv->RefreshGL();
-				}
-			}
-			m_fix_rots = true;
-			DisableRotations();
+			m_vrv->SetClipMode(3);
+			m_vrv->RefreshGL();
+			m_vrv->GetClippingPlaneRotations(rotx, roty, rotz);
 		}
-		else
+		else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
 		{
-			VRenderFrame* vrender_frame = (VRenderFrame*)m_frame;
-			if (vrender_frame)
-			{
-				for (int i = 0; i < (int)vrender_frame->GetViewList()->size(); i++)
-				{
-					VRenderView* vrv = (*vrender_frame->GetViewList())[i];
-					if (vrv)
-					{
-						vrv->SetClipMode(4);
-                        vrv->RefreshGL();
-					}
-				}
-			}
-			m_fix_rots = false;
-			EnableRotations();
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			((DataGroup*)m_group)->SetClipMode(3, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			m_vrv->RefreshGL();
+			m_group->GetClippingPlaneRotations(rotx, roty, rotz);
 		}
+		else if (m_vrv)
+		{
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			if (m_sel_type == 2 && m_vd)
+			{
+				m_vd->SetClipMode(3, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+				m_vrv->RefreshGL();
+				m_vd->GetClippingPlaneRotations(rotx, roty, rotz);
+			}
+			if (m_sel_type == 3 && m_md)
+			{
+				m_md->SetClipMode(3, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+				m_vrv->RefreshGL();
+				m_md->GetClippingPlaneRotations(rotx, roty, rotz);
+			}
+		}
+
+		m_x_rot_sldr->SetValue(int(rotx));
+		m_y_rot_sldr->SetValue(int(roty));
+		m_z_rot_sldr->SetValue(int(rotz));
+		m_x_rot_text->ChangeValue(wxString::Format("%.1f", rotx));
+		m_y_rot_text->ChangeValue(wxString::Format("%.1f", roty));
+		m_z_rot_text->ChangeValue(wxString::Format("%.1f", rotz));
+		m_vrv->RefreshGL();
+
+		m_fix_rots = true;
+		DisableRotations();
+	}
+	else
+	{
+		if (m_vrv && m_vrv->GetSyncClippingPlanes())
+		{
+			m_vrv->SetClipMode(4);
+		}
+		else if (m_vrv && m_group && m_group->GetSyncClippingPlanes())
+		{
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			((DataGroup*)m_group)->SetClipMode(4, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+		}
+		else if (m_vrv)
+		{
+			m_vrv->GetCameraSettings(cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			if (m_sel_type == 2 && m_vd)
+			{
+				m_vd->SetClipMode(4, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			}
+			if (m_sel_type == 3 && m_md)
+			{
+				m_md->SetClipMode(4, cam_rotx, cam_roty, cam_rotz, obj_ctr, obj_trans);
+			}
+		}
+		m_vrv->RefreshGL();
+		m_fix_rots = false;
+		EnableRotations();
 	}
 }
 
@@ -3361,10 +3740,10 @@ void ClippingView::LoadDefault()
 		m_plane_mode_combo->SetSelection((int)ival);
 		m_plane_mode = (int)ival;
 	}
-
-	bool bval;
-	if (fconfig.Read("link_channels", &bval))
-		m_link_channels->SetValue(bval);
+	
+	//bool bval;
+	//if (fconfig.Read("link_channels", &bval))
+	//	m_link_channels->SetValue(bval);
 }
 
 void ClippingView::SaveDefault()
@@ -3404,6 +3783,7 @@ void ClippingView::SaveDefault()
 void ClippingView::EnableAll()
 {
 	m_link_channels->Enable();
+	m_link_group->Enable();
 	m_set_zero_btn->Enable();
 	m_rot_reset_btn->Enable();
 	m_x_rot_sldr->Enable();
@@ -3444,6 +3824,7 @@ void ClippingView::EnableAll()
 void ClippingView::DisableAll()
 {
 	m_link_channels->Disable();
+	m_link_group->Disable();
 	m_set_zero_btn->Disable();
 	m_rot_reset_btn->Disable();
 	m_x_rot_sldr->Disable();

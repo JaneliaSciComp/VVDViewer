@@ -2904,6 +2904,7 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
 			switch (layer->IsA())
 			{
 			case 0://root
+				GetMeasureDlg()->GetSettings(vrv);
 				break;
 			case 1://view
 				if (name == layer->GetName() && (type == 1 || type < 0))
@@ -3731,6 +3732,190 @@ void VRenderFrame::OnOpenURL(wxCommandEvent& WXUNUSED(event))
 	}
 }
 
+void VRenderFrame::SaveClippingLayerProperties(wxFileConfig& fconfig, ClippingLayer* layer)
+{
+	if (!layer)
+		return;
+
+	// Sync clipping planes
+	fconfig.Write("sync_clipping_planes", layer->GetSyncClippingPlanes());
+
+	// Clip distances
+	int distx, disty, distz;
+	layer->GetClipDistance(distx, disty, distz);
+	fconfig.Write("clip_dist_x", distx);
+	fconfig.Write("clip_dist_y", disty);
+	fconfig.Write("clip_dist_z", distz);
+
+	// Link settings
+	fconfig.Write("link_x_chk", layer->GetClippingLinkX());
+	fconfig.Write("link_y_chk", layer->GetClippingLinkY());
+	fconfig.Write("link_z_chk", layer->GetClippingLinkZ());
+
+	// Linked plane parameters
+	fconfig.Write("linked_x1_param", layer->GetLinkedX1Param());
+	fconfig.Write("linked_x2_param", layer->GetLinkedX2Param());
+	fconfig.Write("linked_y1_param", layer->GetLinkedY1Param());
+	fconfig.Write("linked_y2_param", layer->GetLinkedY2Param());
+	fconfig.Write("linked_z1_param", layer->GetLinkedZ1Param());
+	fconfig.Write("linked_z2_param", layer->GetLinkedZ2Param());
+
+	// Clipping plane rotations (raw)
+	double rotx_cl, roty_cl, rotz_cl;
+	layer->GetClippingPlaneRotationsRaw(rotx_cl, roty_cl, rotz_cl);
+	fconfig.Write("rotx_cl", rotx_cl);
+	fconfig.Write("roty_cl", roty_cl);
+	fconfig.Write("rotz_cl", rotz_cl);
+
+	// Fixed params
+	int clip_mode;
+	Quaternion q_cl_zero, q_cl_fix, q_fix;
+	double rotx_cl_fix, roty_cl_fix, rotz_cl_fix;
+	double rotx_fix, roty_fix, rotz_fix;
+	Vector trans_fix;
+
+	layer->GetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix,
+		rotx_cl_fix, roty_cl_fix, rotz_cl_fix,
+		rotx_fix, roty_fix, rotz_fix, trans_fix);
+
+	// Clip mode
+	fconfig.Write("clip_mode", clip_mode);
+
+	// Save quaternions
+	wxString str;
+	str = wxString::Format("%lf %lf %lf %lf", q_cl_zero.x, q_cl_zero.y, q_cl_zero.z, q_cl_zero.w);
+	fconfig.Write("q_cl_zero", str);
+
+	str = wxString::Format("%lf %lf %lf %lf", q_cl_fix.x, q_cl_fix.y, q_cl_fix.z, q_cl_fix.w);
+	fconfig.Write("q_cl_fix", str);
+
+	str = wxString::Format("%lf %lf %lf %lf", q_fix.x, q_fix.y, q_fix.z, q_fix.w);
+	fconfig.Write("q_fix", str);
+
+	// Save fix rotations
+	fconfig.Write("rotx_cl_fix", rotx_cl_fix);
+	fconfig.Write("roty_cl_fix", roty_cl_fix);
+	fconfig.Write("rotz_cl_fix", rotz_cl_fix);
+
+	fconfig.Write("rotx_fix", rotx_fix);
+	fconfig.Write("roty_fix", roty_fix);
+	fconfig.Write("rotz_fix", rotz_fix);
+
+	// Save trans_fix vector
+	str = wxString::Format("%lf %lf %lf", trans_fix.x(), trans_fix.y(), trans_fix.z());
+	fconfig.Write("trans_fix", str);
+}
+
+void VRenderFrame::LoadClippingLayerProperties(wxFileConfig& fconfig, ClippingLayer* layer)
+{
+	if (!layer)
+		return;
+
+	// Check if the section exists
+	wxString current_path = fconfig.GetPath();
+	if (!fconfig.Exists("clipping"))
+	{
+		return;
+	}
+
+	fconfig.SetPath("clipping");
+
+	bool bVal;
+	if (fconfig.Read("sync_clipping_planes", &bVal))
+		layer->SetSyncClippingPlanes(bVal);
+
+	int iVal;
+	int clip_mode;
+	if (fconfig.Read("clip_mode", &iVal))
+		clip_mode = iVal;
+
+	int clip_dist_x, clip_dist_y, clip_dist_z;
+	if (fconfig.Read("clip_dist_x", &clip_dist_x) &&
+		fconfig.Read("clip_dist_y", &clip_dist_y) &&
+		fconfig.Read("clip_dist_z", &clip_dist_z))
+		layer->SetClipDistance(clip_dist_x, clip_dist_y, clip_dist_z);
+
+	if (fconfig.Read("link_x_chk", &bVal))
+		layer->SetClippingLinkX(bVal);
+	if (fconfig.Read("link_y_chk", &bVal))
+		layer->SetClippingLinkY(bVal);
+	if (fconfig.Read("link_z_chk", &bVal))
+		layer->SetClippingLinkZ(bVal);
+
+	double dVal;
+	if (fconfig.Read("linked_x1_param", &dVal))
+		layer->SetLinkedX1Param(dVal);
+	if (fconfig.Read("linked_x2_param", &dVal))
+		layer->SetLinkedX2Param(dVal);
+	if (fconfig.Read("linked_y1_param", &dVal))
+		layer->SetLinkedY1Param(dVal);
+	if (fconfig.Read("linked_y2_param", &dVal))
+		layer->SetLinkedY2Param(dVal);
+	if (fconfig.Read("linked_z1_param", &dVal))
+		layer->SetLinkedZ1Param(dVal);
+	if (fconfig.Read("linked_z2_param", &dVal))
+		layer->SetLinkedZ2Param(dVal);
+
+	double rotx_cl, roty_cl, rotz_cl;
+	if (fconfig.Read("rotx_cl", &rotx_cl) &&
+		fconfig.Read("roty_cl", &roty_cl) &&
+		fconfig.Read("rotz_cl", &rotz_cl))
+		layer->SetClippingPlaneRotationsRaw(rotx_cl, roty_cl, rotz_cl);
+
+	// Load fixed parameters
+	wxString str;
+	double rotx_cl_fix = 0, roty_cl_fix = 0, rotz_cl_fix = 0;
+	double rotx_fix = 0, roty_fix = 0, rotz_fix = 0;
+
+	if (fconfig.Read("rotx_cl_fix", &rotx_cl_fix) &&
+		fconfig.Read("roty_cl_fix", &roty_cl_fix) &&
+		fconfig.Read("rotz_cl_fix", &rotz_cl_fix) &&
+		fconfig.Read("rotx_fix", &rotx_fix) &&
+		fconfig.Read("roty_fix", &roty_fix) &&
+		fconfig.Read("rotz_fix", &rotz_fix))
+	{
+		Quaternion q_cl_zero, q_cl_fix, q_fix;
+		Vector trans_fix;
+
+		// Load quaternions
+		if (fconfig.Read("q_cl_zero", &str))
+		{
+			double x, y, z, w;
+			if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+				q_cl_zero = Quaternion(x, y, z, w);
+		}
+
+		if (fconfig.Read("q_cl_fix", &str))
+		{
+			double x, y, z, w;
+			if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+				q_cl_fix = Quaternion(x, y, z, w);
+		}
+
+		if (fconfig.Read("q_fix", &str))
+		{
+			double x, y, z, w;
+			if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+				q_fix = Quaternion(x, y, z, w);
+		}
+
+		// Load trans_fix vector
+		if (fconfig.Read("trans_fix", &str))
+		{
+			double x, y, z;
+			if (SSCANF(str.c_str(), "%lf%lf%lf", &x, &y, &z))
+				trans_fix = Vector(x, y, z);
+		}
+
+		layer->SetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix,
+			rotx_cl_fix, roty_cl_fix, rotz_cl_fix,
+			rotx_fix, roty_fix, rotz_fix, trans_fix);
+	}
+
+	// Restore the path
+	fconfig.SetPath(current_path);
+}
+
 void VRenderFrame::SaveProject(wxString& filename)
 {
 	wxFileConfig fconfig("FluoRender Project");
@@ -4003,6 +4188,9 @@ void VRenderFrame::SaveProject(wxString& filename)
             fconfig.Write("shared_label", vd->GetSharedLabelName());
 
 			fconfig.Write("mask_alpha", vd->GetMaskAlpha());
+
+			fconfig.SetPath("clipping");
+			SaveClippingLayerProperties(fconfig, vd);
 		}
 	}
 	//mesh
@@ -4141,6 +4329,9 @@ void VRenderFrame::SaveProject(wxString& filename)
 			md->GetScaling(x, y, z);
 			str = wxString::Format("%f %f %f", x, y, z);
 			fconfig.Write("scaling", str);
+
+			fconfig.SetPath("clipping");
+			SaveClippingLayerProperties(fconfig, md);
 		}
 	}
 	//annotations
@@ -4252,6 +4443,9 @@ void VRenderFrame::SaveProject(wxString& filename)
 						for (k=0; k<group->GetVolumeNum(); k++)
 							fconfig.Write(wxString::Format("vol_%d", k), group->GetVolumeData(k)->GetName());
 
+						fconfig.SetPath("clipping");
+						SaveClippingLayerProperties(fconfig, group);
+
 					}
 					break;
 				case 6://mesh group
@@ -4271,6 +4465,9 @@ void VRenderFrame::SaveProject(wxString& filename)
 						fconfig.Write("num", group->GetMeshNum());
 						for (k=0; k<group->GetMeshNum(); k++)
 							fconfig.Write(wxString::Format("mesh_%d", k), group->GetMeshData(k)->GetName());
+
+						fconfig.SetPath("clipping");
+						SaveClippingLayerProperties(fconfig, group);
 					}
 					break;
 				}
@@ -4379,6 +4576,68 @@ void VRenderFrame::SaveProject(wxString& filename)
 			fconfig.Write("ed_time", ed);
 			fconfig.Write("cur_time", cur);
 
+			// Save clipping plane rotations
+			fconfig.Write("sync_clipping_planes", vrv->GetSyncClippingPlanes());
+			fconfig.Write("clip_mode", vrv->GetClipMode());
+
+			// Get and save clip distances
+			int clip_dist_x, clip_dist_y, clip_dist_z;
+			vrv->GetClipDistance(clip_dist_x, clip_dist_y, clip_dist_z);
+			fconfig.Write("clip_dist_x", clip_dist_x);
+			fconfig.Write("clip_dist_y", clip_dist_y);
+			fconfig.Write("clip_dist_z", clip_dist_z);
+
+			// Save link settings
+			fconfig.Write("link_x_chk", vrv->GetClippingLinkX());
+			fconfig.Write("link_y_chk", vrv->GetClippingLinkY());
+			fconfig.Write("link_z_chk", vrv->GetClippingLinkZ());
+
+			// Save linked plane parameters
+			fconfig.Write("linked_x1_param", vrv->GetLinkedX1Param());
+			fconfig.Write("linked_x2_param", vrv->GetLinkedX2Param());
+			fconfig.Write("linked_y1_param", vrv->GetLinkedY1Param());
+			fconfig.Write("linked_y2_param", vrv->GetLinkedY2Param());
+			fconfig.Write("linked_z1_param", vrv->GetLinkedZ1Param());
+			fconfig.Write("linked_z2_param", vrv->GetLinkedZ2Param());
+
+			// Fixed params
+			int clip_mode;
+			Quaternion q_cl_zero, q_cl_fix, q_fix;
+			double rotx_cl_fix, roty_cl_fix, rotz_cl_fix;
+			double rotx_fix, roty_fix, rotz_fix;
+			Vector trans_fix;
+
+			vrv->GetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix,
+				rotx_cl_fix, roty_cl_fix, rotz_cl_fix,
+				rotx_fix, roty_fix, rotz_fix, trans_fix);
+
+			// Clip mode
+			fconfig.Write("clip_mode", clip_mode);
+
+			// Save quaternions
+			wxString str;
+			str = wxString::Format("%lf %lf %lf %lf", q_cl_zero.x, q_cl_zero.y, q_cl_zero.z, q_cl_zero.w);
+			fconfig.Write("q_cl_zero", str);
+
+			str = wxString::Format("%lf %lf %lf %lf", q_cl_fix.x, q_cl_fix.y, q_cl_fix.z, q_cl_fix.w);
+			fconfig.Write("q_cl_fix", str);
+
+			str = wxString::Format("%lf %lf %lf %lf", q_fix.x, q_fix.y, q_fix.z, q_fix.w);
+			fconfig.Write("q_fix", str);
+
+			// Save fix rotations
+			fconfig.Write("rotx_cl_fix", rotx_cl_fix);
+			fconfig.Write("roty_cl_fix", roty_cl_fix);
+			fconfig.Write("rotz_cl_fix", rotz_cl_fix);
+
+			fconfig.Write("rotx_fix", rotx_fix);
+			fconfig.Write("roty_fix", roty_fix);
+			fconfig.Write("rotz_fix", rotz_fix);
+
+			// Save trans_fix vector
+			str = wxString::Format("%lf %lf %lf", trans_fix.x(), trans_fix.y(), trans_fix.z());
+			fconfig.Write("trans_fix", str);
+
 			//rulers
 			fconfig.SetPath(wxString::Format("/views/%d/rulers", i));
 			vector<Ruler*>* ruler_list = vrv->GetRulerList();
@@ -4419,8 +4678,9 @@ void VRenderFrame::SaveProject(wxString& filename)
 	fconfig.Write("cur_sel_type", m_cur_sel_type);
 	fconfig.Write("cur_sel_vol", m_cur_sel_vol);
 	fconfig.Write("cur_sel_mesh", m_cur_sel_mesh);
-	fconfig.Write("chann_link", m_clip_view->GetChannLink());
 	fconfig.Write("plane_mode", m_clip_view->GetPlaneMode());
+	/*
+	fconfig.Write("chann_link", m_clip_view->GetChannLink());
 	fconfig.Write("x_link", m_clip_view->GetXLink());
 	fconfig.Write("y_link", m_clip_view->GetYLink());
 	fconfig.Write("z_link", m_clip_view->GetZLink());
@@ -4430,6 +4690,7 @@ void VRenderFrame::SaveProject(wxString& filename)
     fconfig.Write("linked_y2", m_clip_view->GetLinkedY2Param());
     fconfig.Write("linked_z1", m_clip_view->GetLinkedZ1Param());
     fconfig.Write("linked_z2", m_clip_view->GetLinkedZ2Param());
+	*/
 	//movie view
 	fconfig.SetPath("/movie_panel");
 	fconfig.Write("views_cmb", m_movie_view->m_views_cmb->GetCurrentSelection());
@@ -5009,6 +5270,11 @@ VolumeData* VRenderFrame::OpenVolumeFromProject(wxString name, wxFileConfig &fco
                             vd->SetSharedMaskName(str);
                         if (fconfig.Read("shared_label", &str))
                             vd->SetSharedLabelName(str);
+
+						if (fconfig.Exists("clipping"))
+						{
+							LoadClippingLayerProperties(fconfig, vd);
+						}
 					}
 				}
 			}
@@ -5486,6 +5752,11 @@ void VRenderFrame::SetVolumePropertiesFromProject(wxFileConfig &fconfig)
 						//shaodw intensity
 						if (fconfig.Read("mask_alpha", &dval))
 							vd->SetMaskAlpha(dval);
+
+						if (fconfig.Exists("clipping"))
+						{
+							LoadClippingLayerProperties(fconfig, vd);
+						}
                     }
                 }
             }
@@ -5754,6 +6025,10 @@ MeshData* VRenderFrame::OpenMeshFromProject(wxString name, wxFileConfig &fconfig
 							}
 						}
 
+						if (fconfig.Exists("clipping"))
+						{
+							LoadClippingLayerProperties(fconfig, md);
+						}
 					}
 				}
 			}
@@ -6173,6 +6448,8 @@ void VRenderFrame::OpenProject(wxString& filename)
 													}
 												}
 											}
+
+											LoadClippingLayerProperties(fconfig, group);
 										}
 										vrv->SetVolPopDirty();
 									}
@@ -6213,6 +6490,8 @@ void VRenderFrame::OpenProject(wxString& filename)
 													}
 												}
 											}
+
+											LoadClippingLayerProperties(fconfig, group);
 										}
 										vrv->SetMeshPopDirty();
 									}
@@ -6433,7 +6712,95 @@ void VRenderFrame::OpenProject(wxString& filename)
 					fconfig.Read("rotz_cl", &rotz_cl))
 				{
 					vrv->SetClippingPlaneRotations(rotx_cl, roty_cl, rotz_cl);
-					m_clip_view->SetClippingPlaneRotations(rotx_cl, roty_cl, rotz_cl);
+					//m_clip_view->SetClippingPlaneRotations(rotx_cl, roty_cl, rotz_cl);
+				}
+
+				// Get sync clipping planes
+				bool sync_clip_planes;
+				if (fconfig.Read("sync_clipping_planes", &sync_clip_planes))
+					vrv->SetSyncClippingPlanes(sync_clip_planes);
+				else
+					vrv->SyncClippingPlaneRotations(true); //for old versions
+
+				// Get clip distances
+				int clip_dist_x, clip_dist_y, clip_dist_z;
+				if (fconfig.Read("clip_dist_x", &clip_dist_x) &&
+					fconfig.Read("clip_dist_y", &clip_dist_y) &&
+					fconfig.Read("clip_dist_z", &clip_dist_z))
+					vrv->SetClipDistance(clip_dist_x, clip_dist_y, clip_dist_z);
+
+				// Get link settings
+				bool link_x, link_y, link_z;
+				if (fconfig.Read("link_x_chk", &link_x))
+					vrv->SetClippingLinkX(link_x);
+				if (fconfig.Read("link_y_chk", &link_y))
+					vrv->SetClippingLinkY(link_y);
+				if (fconfig.Read("link_z_chk", &link_z))
+					vrv->SetClippingLinkZ(link_z);
+
+				// Get linked plane parameters
+				double linked_param;
+				if (fconfig.Read("linked_x1_param", &linked_param))
+					vrv->SetLinkedX1Param(linked_param);
+				if (fconfig.Read("linked_x2_param", &linked_param))
+					vrv->SetLinkedX2Param(linked_param);
+				if (fconfig.Read("linked_y1_param", &linked_param))
+					vrv->SetLinkedY1Param(linked_param);
+				if (fconfig.Read("linked_y2_param", &linked_param))
+					vrv->SetLinkedY2Param(linked_param);
+				if (fconfig.Read("linked_z1_param", &linked_param))
+					vrv->SetLinkedZ1Param(linked_param);
+				if (fconfig.Read("linked_z2_param", &linked_param))
+					vrv->SetLinkedZ2Param(linked_param);
+
+				// Load fixed parameters
+				wxString str;
+				double rotx_cl_fix = 0, roty_cl_fix = 0, rotz_cl_fix = 0;
+				double rotx_fix = 0, roty_fix = 0, rotz_fix = 0;
+
+				if (fconfig.Read("rotx_cl_fix", &rotx_cl_fix) &&
+					fconfig.Read("roty_cl_fix", &roty_cl_fix) &&
+					fconfig.Read("rotz_cl_fix", &rotz_cl_fix) &&
+					fconfig.Read("rotx_fix", &rotx_fix) &&
+					fconfig.Read("roty_fix", &roty_fix) &&
+					fconfig.Read("rotz_fix", &rotz_fix))
+				{
+					Quaternion q_cl_zero, q_cl_fix, q_fix;
+					Vector trans_fix;
+
+					// Load quaternions
+					if (fconfig.Read("q_cl_zero", &str))
+					{
+						double x, y, z, w;
+						if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+							q_cl_zero = Quaternion(x, y, z, w);
+					}
+
+					if (fconfig.Read("q_cl_fix", &str))
+					{
+						double x, y, z, w;
+						if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+							q_cl_fix = Quaternion(x, y, z, w);
+					}
+
+					if (fconfig.Read("q_fix", &str))
+					{
+						double x, y, z, w;
+						if (SSCANF(str.c_str(), "%lf%lf%lf%lf", &x, &y, &z, &w))
+							q_fix = Quaternion(x, y, z, w);
+					}
+
+					// Load trans_fix vector
+					if (fconfig.Read("trans_fix", &str))
+					{
+						double x, y, z;
+						if (SSCANF(str.c_str(), "%lf%lf%lf", &x, &y, &z))
+							trans_fix = Vector(x, y, z);
+					}
+
+					vrv->SetClippingFixParams(clip_mode, q_cl_zero, q_cl_fix, q_fix,
+						rotx_cl_fix, roty_cl_fix, rotz_cl_fix,
+						rotx_fix, roty_fix, rotz_fix, trans_fix);
 				}
 
 				//painting parameters
@@ -6557,78 +6924,84 @@ void VRenderFrame::OpenProject(wxString& filename)
 				OnSelection(2, 0, 0, vd);
 			}
 		}
-		bool link;
 		int mode;
-        double dval;
-        if (fconfig.Read("linked_x1", &dval))
-            m_clip_view->SetLinkedX1Param(dval);
-        if (fconfig.Read("linked_x2", &dval))
-            m_clip_view->SetLinkedX2Param(dval);
-        if (fconfig.Read("linked_y1", &dval))
-            m_clip_view->SetLinkedY1Param(dval);
-        if (fconfig.Read("linked_y2", &dval))
-            m_clip_view->SetLinkedY2Param(dval);
-        if (fconfig.Read("linked_z1", &dval))
-            m_clip_view->SetLinkedZ1Param(dval);
-        if (fconfig.Read("linked_z2", &dval))
-            m_clip_view->SetLinkedZ2Param(dval);
-        
-        link = false;
-		if (fconfig.Read("chann_link", &link))
-        {
-            if (!link && !fconfig.Read("linked_x1", &dval)) //old version
-            {
-                m_clip_view->SetLinkedX1Param(0.0);
-                m_clip_view->SetLinkedX2Param(0.0);
-                m_clip_view->SetLinkedY1Param(0.0);
-                m_clip_view->SetLinkedY2Param(0.0);
-                m_clip_view->SetLinkedZ1Param(0.0);
-                m_clip_view->SetLinkedZ2Param(0.0);
-            }
-            else if (link && !fconfig.Read("linked_x1", &dval))
-            {
-                vector<Plane*> *planes = nullptr;
-                switch (m_cur_sel_type)
-                {
-                    case 2:  //volume
-                    {
-                        VolumeData *vd = m_data_mgr.GetVolumeData(cur_sel_vol);
-                        if (vd && vd->GetVR())
-                            planes = vd->GetVR()->get_planes();
-                    }
-                    break;
-                    case 3:  //mesh
-                    {
-                        MeshData *md = m_data_mgr.GetMeshData(cur_sel_mesh);
-                        if (md && md->GetMR())
-                            planes = md->GetMR()->get_planes();
-                    }
-                    break;
-                }
-                if (planes && planes->size()==6)
-                {
-                    m_clip_view->SetLinkedX1Param((*planes)[0]->GetParam());
-                    m_clip_view->SetLinkedX2Param((*planes)[1]->GetParam());
-                    m_clip_view->SetLinkedY1Param((*planes)[2]->GetParam());
-                    m_clip_view->SetLinkedY2Param((*planes)[3]->GetParam());
-                    m_clip_view->SetLinkedZ1Param((*planes)[4]->GetParam());
-                    m_clip_view->SetLinkedZ2Param((*planes)[5]->GetParam());
-                }
-            }
-            
-			m_clip_view->SetChannLink(link);
-            if (link)
-                m_clip_view->CalcAndSetCombinedClippingPlanes();
-        }
-        
 		if (fconfig.Read("plane_mode", &mode))
 			m_clip_view->SetPlaneMode(mode);
-		if (fconfig.Read("x_link", &link))
-			m_clip_view->SetXLink(link);
-		if (fconfig.Read("y_link", &link))
-			m_clip_view->SetYLink(link);
-		if (fconfig.Read("z_link", &link))
-			m_clip_view->SetZLink(link);
+		
+		bool link;
+        double dval;
+		link = false;
+		if (fconfig.Read("chann_link", &link))
+		{
+			VRenderView* vrv = GetLastView();
+
+			if (fconfig.Read("linked_x1", &dval))
+				vrv->SetLinkedX1Param(dval);
+			if (fconfig.Read("linked_x2", &dval))
+				vrv->SetLinkedX2Param(dval);
+			if (fconfig.Read("linked_y1", &dval))
+				vrv->SetLinkedY1Param(dval);
+			if (fconfig.Read("linked_y2", &dval))
+				vrv->SetLinkedY2Param(dval);
+			if (fconfig.Read("linked_z1", &dval))
+				vrv->SetLinkedZ1Param(dval);
+			if (fconfig.Read("linked_z2", &dval))
+				vrv->SetLinkedZ2Param(dval);
+
+			if (fconfig.Read("chann_link", &link))
+			{
+				if (!link && !fconfig.Read("linked_x1", &dval)) //old version
+				{
+					vrv->SetLinkedX1Param(0.0);
+					vrv->SetLinkedX2Param(0.0);
+					vrv->SetLinkedY1Param(0.0);
+					vrv->SetLinkedY2Param(0.0);
+					vrv->SetLinkedZ1Param(0.0);
+					vrv->SetLinkedZ2Param(0.0);
+				}
+				else if (link && !fconfig.Read("linked_x1", &dval))
+				{
+					vector<Plane*>* planes = nullptr;
+					switch (m_cur_sel_type)
+					{
+					case 2:  //volume
+					{
+						VolumeData* vd = m_data_mgr.GetVolumeData(cur_sel_vol);
+						if (vd && vd->GetVR())
+							planes = vd->GetVR()->get_planes();
+					}
+					break;
+					case 3:  //mesh
+					{
+						MeshData* md = m_data_mgr.GetMeshData(cur_sel_mesh);
+						if (md && md->GetMR())
+							planes = md->GetMR()->get_planes();
+					}
+					break;
+					}
+					if (planes && planes->size() == 6)
+					{
+						vrv->SetLinkedX1Param((*planes)[0]->GetParam());
+						vrv->SetLinkedX2Param((*planes)[1]->GetParam());
+						vrv->SetLinkedY1Param((*planes)[2]->GetParam());
+						vrv->SetLinkedY2Param((*planes)[3]->GetParam());
+						vrv->SetLinkedZ1Param((*planes)[4]->GetParam());
+						vrv->SetLinkedZ2Param((*planes)[5]->GetParam());
+					}
+				}
+
+				vrv->SetSyncClippingPlanes(link);
+				if (link)
+					m_clip_view->CalcAndSetCombinedClippingPlanes();
+			}
+
+			if (fconfig.Read("x_link", &link))
+				vrv->SetClippingLinkX(link);
+			if (fconfig.Read("y_link", &link))
+				vrv->SetClippingLinkY(link);
+			if (fconfig.Read("z_link", &link))
+				vrv->SetClippingLinkZ(link);
+		}
 	}
 
 	//movie panel

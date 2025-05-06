@@ -144,7 +144,9 @@ public:
 		ID_IntensityMethodsCombo,
 		ID_UseTransferChk,
 		ID_TransientChk,
-        ID_WarpBtn
+        ID_WarpBtn,
+		ID_ScatterBtn,
+		ID_DensityText
 	};
 
 	MeasureDlg(wxWindow* frame,
@@ -180,6 +182,8 @@ private:
 	wxCheckBox *m_use_transfer_chk;
 	wxCheckBox *m_transient_chk;
     wxButton *m_warp_btn;
+	wxButton *m_scatter_btn;
+	wxTextCtrl* m_density_txt;
 
 private:
 	void OnNewLocator(wxCommandEvent& event);
@@ -193,6 +197,7 @@ private:
 	void OnIntensityMethodsCombo(wxCommandEvent& event);
 	void OnUseTransferCheck(wxCommandEvent& event);
 	void OnTransientCheck(wxCommandEvent& event);
+	void OnScatterRulers(wxCommandEvent& event);
     void OnWarp(wxCommandEvent& event);
 
 	DECLARE_EVENT_TABLE();

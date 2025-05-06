@@ -48,6 +48,7 @@ class EXPORT_API ClippingView: public wxPanel
 	enum
 	{
 		ID_LinkChannelsChk = wxID_HIGHEST+1,
+		ID_LinkGroupChk,
 		ID_PlaneModesCombo,
 		ID_RotatePlanesChk,
 		ID_ClipResetBtn,
@@ -214,12 +215,19 @@ public:
     
     void SyncClippingPlanes();
 
+	//sync group
+	void SetGroup(ClippingLayer* group);
+	ClippingLayer* GetGroup();
+
 private:
 	wxWindow* m_frame;
+
+	VRenderView* m_vrv;
 
 	int m_sel_type;		//curent selection type
 	VolumeData* m_vd;	//current volume data
 	MeshData* m_md;		//current mesh data
+	ClippingLayer* m_group;
 	DataManager* m_mgr;	//manage all if clipping planes are synced
 	bool m_draw_clip;
 	bool m_hold_planes;
@@ -242,6 +250,7 @@ private:
 
 	//1st line
 	wxCheckBox *m_link_channels;
+	wxCheckBox* m_link_group;
 	wxComboBox *m_plane_mode_combo;
 	wxButton *m_clip_reset_btn;
 	//fix plane rotations
@@ -303,6 +312,10 @@ private:
     
     double m_linked_plane_params[6];
 
+	bool m_sync_group;
+
+	wxCheckBox* m_sync_group_chk;
+
 #if defined(__WXGTK__)
 	static constexpr int spin_w = 70;
 	static constexpr int disp_comb_w = 150;
@@ -321,6 +334,7 @@ private:
 	void OnIdle(wxTimerEvent& event);
 
 	void OnLinkChannelsCheck(wxCommandEvent &event);
+	void OnLinkGroupCheck(wxCommandEvent& event);
 	void OnPlaneModesCombo(wxCommandEvent &event);
 	void OnClipResetBtn(wxCommandEvent &event);
 
