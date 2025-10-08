@@ -13,7 +13,7 @@ Older versions of VVDViewer might not be compatible with the latest Mac OS, Sono
 
 ## Download 
 
-Click this button to download tha latest VVDViewer:
+Click this button to download the latest VVDViewer:
 
 [![download](https://img.shields.io/static/v1?style=for-the-badge&logo=&label=&message=Download&color=0f83db)](https://github.com/JaneliaSciComp/VVDViewer/releases/latest)
  
