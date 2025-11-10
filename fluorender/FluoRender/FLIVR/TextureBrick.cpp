@@ -327,7 +327,10 @@ z
 
 	   r_tmax = tmax;
 	   r_tmin = tmin;
-	   r_slicenum = (unsigned int)( (tmax-tmin) / dt );
+       if (tmax - tmin < dt)
+           r_slicenum = 1;
+       else
+	       r_slicenum = (unsigned int)( (tmax-tmin) / dt );
    }
 
    void TextureBrick::compute_polygons(Ray& view, double dt,
@@ -1244,6 +1247,8 @@ z
 
 		   if (!found_cache)
 		   {
+               std::cout << "downloading a brick: " << wxString(finfo->filename).ToStdString().c_str() << endl;
+
 			   CURLcode ret;
 
 			   if (s_curl_ == NULL) {
@@ -1314,11 +1319,13 @@ z
 				   finfo->cached = true;
 				   finfo->cache_filename = cfname;
 				   cache_table_[finfo->filename] = cfname;
+                   cout << "succeeded" << endl;
 			   }
 			   else
 			   {
                    cerr << "curl failed to load " << ws2s(finfo->filename) << endl;
 				   if(wxFileExists(cfname)) wxRemoveFile(cfname);
+                   cout << "faild" << endl;
 				   return false;
 			   }
 		   }

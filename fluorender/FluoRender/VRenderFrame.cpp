@@ -1420,6 +1420,8 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 
 				wxString key(std::filesystem::relative(p, root));
 				list.Add(key);
+				cout << "zarr paths" << endl;
+				cout << p << endl;
 			}
 			if (zpaths.size() >= 2)
 			{
@@ -1696,6 +1698,9 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				}
 			}
 		}
+
+		delete prg_diag;
+
 		if (vd_sel)
 			UpdateTree(vd_sel->GetName(), 2);
 		else
@@ -1708,7 +1713,6 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 			m_movie_view->DisableRot();
 			m_movie_view->SetCurrentTime(vrv->m_glview->m_tseq_cur_num);
 		}
-		delete prg_diag;
 	}
 
 	vrv->RefreshGL();

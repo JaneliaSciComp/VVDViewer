@@ -880,7 +880,11 @@ int VolumeData::Load(const shared_ptr<VL_Nrrd> &data, const wxString &name, cons
 		vector<vector<vector<vector<FileLocInfo *>>>> fnames;
 		int ftype = BRICK_FILE_TYPE_NONE;
 
+		cout << "building a resolution pyramid" << endl;
+		
 		breader->build_pyramid(pyramid, fnames, 0, breader->GetCurChan());
+
+		cout << "compete (resolution pyramid)" << endl;
 
 		int lmnum = breader->GetLandmarkNum();
 		for (int j = 0; j < lmnum; j++)
@@ -9383,6 +9387,8 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
     double sspcy = -1.0;
     double sspcz = -1.0;
 
+	cout << "loading volumes..." << endl;
+	
 	for (i=(ch_num>=0?ch_num:0);
 		i<(ch_num>=0?ch_num+1:chan); i++)
 	{
@@ -9607,6 +9613,8 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 		}
 
 	}
+
+	cout << "complete" << endl;
 
 	if (downloaded) wxRemoveFile(downloaded_filepath);
 	if (downloaded_metadata) wxRemoveFile(downloaded_metadatafilepath);

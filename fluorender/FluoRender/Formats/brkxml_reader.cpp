@@ -1525,6 +1525,7 @@ void BRKXMLReader::loadFSZarr()
     m_level_num = m_pyramid.size();
     m_cur_level = 0;
 
+    cout << "loadFSZarr done" << endl;
 }
 
 void BRKXMLReader::loadFSN5()
@@ -1951,6 +1952,9 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
 					wss << zcount << slash << ycount << slash << xcount;
 					lvpaths.push_back(wss.str());
 
+                    // cout << count << " brick depth bbox: " << bz1 - binfo->bz0 << endl;
+                    // cout << count << " brick depth tbox: " << tz1 - tz0 << endl;
+
 					xcount++;
 				}
 				ycount++;
@@ -2293,6 +2297,8 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
 
     bool skip = false;
     std::regex pattern(R"((^|\bs)\d+$)");
+
+    cout << "getting zarr channel paths" << endl;
 
     if (!exists(dir_name)) {
         slash = L'/';

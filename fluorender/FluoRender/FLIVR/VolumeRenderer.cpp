@@ -2943,6 +2943,7 @@ namespace FLIVR
 						cur_chan_brick_num_++;
 					}
 				}
+				// cout << "zero slice: " << i << endl;
 				continue;
 			}
 

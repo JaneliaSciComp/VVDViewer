@@ -8509,6 +8509,7 @@ void VRenderVulkanView::SetParams(double t)
 		vr_frame->GetRecorderDlg()->SetSelection(index);
 	}
 	SetVolPopDirty();
+	SetMeshPopDirty();
 }
 
 void VRenderVulkanView::AddKeyFrame(double duration, int interpolation, bool record_volume_params)
@@ -11138,7 +11139,7 @@ DataGroup* VRenderVulkanView::AddVolumeData(VolumeData* vd, wxString group_name)
 	if (vd->isBrxml())
 	{
 		m_loader.SetMemoryLimitByte((long long)TextureRenderer::mainmem_buf_size_*1024LL*1024LL);
-		m_loader.PreloadLevel(vd, vd->GetMaskLv(), true);
+		//m_loader.PreloadLevel(vd, vd->GetMaskLv(), true);
 	}
 
 	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
@@ -19776,6 +19777,7 @@ void VRenderVulkanView::SetManipParams(double t)
 		vr_frame->GetRecorderDlg()->SetSelection(index);
 	}
 	SetVolPopDirty();
+	SetMeshPopDirty();
 }
 
 void VRenderVulkanView::DrawViewQuad()
