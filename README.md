@@ -1,6 +1,5 @@
 # VVDViewer
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5841616.svg)](https://doi.org/10.5281/zenodo.5841616)
 
 This is the open-source repository for VVDViewer, an interactive rendering tool for confocal microscopy data visualization. It combines the rendering of multi-channel volume data and polygon mesh data, where the properties of each dataset can be adjusted independently and quickly. The tool is designed for neurobiologists, to better visualize the fluorescent-stained confocal samples. This code base started as a fork of [Fluorender](https://github.com/SCIInstitute/fluorender).
 
