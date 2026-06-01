@@ -110,6 +110,14 @@ else()
    include_directories(${TIFF_INCLUDE_DIR})
 endif()
 
+#liblzma (required by libtiff's LZMA compression support on macOS)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+   find_library(LZMA_LIBRARY NAMES lzma HINTS /usr/local/lib /opt/homebrew/lib)
+   if(NOT LZMA_LIBRARY)
+      message(FATAL_ERROR "liblzma not found. Install xz: brew install xz")
+   endif()
+endif()
+
 add_definitions(-DUNICODE)
 add_definitions(-D_UNICODE)
 #solution for wxWidgets linking "ambiguous" errors
@@ -309,13 +317,12 @@ mark_as_advanced(CZI_LIBRARY)
 message(CZI_INCLUDE_DIR="${CZI_INCLUDE_DIR}")
 message(CZI_LIBRARIES="${CZI_LIBRARIES}")
 
-#nd2
+#nd2 (not available on macOS)
+if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 find_path(ND2_INCLUDE_DIR NAMES Nd2ReadSdk.h PATHS ${ND2_INCLUDE_DIR} /usr/local/nd2readsdk/include /usr/nd2readsdk/include /opt/nd2readsdk/include /opt/local/nd2readsdk/include)
 include_directories(${ND2_INCLUDE_DIR})
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	set(ND2_NAMES nd2readsdk-static.lib lzma.lib limfile.lib jbig.lib)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	set(ND2_NAMES libnd2readsdk-shared.dylib liblzma.dylib liblimfile-shared.dylib libjbig.dylib )
 else()
 	set(ND2_NAMES libnd2readsdk-shared.so liblimfile.so)
 endif()
@@ -328,6 +335,7 @@ endforeach()
 mark_as_advanced(ND2_LIBRARY)
 message(ND2_INCLUDE_DIR="${ND2_INCLUDE_DIR}")
 message(ND2_LIBRARIES="${ND2_LIBRARIES}")
+endif()
 
 #png
 if( NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows" )
@@ -677,7 +685,7 @@ endif()
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    set(CMAKE_EXE_LINKER_FLAGS "-L/usr/local/lib -L/usr/lib ${CMAKE_EXE_LINKER_FLAGS} -framework IOSurface -framework Metal -framework VideoToolbox -framework CoreMedia -framework Security -framework CoreFoundation -framework CoreVideo -framework VideoDecodeAcceleration -framework QuartzCore")
    set(CMAKE_SHARED_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWX_PRECOMP -std=c++14 -stdlib=libc++")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWX_PRECOMP -std=c++17 -stdlib=libc++")
    #make sure png is static linked
    string(REGEX REPLACE "-lpng" "/usr/local/lib/libpng.a" 
 			wxWidgets_LIBRARIES ${wxWidgets_LIBRARIES})
@@ -719,6 +727,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   ${JPEG_LIBRARIES}
 	   ${ZLIB_LIBRARIES}
 	   ${TIFF_LIBRARIES}
+	   ${LZMA_LIBRARY}
 	   ${OPENSSL_LIBRARIES}
 	   ${SSL_DEP_LIBRARIES}
 	   ${ffmpeg_LIBRARIES}
@@ -727,7 +736,6 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   ${wxWidgets_LIBRARIES}
 	   ${HDF5_LIBRARIES}
 	   ${CZI_LIBRARIES}
-	   ${ND2_LIBRARIES}
 	   ${BZIP2_LIBRARIES}
 	   ${LZ4_LIBRARIES}
 	   ${PNG_LIBRARIES}
@@ -859,6 +867,15 @@ set(na_ext ${PLUGIN_DIR}/stdwx.h ${PLUGIN_DIR}/stdwx.cpp)
 add_library(NeuronAnnotatorPlugin SHARED ${na_src} ${na_hdr} ${na_ext})
 target_link_libraries(NeuronAnnotatorPlugin VVDMainFrame wxGuiPluginBase ${wxWidgets_LIBRARIES})
 
+#target build-order dependencies (macOS / Xcode)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_dependencies(VVDMainFrame wxGuiPluginBase)
+  add_dependencies(FijiInterfacePlugin VVDMainFrame)
+  add_dependencies(NBLASTGuiPlugin VVDMainFrame)
+  add_dependencies(NeuronAnnotatorPlugin VVDMainFrame)
+  add_dependencies(VVDViewer FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin)
+endif()
+
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 #TODO
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -881,30 +898,51 @@ endif()
 #build OpenCL examples copies.
 
 #copy openCL examples to the binary directory
-add_custom_command(TARGET VVDViewer PRE_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-  "${VVDViewer_SOURCE_DIR}/CL_code"
-  "$<TARGET_FILE_DIR:VVDViewer>/CL_code")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/CL_code"
+    "$<TARGET_FILE_DIR:VVDViewer>/../Resources/CL_code")
+else()
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/CL_code"
+    "$<TARGET_FILE_DIR:VVDViewer>/CL_code")
+endif()
 add_custom_command(TARGET VVDViewer PRE_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
   "${VVDViewer_SOURCE_DIR}/CL_code"
   "${CMAKE_BINARY_DIR}/CL_code")
-   
+
 #copy font dir to the binary directory
-add_custom_command(TARGET VVDViewer PRE_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-  "${VVDViewer_SOURCE_DIR}/Fonts"
-  "$<TARGET_FILE_DIR:VVDViewer>/Fonts")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/Fonts"
+    "$<TARGET_FILE_DIR:VVDViewer>/../Resources/Fonts")
+else()
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/Fonts"
+    "$<TARGET_FILE_DIR:VVDViewer>/Fonts")
+endif()
 add_custom_command(TARGET VVDViewer PRE_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
   "${VVDViewer_SOURCE_DIR}/Fonts"
   "${CMAKE_BINARY_DIR}/Fonts")
-  
+
 #copy script dir to the binary directory
-add_custom_command(TARGET VVDViewer PRE_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-  "${VVDViewer_SOURCE_DIR}/Scripts"
-  "$<TARGET_FILE_DIR:VVDViewer>/Scripts")
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/Scripts"
+    "$<TARGET_FILE_DIR:VVDViewer>/../Resources/Scripts")
+else()
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/Scripts"
+    "$<TARGET_FILE_DIR:VVDViewer>/Scripts")
+endif()
 
 #copy executables (Windows)
 #[[
@@ -941,7 +979,119 @@ LIST(APPEND vvd_dlls "libFijiInterfacePlugin.so")
 LIST(APPEND vvd_dlls "libNBLASTGuiPlugin.so")
 LIST(APPEND vvd_dlls "libNeuronAnnotatorPlugin.so")
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-#TODO
+	# Write the bundle fix script (executed at build time as POST_BUILD).
+	# WX_OLD_PREFIX is detected at build time via otool, so it adapts
+	# automatically when wxWidgets is rebuilt in a different location.
+	# Shell vars use \$ to survive CMake string substitution.
+	file(WRITE "${CMAKE_BINARY_DIR}/fix_bundle.sh"
+		"#!/bin/sh\nset -e\n"
+		"FRAMEWORKS_DIR=\"\$1\"\nRESOURCES_DIR=\"\$2\"\nEXECUTABLE=\"\$3\"\nDYLIB_SRC=\"\$4\"\nLZMA_LIB=\"\$5\"\n"
+		"PLUGINS_DIR=\"\$(dirname \"\${FRAMEWORKS_DIR}\")/PlugIns/gui\"\n"
+		"FW_PREFIX=\"@executable_path/../Frameworks\"\n"
+		"PL_PREFIX=\"@executable_path/../PlugIns/gui\"\n"
+		"WX_LIB_DIR=\"/usr/local/lib\"\n\n"
+		"# Detect wxWidgets build prefix from install name at build time\n"
+		"_WX_PROBE=\"\${WX_LIB_DIR}/libwx_osx_cocoau_core-3.2.0.2.2.dylib\"\n"
+		"if [ -f \"\${_WX_PROBE}\" ]; then\n"
+		"  _wx_id=\$(otool -D \"\${_WX_PROBE}\" | tail -1)\n"
+		"  WX_OLD_PREFIX=\$(dirname \"\${_wx_id}\")\n"
+		"else\n"
+		"  WX_OLD_PREFIX=\"\${WX_LIB_DIR}\"\n"
+		"fi\n\n"
+		"mkdir -p \"\${FRAMEWORKS_DIR}\"\nmkdir -p \"\${PLUGINS_DIR}\"\nmkdir -p \"\${RESOURCES_DIR}/vulkan/icd.d\"\n\n"
+		"# Frameworks: VVDMainFrame + wxGuiPluginBase\n"
+		"FW_DYLIBS=\"libVVDMainFrame.dylib libwxGuiPluginBase.dylib\"\n"
+		"for dylib in \${FW_DYLIBS}; do\n"
+		"  src=\"\${DYLIB_SRC}/\${dylib}\"\n"
+		"  if [ -f \"\${src}\" ]; then\n"
+		"    cp -f \"\${src}\" \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"    chmod u+w \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"    install_name_tool -id \"\${FW_PREFIX}/\${dylib}\" \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"  fi\ndone\n\n"
+		"# PlugIns/gui: plugin dylibs\n"
+		"PLUGIN_DYLIBS=\"libFijiInterfacePlugin.dylib libNBLASTGuiPlugin.dylib libNeuronAnnotatorPlugin.dylib\"\n"
+		"for dylib in \${PLUGIN_DYLIBS}; do\n"
+		"  src=\"\${DYLIB_SRC}/\${dylib}\"\n"
+		"  if [ -f \"\${src}\" ]; then\n"
+		"    cp -f \"\${src}\" \"\${PLUGINS_DIR}/\${dylib}\"\n"
+		"    chmod u+w \"\${PLUGINS_DIR}/\${dylib}\"\n"
+		"    install_name_tool -id \"\${PL_PREFIX}/\${dylib}\" \"\${PLUGINS_DIR}/\${dylib}\"\n"
+		"  fi\ndone\n\n"
+		"WX_DYLIBS=\"libwx_osx_cocoau_core-3.2.0.2.2.dylib libwx_baseu-3.2.0.2.2.dylib libwx_osx_cocoau_aui-3.2.0.2.2.dylib libwx_osx_cocoau_html-3.2.0.2.2.dylib libwx_baseu_xml-3.2.0.2.2.dylib libwx_baseu_net-3.2.0.2.2.dylib libwx_osx_cocoau_stc-3.2.0.2.2.dylib\"\n"
+		"for dylib in \${WX_DYLIBS}; do\n"
+		"  src=\"\${WX_LIB_DIR}/\${dylib}\"\n"
+		"  if [ -f \"\${src}\" ]; then\n"
+		"    cp -f \"\${src}\" \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"    chmod u+w \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"    install_name_tool -id \"\${FW_PREFIX}/\${dylib}\" \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
+		"  fi\ndone\n\n"
+		"cp -f /usr/local/lib/libvulkan.1.3.275.dylib \"\${FRAMEWORKS_DIR}/libvulkan.1.3.275.dylib\"\n"
+		"chmod u+w \"\${FRAMEWORKS_DIR}/libvulkan.1.3.275.dylib\"\n"
+		"install_name_tool -id \"\${FW_PREFIX}/libvulkan.1.3.275.dylib\" \"\${FRAMEWORKS_DIR}/libvulkan.1.3.275.dylib\"\n\n"
+		"cp -f /usr/local/lib/libMoltenVK.dylib \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
+		"chmod u+w \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
+		"install_name_tool -id \"\${FW_PREFIX}/libMoltenVK.dylib\" \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n\n"
+		"# Bundle liblzma (required by libtiff)\n"
+		"LZMA_DYLIB=\"\"\n"
+		"LZMA_OLD_PATH=\"\"\n"
+		"if [ -n \"\${LZMA_LIB}\" ] && [ -f \"\${LZMA_LIB}\" ]; then\n"
+		"  LZMA_REAL=\$(readlink -f \"\${LZMA_LIB}\" 2>/dev/null || python3 -c \"import os,sys; print(os.path.realpath(sys.argv[1]))\" \"\${LZMA_LIB}\")\n"
+		"  LZMA_DYLIB=\$(basename \"\${LZMA_REAL}\")\n"
+		"  LZMA_OLD_PATH=\$(otool -D \"\${LZMA_REAL}\" 2>/dev/null | tail -1)\n"
+		"  cp -f \"\${LZMA_REAL}\" \"\${FRAMEWORKS_DIR}/\${LZMA_DYLIB}\"\n"
+		"  chmod u+w \"\${FRAMEWORKS_DIR}/\${LZMA_DYLIB}\"\n"
+		"  install_name_tool -id \"\${FW_PREFIX}/\${LZMA_DYLIB}\" \"\${FRAMEWORKS_DIR}/\${LZMA_DYLIB}\"\n"
+		"fi\n\n"
+		"fix_refs() {\n  bin=\"\$1\"\n"
+		"  for dylib in \${FW_DYLIBS}; do\n"
+		"    install_name_tool -change \"\${DYLIB_SRC}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"  done\n"
+		"  for dylib in \${PLUGIN_DYLIBS}; do\n"
+		"    install_name_tool -change \"\${DYLIB_SRC}/\${dylib}\" \"\${PL_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"  done\n"
+		"  for dylib in \${WX_DYLIBS}; do\n"
+		"    install_name_tool -change \"\${WX_OLD_PREFIX}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    install_name_tool -change \"\${WX_LIB_DIR}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"  done\n"
+		"  install_name_tool -change \"@rpath/libvulkan.1.dylib\" \"\${FW_PREFIX}/libvulkan.1.3.275.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  install_name_tool -change \"/usr/local/lib/libvulkan.dylib\" \"\${FW_PREFIX}/libvulkan.1.3.275.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  install_name_tool -change \"/usr/local/lib/libvulkan.1.dylib\" \"\${FW_PREFIX}/libvulkan.1.3.275.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  install_name_tool -change \"/usr/local/lib/libvulkan.1.3.275.dylib\" \"\${FW_PREFIX}/libvulkan.1.3.275.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  install_name_tool -change \"@rpath/libMoltenVK.dylib\" \"\${FW_PREFIX}/libMoltenVK.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  install_name_tool -change \"/usr/local/lib/libMoltenVK.dylib\" \"\${FW_PREFIX}/libMoltenVK.dylib\" \"\${bin}\" 2>/dev/null || true\n"
+		"  if [ -n \"\${LZMA_DYLIB}\" ]; then\n"
+		"    install_name_tool -change \"\${LZMA_OLD_PATH}\" \"\${FW_PREFIX}/\${LZMA_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    install_name_tool -change \"\${LZMA_LIB}\" \"\${FW_PREFIX}/\${LZMA_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"
+		"  fi\n"
+		"}\n\n"
+		"fix_refs \"\${EXECUTABLE}\"\n"
+		"for f in \"\${FRAMEWORKS_DIR}\"/*.dylib; do\n  fix_refs \"\${f}\"\ndone\n"
+		"for f in \"\${PLUGINS_DIR}\"/*.dylib; do\n  fix_refs \"\${f}\"\ndone\n\n"
+		"sed 's|../../../lib/libMoltenVK.dylib|../../../Frameworks/libMoltenVK.dylib|'"
+		" /usr/local/share/vulkan/icd.d/MoltenVK_icd.json"
+		" > \"\${RESOURCES_DIR}/vulkan/icd.d/MoltenVK_icd.json\"\n\n"
+		"# Re-codesign all modified binaries (install_name_tool invalidates signatures)\n"
+		"# Use the same identity as the Xcode project; fall back to ad-hoc if unavailable\n"
+		"SIGN_ID=\$(security find-identity -v -p codesigning 2>/dev/null | grep 'Apple Development' | head -1 | sed 's/.*\"\\(.*\\)\".*/\\1/')\n"
+		"if [ -z \"\${SIGN_ID}\" ]; then\n"
+		"  SIGN_ID=\"-\"\n"
+		"fi\n"
+		"for f in \"\${FRAMEWORKS_DIR}\"/*.dylib; do\n"
+		"  codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${f}\"\n"
+		"done\n"
+		"for f in \"\${PLUGINS_DIR}\"/*.dylib; do\n"
+		"  codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${f}\"\n"
+		"done\n"
+		"codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${EXECUTABLE}\"\n")
+
+	add_custom_command(TARGET VVDViewer POST_BUILD
+		COMMAND /bin/sh "${CMAKE_BINARY_DIR}/fix_bundle.sh"
+			"$<TARGET_BUNDLE_CONTENT_DIR:VVDViewer>/Frameworks"
+			"$<TARGET_BUNDLE_CONTENT_DIR:VVDViewer>/Resources"
+			"$<TARGET_FILE:VVDViewer>"
+			"${CMAKE_BINARY_DIR}/$<CONFIG>"
+			"${LZMA_LIBRARY}"
+		COMMENT "Bundling dylibs and fixing paths in VVDViewer.app")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 #TODO
 else()

@@ -28,7 +28,7 @@ bool PluginManager::LoadAllPlugins(bool forceProgramPath)
 		m_MapGuiPluginsDll,
 		wxT("gui"));
 	
-	for(wxGuiPluginBaseList::Node * node = m_GuiPlugins.GetFirst(); 
+	for(wxGuiPluginBaseList::compatibility_iterator node = m_GuiPlugins.GetFirst(); 
 		node; node = node->GetNext())
 	{
 		wxGuiPluginBase * plugin = node->GetData();
@@ -65,7 +65,7 @@ const wxGuiPluginBaseList & PluginManager::GetGuiPlugins() const
 
 wxNonGuiPluginBase* PluginManager::GetNonGuiPlugin(wxString name) const
 {
-	for(wxNonGuiPluginBaseList::Node * node = m_NonGuiPlugins.GetFirst(); 
+	for(wxNonGuiPluginBaseList::compatibility_iterator node = m_NonGuiPlugins.GetFirst(); 
 		node; node = node->GetNext())
 	{
 		wxNonGuiPluginBase *plugin = node->GetData();
@@ -78,7 +78,7 @@ wxNonGuiPluginBase* PluginManager::GetNonGuiPlugin(wxString name) const
 
 wxGuiPluginBase* PluginManager::GetGuiPlugin(wxString name) const
 {
-	for(wxGuiPluginBaseList::Node * node = m_GuiPlugins.GetFirst(); 
+	for(wxGuiPluginBaseList::compatibility_iterator node = m_GuiPlugins.GetFirst(); 
 		node; node = node->GetNext())
 	{
 		wxGuiPluginBase *plugin = node->GetData();
@@ -91,7 +91,7 @@ wxGuiPluginBase* PluginManager::GetGuiPlugin(wxString name) const
 
 void PluginManager::InitPlugins()
 {
-	for(wxGuiPluginBaseList::Node * node = m_GuiPlugins.GetFirst(); 
+	for(wxGuiPluginBaseList::compatibility_iterator node = m_GuiPlugins.GetFirst(); 
 		node; node = node->GetNext())
 	{
 		wxGuiPluginBase *plugin = node->GetData();
@@ -102,7 +102,7 @@ void PluginManager::InitPlugins()
 
 void PluginManager::OnTreeUpdate()
 {
-	for (wxGuiPluginBaseList::Node* node = m_GuiPlugins.GetFirst();
+	for (wxGuiPluginBaseList::compatibility_iterator node = m_GuiPlugins.GetFirst();
 		node; node = node->GetNext())
 	{
 		wxGuiPluginBase* plugin = node->GetData();
@@ -113,7 +113,7 @@ void PluginManager::OnTreeUpdate()
 
 void PluginManager::FinalizePligins()
 {
-	for(wxGuiPluginBaseList::Node * node = m_GuiPlugins.GetFirst(); 
+	for(wxGuiPluginBaseList::compatibility_iterator node = m_GuiPlugins.GetFirst(); 
 		node; node = node->GetNext())
 	{
 		wxGuiPluginBase *plugin = node->GetData();

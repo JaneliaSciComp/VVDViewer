@@ -9314,8 +9314,10 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 			reader = new LSMReader();
         else if (type == LOAD_TYPE_CZI)
             reader = new CZIReader();
+#ifndef _DARWIN
         else if (type == LOAD_TYPE_ND2)
             reader = new ND2Reader();
+#endif
 		else if (type == LOAD_TYPE_PVXML)
 			reader = new PVXMLReader();
 		else if (type == LOAD_TYPE_BRKXML)
@@ -11769,8 +11771,10 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             reader = new LSMReader();
         else if (type == LOAD_TYPE_CZI)
             reader = new CZIReader();
+#ifndef _DARWIN
         else if (type == LOAD_TYPE_ND2)
             reader = new ND2Reader();
+#endif
         else if (type == LOAD_TYPE_PVXML)
             reader = new PVXMLReader();
         else if (type == LOAD_TYPE_BRKXML)

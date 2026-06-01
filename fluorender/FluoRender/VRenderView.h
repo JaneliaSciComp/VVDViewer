@@ -110,7 +110,7 @@ private:
 
 	struct CellDimensions {
 		int nx_cells, ny_cells, nz_cells;
-		double cell_size;
+		double cx, cy, cz;  // per-axis cell sizes (all cells equal within each axis)
 	};
 
 	CellDimensions calculateCellDimensions() {
@@ -118,10 +118,13 @@ private:
 		double approx_cell_size = std::cbrt(volume / numPoints);
 
 		CellDimensions dims;
-		dims.cell_size = approx_cell_size;
-		dims.nx_cells = static_cast<int>(std::ceil(nx / approx_cell_size));
-		dims.ny_cells = static_cast<int>(std::ceil(ny / approx_cell_size));
-		dims.nz_cells = static_cast<int>(std::ceil(nz / approx_cell_size));
+		dims.nx_cells = std::max(1, static_cast<int>(std::round(nx / approx_cell_size)));
+		dims.ny_cells = std::max(1, static_cast<int>(std::round(ny / approx_cell_size)));
+		dims.nz_cells = std::max(1, static_cast<int>(std::round(nz / approx_cell_size)));
+		// Divide each axis exactly so all cells are the same size — no remainder cells
+		dims.cx = nx / dims.nx_cells;
+		dims.cy = ny / dims.ny_cells;
+		dims.cz = nz / dims.nz_cells;
 
 		return dims;
 	}
@@ -154,13 +157,10 @@ public:
 			int y_idx = remainder / dims.nx_cells;
 			int x_idx = remainder % dims.nx_cells;
 
-			double x = (x_idx + dist_unit(gen)) * dims.cell_size;
-			double y = (y_idx + dist_unit(gen)) * dims.cell_size;
-			double z = (z_idx + dist_unit(gen)) * dims.cell_size;
-
-			x = std::min(x, nx);
-			y = std::min(y, ny);
-			z = std::min(z, nz);
+			// Each cell is exactly the same size; no clamping needed
+			double x = (x_idx + dist_unit(gen)) * dims.cx;
+			double y = (y_idx + dist_unit(gen)) * dims.cy;
+			double z = (z_idx + dist_unit(gen)) * dims.cz;
 
 			points.emplace_back(x, y, z);
 		}
@@ -1005,6 +1005,16 @@ public:
 	int m_total_frames;
 	//file name for capturing
 	wxString m_cap_file;
+	// --- group capture state ---
+	struct GroupCapEntry {
+		wxString   filename;
+		DataGroup* group;
+	};
+	std::vector<GroupCapEntry>               m_group_cap_queue;
+	int                                      m_group_cap_index;
+	std::vector<std::pair<VolumeData*,bool>> m_group_cap_saved_vd_vis;
+	std::vector<std::pair<DataGroup*,bool>>  m_group_cap_saved_grp_vis;
+	bool                                     m_capture_groups;
 	//folder name for 3d batch
 	wxString m_bat_folder;
 	//hud
@@ -2491,6 +2501,8 @@ public:
 	wxWindow* m_frame;
 	static int m_id;
 
+	void SetupNextGroupCapture();
+
 	//render view///////////////////////////////////////////////
 	VRenderVulkanView *m_glview;
 	wxFrame* m_full_frame;
@@ -2559,6 +2571,7 @@ public:
 	static int m_cap_dispresy;
 	static wxTextCtrl *m_cap_w_txt;
 	static wxTextCtrl *m_cap_h_txt;
+	static bool m_cap_group_each;
 
 	//draw clip
 	bool m_draw_clip;
@@ -2590,6 +2603,9 @@ private:
 	void OnChEmbedCheck(wxCommandEvent &event);
 	static wxWindow* CreateExtraCaptureControl(wxWindow* parent);
 	void OnCapture(wxCommandEvent& event);
+	void StartGroupCapture(const wxString& dir);
+	void IsolateGroupForCapture(DataGroup* target);
+	void RestoreGroupCapVisibility();
 	void OnBgColorChange(wxColourPickerEvent& event);
 	void OnCamCtrCheck(wxCommandEvent& event);
 	void OnFpsCheck(wxCommandEvent& event);

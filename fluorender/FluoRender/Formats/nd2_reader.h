@@ -28,6 +28,8 @@ DEALINGS IN THE SOFTWARE.
 #ifndef _ND2_READER_H_
 #define _ND2_READER_H_
 
+#ifndef _DARWIN
+
 #include <Nd2ReadSdk.h>
 #include <base_reader.h>
 #include <vector>
@@ -180,5 +182,7 @@ private:
 	void GetFramePos(LIMSTR fmd, FrameInfo& frame);
 	bool ReadChannel(LIMFILEHANDLE h, int t, int c, void* val);
 };
+
+#endif // !_DARWIN
 
 #endif//_ND2_READER_H_

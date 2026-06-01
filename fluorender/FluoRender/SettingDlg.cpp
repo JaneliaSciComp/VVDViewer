@@ -118,10 +118,15 @@ wxWindow* SettingDlg::CreateProjectPage(wxWindow *parent)
 	m_font_cmb = new wxComboBox(page, ID_FontCmb, "",
 		wxDefaultPosition, wxSize(150+comb_size_fix_w, -1), 0, NULL, wxCB_READONLY);
 	//populate fonts
+#ifdef __WXMAC__
+	wxString loc = wxStandardPaths::Get().GetResourcesDir() + GETSLASH() + wxString("Fonts") +
+		GETSLASH() + wxString("*.ttf");
+#else
 	std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
-	exePath = exePath.substr(0,exePath.find_last_of(std::string()+GETSLASH()));
+	exePath = exePath.substr(0, exePath.find_last_of(std::string()+GETSLASH()));
 	wxString loc = wxString(exePath) + GETSLASH() + wxString("Fonts") +
 		GETSLASH() + wxString("*.ttf");
+#endif
 	wxLogNull logNo;
 	wxString file = wxFindFirstFile(loc);
 	while (!file.empty())
@@ -1651,10 +1656,15 @@ void SettingDlg::OnFontChange(wxCommandEvent &event)
 	if (str != "")
 	{
 		m_font_file = str + ".ttf";
+#ifdef __WXMAC__
+		std::string loc = wxStandardPaths::Get().GetResourcesDir().ToStdString() + GETSLASHS() + "Fonts" +
+			GETSLASHS() + str.ToStdString() + ".ttf";
+#else
 		std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
-		exePath = exePath.substr(0,exePath.find_last_of(std::string()+GETSLASH()));
+		exePath = exePath.substr(0, exePath.find_last_of(std::string()+GETSLASH()));
 		std::string loc = exePath + GETSLASHS() + "Fonts" +
 			GETSLASHS() + str.ToStdString() + ".ttf";
+#endif
         
 		VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
 		if (vr_frame)

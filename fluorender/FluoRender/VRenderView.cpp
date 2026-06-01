@@ -466,6 +466,8 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_capture_tsequ(false),
 	m_capture_bat(false),
 	m_capture_param(false),
+	m_capture_groups(false),
+	m_group_cap_index(0),
 	m_capture_resx(-1),
 	m_capture_resy(-1),
 	m_tile_rendering(false),
@@ -953,6 +955,15 @@ void VRenderVulkanView::InitVulkan()
 	{
 		auto setting_dlg = vr_frame->GetSettingDlg();
 		wxString font_file = setting_dlg ? setting_dlg->GetFontFile() : "";
+#ifdef __WXMAC__
+		wxString resDir = wxStandardPaths::Get().GetResourcesDir();
+		if (font_file != "")
+			font_file = resDir + GETSLASH() + wxString("Fonts") +
+			GETSLASH() + font_file;
+		else
+			font_file = resDir + GETSLASH() + wxString("Fonts") +
+			GETSLASH() + wxString("FreeSans.ttf");
+#else
 		std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
 		exePath = exePath.substr(0, exePath.find_last_of(std::string() + GETSLASH()));
 		if (font_file != "")
@@ -961,6 +972,7 @@ void VRenderVulkanView::InitVulkan()
 		else
 			font_file = wxString(exePath) + GETSLASH() + wxString("Fonts") +
 			GETSLASH() + wxString("FreeSans.ttf");
+#endif
 		m_text_renderer = new TextRenderer(font_file.ToStdString(), m_v2drender);
 		if (setting_dlg)
 			m_text_renderer->SetSize(setting_dlg->GetTextSize());
@@ -9774,6 +9786,15 @@ void VRenderVulkanView::PostDraw()
 				m_tiled_image = NULL;
 			}
 		}
+	}
+
+	// Group capture: advance to next group when current capture is done.
+	// Use CallAfter on m_vrv (wxEvtHandler) to defer until after the current
+	// call stack unwinds, preventing infinite recursion via RefreshGL -> PostDraw.
+	if (m_capture_groups && !m_capture) {
+		m_group_cap_index++;
+		if (m_vrv)
+			m_vrv->CallAfter(&VRenderView::SetupNextGroupCapture);
 	}
 
 	m_postdraw = false;
@@ -20701,6 +20722,19 @@ void VRenderVulkanView::ScatterRulers(long density)
 		mask_data = (unsigned char*)(mask_nrrd->getNrrd()->data);
 		if (!mask_data)
 			return;
+		// If the mask exists but is entirely zero (empty), treat it as no mask
+		bool mask_empty = true;
+		long long mask_size = (long long)resx * resy * resz;
+		for (long long i = 0; i < mask_size; i++)
+		{
+			if (mask_data[i] > 0)
+			{
+				mask_empty = false;
+				break;
+			}
+		}
+		if (mask_empty)
+			mask_data = NULL;
 	}
 
 	for(Point &p : points)
@@ -20753,7 +20787,7 @@ void VRenderVulkanView::ScatterRulers(long density)
 			mp = textrans->project(mp);
 			
 			Ruler* ruler = new Ruler();
-			ruler->SetRulerType(m_ruler_type);
+			ruler->SetRulerType(2);
 			ruler->AddPoint(mp);
 			ruler->SetTimeDep(m_ruler_time_dep);
 			ruler->SetTime(m_tseq_cur_num);
@@ -21097,6 +21131,7 @@ int VRenderView::m_cap_dispresx = -1;
 int VRenderView::m_cap_dispresy = -1;
 wxTextCtrl* VRenderView::m_cap_w_txt = NULL;
 wxTextCtrl* VRenderView::m_cap_h_txt = NULL;
+bool VRenderView::m_cap_group_each = false;
 
 VRenderView::VRenderView(wxWindow* frame,
 	wxWindow* parent,
@@ -22312,7 +22347,7 @@ void VRenderView::OnChEmbedCheck(wxCommandEvent &event)
 
 wxWindow* VRenderView::CreateExtraCaptureControl(wxWindow* parent)
 {
-	wxPanel* panel = new wxPanel(parent, 0, wxDefaultPosition, wxSize(400, 90));
+	wxPanel* panel = new wxPanel(parent, 0, wxDefaultPosition, wxSize(400, 115));
 
 	wxBoxSizer *group1 = new wxStaticBoxSizer(
 		new wxStaticBox(panel, wxID_ANY, "Additional Options"), wxVERTICAL);
@@ -22383,6 +22418,17 @@ wxWindow* VRenderView::CreateExtraCaptureControl(wxWindow* parent)
 		group1->Add(10, 10);
 	}
 
+	//capture each group separately
+	wxCheckBox* ch_group = new wxCheckBox(panel, wxID_HIGHEST+3010,
+		"Capture each group separately");
+	ch_group->SetValue(m_cap_group_each);
+	ch_group->Bind(wxEVT_COMMAND_CHECKBOX_CLICKED, [](wxCommandEvent& event) {
+		wxCheckBox* ch = (wxCheckBox*)event.GetEventObject();
+		if (ch) m_cap_group_each = ch->GetValue();
+	});
+	group1->Add(ch_group);
+	group1->Add(10, 10);
+
 	panel->SetSizer(group1);
 	panel->Layout();
 
@@ -22443,31 +22489,169 @@ void VRenderView::OnCapture(wxCommandEvent& event)
 	int rval = file_dlg.ShowModal();
 	if (rval == wxID_OK)
 	{
-		m_glview->m_cap_file = file_dlg.GetDirectory() + "/" + file_dlg.GetFilename();
-		m_glview->m_capture = true;
-		
-		if (m_cap_resx > 4000 && m_cap_resy > 4000 && m_cap_resx != m_cap_dispresx && m_cap_resy != m_cap_dispresy)
+		if (m_cap_group_each)
 		{
-			int tilew = m_cap_resx / (m_cap_resx / 2000 + 1) + (m_cap_resx / 2000 + 1);
-			int tileh = m_cap_resy / (m_cap_resy / 2000 + 1) + (m_cap_resy / 2000 + 1);
-			m_glview->StartTileRendering(m_cap_resx, m_cap_resy, tilew, tileh);
+			// グループ別キャプチャ: ディレクトリだけ使う
+			wxString dir = file_dlg.GetDirectory();
+			StartGroupCapture(dir);
 		}
 		else
-        {
-            m_glview->Resize();
-		//	m_glview->StartTileRendering(m_cap_resx, m_cap_resy, m_cap_resx, m_cap_resy);
-        }
-
-		if (vr_frame && vr_frame->GetSettingDlg() &&
-			vr_frame->GetSettingDlg()->GetProjSave())
 		{
-			wxString new_folder;
-			new_folder = m_glview->m_cap_file + "_project";
-			CREATE_DIR(new_folder.fn_str());
-			wxString prop_file = new_folder + "/" + file_dlg.GetFilename() + "_project.vrp";
-			vr_frame->SaveProject(prop_file);
+			m_glview->m_cap_file = file_dlg.GetDirectory() + "/" + file_dlg.GetFilename();
+			m_glview->m_capture = true;
+
+			if (m_cap_resx > 4000 && m_cap_resy > 4000 && m_cap_resx != m_cap_dispresx && m_cap_resy != m_cap_dispresy)
+			{
+				int tilew = m_cap_resx / (m_cap_resx / 2000 + 1) + (m_cap_resx / 2000 + 1);
+				int tileh = m_cap_resy / (m_cap_resy / 2000 + 1) + (m_cap_resy / 2000 + 1);
+				m_glview->StartTileRendering(m_cap_resx, m_cap_resy, tilew, tileh);
+			}
+			else
+			{
+				m_glview->Resize();
+			//	m_glview->StartTileRendering(m_cap_resx, m_cap_resy, m_cap_resx, m_cap_resy);
+			}
+
+			if (vr_frame && vr_frame->GetSettingDlg() &&
+				vr_frame->GetSettingDlg()->GetProjSave())
+			{
+				wxString new_folder;
+				new_folder = m_glview->m_cap_file + "_project";
+				CREATE_DIR(new_folder.fn_str());
+				wxString prop_file = new_folder + "/" + file_dlg.GetFilename() + "_project.vrp";
+				vr_frame->SaveProject(prop_file);
+			}
 		}
 	}
+}
+
+void VRenderView::StartGroupCapture(const wxString& dir)
+{
+	if (!m_glview) return;
+
+	// DataGroup を収集
+	std::vector<DataGroup*> groups;
+	for (int i = 0; i < (int)m_glview->m_layer_list.size(); i++) {
+		if (m_glview->m_layer_list[i] && m_glview->m_layer_list[i]->IsA() == 5) {
+			DataGroup* g = (DataGroup*)m_glview->m_layer_list[i];
+			if (g && g->GetVolumeNum() > 0 && g->GetName().Lower() != "background")
+				groups.push_back(g);
+		}
+	}
+	if (groups.empty()) {
+		wxMessageBox("No volume groups found.", "Capture", wxOK | wxICON_INFORMATION, m_frame);
+		return;
+	}
+
+	// 現在の可視状態を保存
+	m_glview->m_group_cap_saved_vd_vis.clear();
+	m_glview->m_group_cap_saved_grp_vis.clear();
+	for (int i = 0; i < (int)m_glview->m_layer_list.size(); i++) {
+		if (!m_glview->m_layer_list[i]) continue;
+		if (m_glview->m_layer_list[i]->IsA() == 2) {
+			VolumeData* vd = (VolumeData*)m_glview->m_layer_list[i];
+			m_glview->m_group_cap_saved_vd_vis.push_back(std::make_pair(vd, vd->GetDisp()));
+		} else if (m_glview->m_layer_list[i]->IsA() == 5) {
+			DataGroup* g = (DataGroup*)m_glview->m_layer_list[i];
+			m_glview->m_group_cap_saved_grp_vis.push_back(std::make_pair(g, g->GetDisp()));
+			for (int j = 0; j < g->GetVolumeNum(); j++) {
+				VolumeData* vd = g->GetVolumeData(j);
+				if (vd)
+					m_glview->m_group_cap_saved_vd_vis.push_back(std::make_pair(vd, vd->GetDisp()));
+			}
+		}
+	}
+
+	// キューを構築
+	m_glview->m_group_cap_queue.clear();
+	std::map<wxString, int> name_count;
+	for (int i = 0; i < (int)groups.size(); i++) {
+		VolumeData* first_vd = groups[i]->GetVolumeData(0);
+		if (!first_vd) continue;
+		wxString name = wxFileName(first_vd->GetName()).GetName();
+		if (name.IsEmpty())
+			name = first_vd->GetName();
+		name_count[name]++;
+		if (name_count[name] > 1)
+			name = name + wxString::Format("_%d", name_count[name] - 1);
+		VRenderVulkanView::GroupCapEntry entry;
+		entry.filename = dir + "/" + name + ".tif";
+		entry.group = groups[i];
+		m_glview->m_group_cap_queue.push_back(entry);
+	}
+	if (m_glview->m_group_cap_queue.empty())
+		return;
+
+	m_glview->m_group_cap_index = 0;
+	m_glview->m_capture_groups = true;
+	m_capture_btn->Disable();
+
+	SetupNextGroupCapture();
+}
+
+void VRenderView::SetupNextGroupCapture()
+{
+	if (!m_glview) return;
+	int idx = m_glview->m_group_cap_index;
+	if (idx >= (int)m_glview->m_group_cap_queue.size()) {
+		// 全グループ完了
+		RestoreGroupCapVisibility();
+		m_glview->m_capture_groups = false;
+		m_glview->m_group_cap_queue.clear();
+		m_glview->m_group_cap_saved_vd_vis.clear();
+		m_glview->m_group_cap_saved_grp_vis.clear();
+		m_capture_btn->Enable();
+		return;
+	}
+	IsolateGroupForCapture(m_glview->m_group_cap_queue[idx].group);
+	m_glview->m_cap_file = m_glview->m_group_cap_queue[idx].filename;
+	m_glview->m_capture = true;
+	m_glview->RefreshGL();
+}
+
+void VRenderView::IsolateGroupForCapture(DataGroup* target)
+{
+	if (!m_glview) return;
+
+	// 保存済み可視状態のルックアップマップを構築
+	std::map<VolumeData*, bool> vd_vis_map;
+	for (auto& p : m_glview->m_group_cap_saved_vd_vis)
+		vd_vis_map[p.first] = p.second;
+
+	for (int i = 0; i < (int)m_glview->m_layer_list.size(); i++) {
+		if (!m_glview->m_layer_list[i]) continue;
+		if (m_glview->m_layer_list[i]->IsA() == 2) {
+			VolumeData* vd = (VolumeData*)m_glview->m_layer_list[i];
+			vd->SetDisp(false);
+		} else if (m_glview->m_layer_list[i]->IsA() == 5) {
+			DataGroup* g = (DataGroup*)m_glview->m_layer_list[i];
+			g->SetDisp(true); // PopVolumeList がスキップしないよう true に
+			bool isBg = g->GetName().Lower() == "background";
+			bool isTarget = (g == target) || isBg;
+			for (int j = 0; j < g->GetVolumeNum(); j++) {
+				VolumeData* vd = g->GetVolumeData(j);
+				if (!vd) continue;
+				if (isTarget) {
+					auto it = vd_vis_map.find(vd);
+					vd->SetDisp(it != vd_vis_map.end() ? it->second : true);
+				} else {
+					vd->SetDisp(false);
+				}
+			}
+		}
+	}
+	m_glview->m_vd_pop_dirty = true;
+}
+
+void VRenderView::RestoreGroupCapVisibility()
+{
+	if (!m_glview) return;
+	for (auto& p : m_glview->m_group_cap_saved_grp_vis)
+		p.first->SetDisp(p.second);
+	for (auto& p : m_glview->m_group_cap_saved_vd_vis)
+		p.first->SetDisp(p.second);
+	m_glview->m_vd_pop_dirty = true;
+	m_glview->RefreshGL();
 }
 
 void VRenderView::OnResModesCombo(wxCommandEvent &event)

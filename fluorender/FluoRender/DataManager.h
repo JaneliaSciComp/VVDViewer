@@ -46,7 +46,9 @@ DEALINGS IN THE SOFTWARE.
 #include "Formats/nrrd_reader.h"
 #include "Formats/tif_reader.h"
 #include "Formats/nrrd_writer.h"
+#ifndef _DARWIN
 #include "Formats/nd2_reader.h"
+#endif
 #include "Formats/tif_writer.h"
 #include "Formats/msk_reader.h"
 #include "Formats/msk_writer.h"
@@ -89,7 +91,9 @@ using namespace FLIVR;
 #define LOAD_TYPE_V3DPBD	9
 #define LOAD_TYPE_IDI       10
 #define LOAD_TYPE_CZI       11
+#ifndef _DARWIN
 #define LOAD_TYPE_ND2       12
+#endif
 
 
 class EXPORT_API TreeLayer
@@ -2402,8 +2406,10 @@ public:
             type = LOAD_TYPE_LSM;
         else if (suffix == ".CZI")
             type = LOAD_TYPE_CZI;
+#ifndef _DARWIN
         else if (suffix == ".nd2")
             type = LOAD_TYPE_ND2;
+#endif
        // else if (suffix == ".xml")
        //     type = LOAD_TYPE_PVXML;
         else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml")

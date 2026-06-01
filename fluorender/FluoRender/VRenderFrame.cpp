@@ -397,7 +397,7 @@ VRenderFrame::VRenderFrame(
     wxArrayString plugin_disp_names;
 	if (!m_plugin_list.IsEmpty()) m_plugin_list.Clear();
 	wxGuiPluginBaseList gplist = m_plugin_manager->GetGuiPlugins();
-	for(wxGuiPluginBaseList::Node * node = gplist.GetFirst(); node; node = node->GetNext())
+	for(wxGuiPluginBaseList::compatibility_iterator node = gplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxString gpname = node->GetData()->GetName();
 		if (!gpname.IsEmpty())
@@ -409,7 +409,7 @@ VRenderFrame::VRenderFrame(
             plugin_disp_names.Add(gpname);
 	}
 	wxNonGuiPluginBaseList ngplist = m_plugin_manager->GetNonGuiPlugins();
-	for(wxNonGuiPluginBaseList::Node * node = ngplist.GetFirst(); node; node = node->GetNext())
+	for(wxNonGuiPluginBaseList::compatibility_iterator node = ngplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxString ngpname = node->GetData()->GetName();
 		if (!ngpname.IsEmpty())
@@ -1334,7 +1334,6 @@ void VRenderFrame::OnOpenVolume(wxCommandEvent& WXUNUSED(event))
 		"Zeiss Laser Scanning Microscope (*.lsm)|*.lsm|"\
         "Carl Zeiss Image (*.czi)|*.czi|"\
 		"Prairie View XML (*.xml)|*.xml|"\
-        "Nikon files (*.nd2)|*.nd2|"\
 		"Nrrd files (*.nrrd)|*.nrrd|"\
 		"H5J files (*.h5j)|*.h5j|"\
 		"V3DPBD files (*.v3dpbd)|*.v3dpbd|"\
@@ -1551,8 +1550,10 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_LSM, -1, -1, datasize, prefix);
             else if (suffix==".czi")
                 ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_CZI, -1, -1, datasize, prefix);
+#ifndef _DARWIN
             else if (suffix==".nd2")
                 ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_ND2, -1, -1, datasize, prefix);
+#endif
 			//else if (suffix==".xml")
 			//	ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_PVXML, -1, -1, datasize, prefix);
 			else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml" || suffix==".zarr" || suffix == ".zattrs" || suffix==".zfs_ch")
@@ -1801,7 +1802,9 @@ void VRenderFrame::StartupLoad(wxArrayString files, size_t datasize, wxArrayStri
                     suffix == ".vvd" ||
                     suffix == ".n5" ||
 					suffix == ".zarr" ||
+#ifndef _DARWIN
                     suffix == ".nd2" ||
+#endif
                     suffix == ".json" ||
                     suffix == ".h5j" ||
                     suffix == ".v3dpbd" ||
@@ -2861,10 +2864,9 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
 	if (!m_tree_panel)
 		return;
 
+	DataTreeCtrl* tree_ctrl = m_tree_panel->GetTreeCtrl();
 	m_tree_panel->SaveExpState();
-	int scroll_pos;
-	if (HasScrollbar(wxVERTICAL))
-		scroll_pos = m_tree_panel->GetScrollPos(wxVERTICAL);
+	int scroll_pos = tree_ctrl ? tree_ctrl->GetScrollPos(wxVERTICAL) : 0;
 
 	m_tree_panel->SetEvtHandlerEnabled(false);
 	m_tree_panel->Freeze();
@@ -3085,14 +3087,21 @@ void VRenderFrame::UpdateTree(wxString name, int type, bool set_calc)
     m_clip_view->SyncClippingPlanes();
     
     m_tree_panel->LoadExpState(expand_newitem);
-	if (HasScrollbar(wxVERTICAL))
-		m_tree_panel->SetScrollPos(wxVERTICAL, scroll_pos);
 
 	if (sel_item.IsOk())
 		m_tree_panel->SelectItem(sel_item);
 
 	m_tree_panel->Thaw();
 	m_tree_panel->SetEvtHandlerEnabled(true);
+
+	if (tree_ctrl)
+	{
+		tree_ctrl->SetScrollPos(wxVERTICAL, scroll_pos);
+		tree_ctrl->CallAfter([tree_ctrl, scroll_pos]()
+		{
+			tree_ctrl->SetScrollPos(wxVERTICAL, scroll_pos);
+		});
+	}
 
 	if (m_plugin_manager)
 		m_plugin_manager->OnTreeUpdate();
@@ -4752,7 +4761,7 @@ void VRenderFrame::SaveProject(wxString& filename)
 		m_aui_mgr.GetPane(m_prop_panel).IsFloating():false);
     
     wxGuiPluginBaseList gplist = m_plugin_manager->GetGuiPlugins();
-    for(wxGuiPluginBaseList::Node * node = gplist.GetFirst(); node; node = node->GetNext())
+    for(wxGuiPluginBaseList::compatibility_iterator node = gplist.GetFirst(); node; node = node->GetNext())
     {
         wxGuiPluginBase *plugin = node->GetData();
         fconfig.Write(plugin->GetDisplayName(), m_aui_mgr.GetPane(plugin->GetDisplayName()).IsOk() ? m_aui_mgr.GetPane(plugin->GetDisplayName()).IsShown() : false);
@@ -4917,8 +4926,10 @@ VolumeData* VRenderFrame::OpenVolumeFromProject(wxString name, wxFileConfig &fco
 						loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_LSM, cur_chan, cur_time, 0, wxEmptyString, metadata);
                     else if (suffix == ".czi")
                         loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_CZI, cur_chan, cur_time, 0, wxEmptyString, metadata);
+#ifndef _DARWIN
                     else if (suffix == ".nd2")
                         loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_ND2, cur_chan, cur_time, 0, wxEmptyString, metadata);
+#endif
 					//else if (suffix == ".xml")
 					//	loaded_num = m_data_mgr.LoadVolumeData(str, LOAD_TYPE_PVXML, cur_chan, cur_time);
 					else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml" || suffix == ".zarr" || suffix == ".zgroup" || suffix == ".zfs_ch")
@@ -7316,7 +7327,7 @@ void VRenderFrame::OpenProject(wxString& filename)
 		}
         
         wxGuiPluginBaseList gplist = m_plugin_manager->GetGuiPlugins();
-        for(wxGuiPluginBaseList::Node * node = gplist.GetFirst(); node; node = node->GetNext())
+        for(wxGuiPluginBaseList::compatibility_iterator node = gplist.GetFirst(); node; node = node->GetNext())
         {
             wxGuiPluginBase *plugin = node->GetData();
             if (fconfig.Read(plugin->GetDisplayName(), &bVal))
@@ -7925,7 +7936,7 @@ bool VRenderFrame::IsShownPluginWindow(wxString name)
 bool VRenderFrame::PluginExists(wxString name)
 {
 	wxGuiPluginBaseList gplist = m_plugin_manager->GetGuiPlugins();
-	for(wxGuiPluginBaseList::Node * node = gplist.GetFirst(); node; node = node->GetNext())
+	for(wxGuiPluginBaseList::compatibility_iterator node = gplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxGuiPluginBase *plugin = node->GetData();
 		if (plugin && plugin->GetName() == name)
@@ -7933,7 +7944,7 @@ bool VRenderFrame::PluginExists(wxString name)
 	}
 
 	wxNonGuiPluginBaseList ngplist = m_plugin_manager->GetNonGuiPlugins();
-	for(wxNonGuiPluginBaseList::Node * node = ngplist.GetFirst(); node; node = node->GetNext())
+	for(wxNonGuiPluginBaseList::compatibility_iterator node = ngplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxNonGuiPluginBase *plugin = node->GetData();
 		if (plugin && plugin->GetName() == name)
@@ -7946,7 +7957,7 @@ bool VRenderFrame::PluginExists(wxString name)
 bool VRenderFrame::RunPlugin(wxString name, wxString options, bool show)
 {
 	wxGuiPluginBaseList gplist = m_plugin_manager->GetGuiPlugins();
-	for(wxGuiPluginBaseList::Node * node = gplist.GetFirst(); node; node = node->GetNext())
+	for(wxGuiPluginBaseList::compatibility_iterator node = gplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxGuiPluginBase *plugin = node->GetData();
 		if (plugin && plugin->GetName() == name)
@@ -7958,7 +7969,7 @@ bool VRenderFrame::RunPlugin(wxString name, wxString options, bool show)
 	}
 
 	wxNonGuiPluginBaseList ngplist = m_plugin_manager->GetNonGuiPlugins();
-	for(wxNonGuiPluginBaseList::Node * node = ngplist.GetFirst(); node; node = node->GetNext())
+	for(wxNonGuiPluginBaseList::compatibility_iterator node = ngplist.GetFirst(); node; node = node->GetNext())
 	{
 		wxNonGuiPluginBase *plugin = node->GetData();
 		if (plugin && plugin->GetName() == name)

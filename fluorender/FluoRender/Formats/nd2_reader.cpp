@@ -26,6 +26,9 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "nd2_reader.h"
+
+#ifndef _DARWIN
+
 #include <json.hpp>
 #include "../compatibility.h"
 #include <stdio.h>
@@ -710,3 +713,5 @@ void ND2Reader::GetFramePos(LIMSTR fmd, FrameInfo& frame)
 		frame.ysize = stoi(y);
 	}
 }
+
+#endif // !_DARWIN

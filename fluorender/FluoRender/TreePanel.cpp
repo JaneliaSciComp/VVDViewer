@@ -3336,6 +3336,7 @@ void DataTreeCtrl::OnEndDrag(wxTreeEvent& event)
 		return;
 
 	int mouse_pos_y = event.GetPoint().y;
+	int restore_scroll_pos = m_scroll_pos;
 
 	wxTreeItemId src_item = m_drag_item,
 		dst_item = event.GetItem(),
@@ -3617,13 +3618,18 @@ void DataTreeCtrl::OnEndDrag(wxTreeEvent& event)
 		}
 	}
 
-	SetScrollPos(wxVERTICAL, m_scroll_pos);
 	Disconnect(wxEVT_MOTION, wxMouseEventHandler(DataTreeCtrl::OnDragging));
 
 	UpdateSelection();
 
 	Thaw();
 	SetEvtHandlerEnabled(true);
+
+	SetScrollPos(wxVERTICAL, restore_scroll_pos);
+	CallAfter([this, restore_scroll_pos]()
+	{
+		SetScrollPos(wxVERTICAL, restore_scroll_pos);
+	});
 }
 
 void DataTreeCtrl::OnDragging(wxMouseEvent& event)
