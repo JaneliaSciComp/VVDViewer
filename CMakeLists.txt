@@ -107,6 +107,8 @@ if(MSVC)
   # Disable std::byte so unqualified 'byte' (with "using namespace std") is not
   # ambiguous with the Windows SDK's ::byte (rpcndr.h / wtypes.h).
   add_definitions(-D_HAS_STD_BYTE=0)
+  # Large files (e.g. VRenderView.cpp) exceed the COFF section limit in Debug.
+  add_definitions("/bigobj")
 endif()
 
 set(CMAKE_SHARED_LINKER_FLAGS "-Wl,-Bsymbolic")
@@ -715,6 +717,44 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    string(REGEX REPLACE "/usr/local/lib/libfreetype.dylib" "/usr/local/lib/libfreetype.a;/usr/local/lib/libpng.a" 
      FREETYPE_LIBRARIES ${FREETYPE_LIBRARIES})
    message(STATUS "${FREETYPE_LIBRARIES}")
+endif()
+
+# Per-config static libs so a multi-config (VS) Debug build links the debug
+# variants. find_library returns only the release path under vcpkg; pair each
+# with its debug variant in <triplet>/debug/lib (release "x.lib" -> "xd.lib" or
+# "x.lib"). Without this, Debug fails with LNK2038 RuntimeLibrary mismatches.
+if(MSVC AND DEFINED VCPKG_INSTALLED_DIR)
+	set(_vvd_rellibdir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
+	set(_vvd_dbglibdir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib")
+	# outvar set to "optimized <rel> debug <dbg>". ARGN = candidate base names (no
+	# extension): release picked from lib/<name>.lib, debug from debug/lib/<name>d.lib
+	# (preferred) or debug/lib/<name>.lib. Resolved by name so it is correct
+	# regardless of CMAKE_BUILD_TYPE / generator.
+	function(_vvd_perconfig outvar)
+		set(_rel "")
+		set(_dbg "")
+		foreach(_n ${ARGN})
+			if(NOT _rel AND EXISTS "${_vvd_rellibdir}/${_n}.lib")
+				set(_rel "${_vvd_rellibdir}/${_n}.lib")
+			endif()
+			if(NOT _dbg AND EXISTS "${_vvd_dbglibdir}/${_n}d.lib")
+				set(_dbg "${_vvd_dbglibdir}/${_n}d.lib")
+			endif()
+			if(NOT _dbg AND EXISTS "${_vvd_dbglibdir}/${_n}.lib")
+				set(_dbg "${_vvd_dbglibdir}/${_n}.lib")
+			endif()
+		endforeach()
+		if(_rel AND _dbg)
+			set(${outvar} optimized "${_rel}" debug "${_dbg}" PARENT_SCOPE)
+		elseif(_rel)
+			set(${outvar} "${_rel}" PARENT_SCOPE)
+		endif()
+	endfunction()
+	_vvd_perconfig(LZ4_LIBRARIES   lz4)
+	_vvd_perconfig(ZSTD_LIBRARIES  zstd)
+	_vvd_perconfig(BLOSC_LIBRARIES libblosc2 blosc2)
+	_vvd_perconfig(ZFP_LIBRARY     zfp)
+	_vvd_perconfig(CZI_LIBRARIES   libCZIStatic)
 endif()
 
 #link the libraries
