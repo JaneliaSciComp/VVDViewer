@@ -123,7 +123,7 @@ wxWindow* SettingDlg::CreateProjectPage(wxWindow *parent)
 		GETSLASH() + wxString("*.ttf");
 #else
 	std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
-	exePath = exePath.substr(0, exePath.find_last_of(std::string()+GETSLASH()));
+	exePath = exePath.substr(0, exePath.find_last_of(std::string()+(char)GETSLASH()));
 	wxString loc = wxString(exePath) + GETSLASH() + wxString("Fonts") +
 		GETSLASH() + wxString("*.ttf");
 #endif
@@ -1661,7 +1661,7 @@ void SettingDlg::OnFontChange(wxCommandEvent &event)
 			GETSLASHS() + str.ToStdString() + ".ttf";
 #else
 		std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
-		exePath = exePath.substr(0, exePath.find_last_of(std::string()+GETSLASH()));
+		exePath = exePath.substr(0, exePath.find_last_of(std::string()+(char)GETSLASH()));
 		std::string loc = exePath + GETSLASHS() + "Fonts" +
 			GETSLASHS() + str.ToStdString() + ".ttf";
 #endif

@@ -37,9 +37,60 @@ VVDViewer is open source software licensed under the [BSD 3-Clause License](LICE
 
 ## Building VVDViewer
 
+### Automated build (recommended)
+
+VVDViewer ships with a one-command auto-build that **downloads and builds every
+third-party dependency from source** (via [vcpkg](https://github.com/microsoft/vcpkg))
+and then builds the application with CMake. All dependencies are linked
+**statically except wxWidgets**, which is built as a shared library (DLL/dylib/so).
+
+The only dependency you must install yourself is the **Vulkan SDK**
+(https://vulkan.lunarg.com/), so that the `VULKAN_SDK` environment variable is set.
+
+Prerequisites:
+ * Vulkan SDK (sets `VULKAN_SDK`)
+ * CMake 3.21+ and Git
+ * Windows: Visual Studio 2019/2022/2026 with the **"Desktop development with C++"** workload — this
+   must include a **Windows 10/11 SDK** (it provides `rc.exe`/`mt.exe`, required to link native code).
+   `build.ps1` auto-selects the newest Visual Studio installed (*including prereleases such as VS 2026*)
+   and stops early with instructions if the Windows SDK is missing.
+ * macOS: Xcode + command line tools
+ * Linux: a C++ toolchain plus the system display dev packages (the script lists them), e.g.
+   `sudo apt install build-essential pkg-config libgtk-3-dev libx11-dev libxcb1-dev libwayland-dev wayland-protocols libva-dev`
+
+Then, from the repository root:
+
+```powershell
+# Windows (PowerShell)
+.\build.ps1                 # Release build
+.\build.ps1 -Config Debug -Clean
+```
+
+```bash
+# macOS / Linux
+bash build.sh               # Release build
+bash build.sh --debug --clean
+```
+
+On the **first run** this downloads and compiles all dependencies, which typically takes
+45–90 minutes; subsequent builds reuse the vcpkg binary cache and are incremental. vcpkg is
+cloned into `./vcpkg` automatically (or set `VCPKG_ROOT` to reuse an existing checkout).
+
+The finished application lands in `build/bin/<Config>/` (`VVDViewer.exe` on Windows, a
+`VVDViewer.app` bundle on macOS). On Windows the wxWidgets DLLs are deployed next to the
+executable automatically; every other dependency is linked statically into `VVDMainFrame`.
+
+Notes:
+ * The **Nikon ND2** reader depends on a proprietary, closed-source SDK and is therefore
+   **disabled by default**. Pass `-EnableND2` (PowerShell) / `--enable-nd2` (shell) and
+   provide the SDK via `-DND2_INCLUDE_DIR` / `-DND2_LIBRARY_DIR` to enable it.
+ * The Zeiss **CZI** reader (libCZI) is built automatically by vcpkg and is enabled.
+
+The manual, dependency-by-dependency instructions below remain available for advanced setups.
+
 ### Dependencies
  * Git (https://git-scm.com/)
- * CMake 2.6+ (http://www.cmake.org/)
+ * CMake 3.21+ (http://www.cmake.org/)
  * wxWidgets (https://github.com/wxWidgets/wxWidgets)
  * Windows 7+ : Visual Studio 11.0 2012+
  * OSX 10.9+  : Latest Xcode and command line tools, homebrew

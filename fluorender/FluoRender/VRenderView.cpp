@@ -965,7 +965,7 @@ void VRenderVulkanView::InitVulkan()
 			GETSLASH() + wxString("FreeSans.ttf");
 #else
 		std::string exePath = wxStandardPaths::Get().GetExecutablePath().ToStdString();
-		exePath = exePath.substr(0, exePath.find_last_of(std::string() + GETSLASH()));
+		exePath = exePath.substr(0, exePath.find_last_of(std::string() + (char)GETSLASH()));
 		if (font_file != "")
 			font_file = wxString(exePath) + GETSLASH() + wxString("Fonts") +
 			GETSLASH() + font_file;

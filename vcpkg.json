@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "vvdviewer",
+  "version-string": "2.19.0",
+  "description": "VVDViewer dependencies, auto-built by vcpkg. All static except wxWidgets (dynamic). Vulkan SDK is provided externally and is NOT managed here.",
+  "dependencies": [
+    "boost-system",
+    "boost-chrono",
+    "boost-filesystem",
+    "boost-graph",
+    "boost-property-tree",
+    "boost-signals2",
+    "boost-smart-ptr",
+    "boost-unordered",
+    "boost-optional",
+    "boost-lexical-cast",
+    "boost-foreach",
+    "zlib",
+    "libjpeg-turbo",
+    "tiff",
+    "libpng",
+    "openssl",
+    {
+      "name": "curl",
+      "features": [ "ssl" ]
+    },
+    "freetype",
+    "bzip2",
+    "lz4",
+    "zstd",
+    "blosc2",
+    {
+      "name": "hdf5",
+      "features": [ "cpp", "hl" ]
+    },
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [ "avcodec", "avformat", "avdevice", "avfilter", "swscale", "swresample", "x264", "x265" ]
+    },
+    "wxwidgets",
+    "libczi"
+  ]
+}

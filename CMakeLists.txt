@@ -28,13 +28,30 @@
 
 #This is an CMake configuration file for VVDViewer
 
-cmake_minimum_required ( VERSION 2.8.8 )
+cmake_minimum_required ( VERSION 3.21 )
 
 #for MSVC builds
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	if(MSVC)
 		SET(MSVC_INCREMENTAL_DEFAULT OFF)
 	endif()
+endif()
+
+# ---- vcpkg integration (must come before project()) ----
+# The build.ps1 / build.sh orchestrators normally pass -DCMAKE_TOOLCHAIN_FILE
+# and -DVCPKG_TARGET_TRIPLET explicitly. As a convenience, auto-pick the vcpkg
+# toolchain when VCPKG_ROOT is exported and no toolchain was supplied.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      CACHE STRING "Vcpkg toolchain file")
+endif()
+# Make the custom overlay triplets (static libs + dynamic wxWidgets) visible.
+if(NOT DEFINED VCPKG_OVERLAY_TRIPLETS)
+  set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets")
+endif()
+# On Windows, auto-copy dependent runtime DLLs (e.g. wxWidgets) next to targets.
+if(CMAKE_HOST_WIN32)
+  set(VCPKG_APPLOCAL_DEPS ON)
 endif()
 
 project ( VVDViewer )
@@ -73,6 +90,25 @@ add_definitions(-DVERSION_COPYRIGHT="November 2015")   # Up to here!
 #static compile
 add_definitions(-DSTATIC_COMPILE)
 
+# libCZI is linked statically (libCZIStatic); tell its headers not to use dllimport.
+add_definitions(-D_LIBCZISTATICLIB)
+
+# Windows/MSVC global compile settings. Defined here (before any add_library) so
+# every object library and target picks them up.
+if(MSVC)
+  # Stop <windows.h> from including the legacy winsock.h, which collides with the
+  # winsock2.h that curl/boost/wxWidgets include ("sockaddr"/"fd_set" redefinition).
+  # NOTE: do NOT use _WINSOCKAPI_ for this - curl.h only pulls in winsock2.h when
+  # _WINSOCKAPI_ is undefined, so defining it breaks curl. Files that use shell
+  # APIs excluded by this macro (e.g. ShellExecute) include <shellapi.h> directly.
+  add_definitions(-DWIN32_LEAN_AND_MEAN)
+  # Let string literals bind to char* (legacy code) under /std:c++latest's /permissive-.
+  add_definitions("/Zc:strictStrings-")
+  # Disable std::byte so unqualified 'byte' (with "using namespace std") is not
+  # ambiguous with the Windows SDK's ::byte (rpcndr.h / wtypes.h).
+  add_definitions(-D_HAS_STD_BYTE=0)
+endif()
+
 set(CMAKE_SHARED_LINKER_FLAGS "-Wl,-Bsymbolic")
 
 #teem required definitions
@@ -94,21 +130,22 @@ if(${CMAKE_BUILD_TYPE} MATCHES "Release")
 elseif(${CMAKE_BUILD_TYPE} MATCHES "Debug")
 	set(wxWidgets_CONFIGURATION mswud)
 endif()
+# wxWidgets is the ONLY third-party library linked dynamically (DLL/dylib/so).
+# Must be set BEFORE find_package(wxWidgets).
+set(wxWidgets_USE_STATIC OFF)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 set(wxWidgets_EXCLUDE_COMMON_LIBRARIES TRUE)
-find_package(wxWidgets COMPONENTS core base aui html xml net adv stc scintilla png tiff regex expat zlib REQUIRED)
+find_package(wxWidgets COMPONENTS core base aui html xml net adv stc REQUIRED)
 else()
 find_package(wxWidgets COMPONENTS core base aui html xml net adv stc REQUIRED)
 endif()
 
 include(${wxWidgets_USE_FILE})
-set(wxWidgets_USE_STATIC ON)
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-   include_directories(${wxWidgets_ROOT_DIR}/src/tiff/libtiff)
-else()
-   find_package(TIFF REQUIRED)
-   include_directories(${TIFF_INCLUDE_DIR})
-endif()
+
+# libtiff is provided by vcpkg on all platforms (previously wxWidgets' bundled
+# tiff headers on Windows).
+find_package(TIFF REQUIRED)
+include_directories(${TIFF_INCLUDE_DIRS})
 
 #liblzma (required by libtiff's LZMA compression support on macOS)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -177,26 +214,12 @@ file(GLOB pole_srcs fluorender/pole/pole.cpp)
 file(GLOB pole_hdrs fluorender/pole/pole.h)
 add_library(POLE_OBJ OBJECT ${pole_srcs} ${pole_hdrs})
 
-#ffmpeg
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Win64/include)
-  file(GLOB ffmpeg_LIBS_D ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Win64/lib/Debug/*.lib)
-  file(GLOB ffmpeg_LIBS_R ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Win64/lib/Release/*.lib)
-  set(ffmpeg_LIBRARIES)
-  foreach (f ${ffmpeg_LIBS_D})
-    set(ffmpeg_LIBRARIES ${ffmpeg_LIBRARIES} debug ${f})
-  endforeach()
-  foreach (f ${ffmpeg_LIBS_R})
-    set(ffmpeg_LIBRARIES ${ffmpeg_LIBRARIES} optimized ${f})
-  endforeach()
-  add_definitions(-D__STDC_CONSTANT_MACROS)
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/OSX/include)
-  file(GLOB ffmpeg_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/OSX/lib/*.a)
-else()
-  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Linux/include)
-  file(GLOB ffmpeg_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/ffmpeg/Linux/lib/*.a)
-endif()
+#ffmpeg (provided by vcpkg, built from source, static)
+find_package(FFMPEG REQUIRED)
+include_directories(${FFMPEG_INCLUDE_DIRS})
+link_directories(${FFMPEG_LIBRARY_DIRS})
+set(ffmpeg_LIBRARIES ${FFMPEG_LIBRARIES})
+add_definitions(-D__STDC_CONSTANT_MACROS)
 
 #curl
 add_definitions(-DCURL_STATICLIB)
@@ -282,31 +305,16 @@ add_library(PLUGINS_OBJ OBJECT ${PLUGIN_DIR}/stdwx.h
 							   ${PLUGIN_DIR}/PluginControllerBase.cpp
 							   ${PLUGIN_DIR}/PluginControllerBaseSettings.cpp)
 
-#hdf5
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/hdf5/win/include)
-  file(GLOB hdf5_LIBS_DR ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/win/lib/*.lib)
-  set(HDF5_LIBRARIES)
-  foreach(f ${hdf5_LIBS_DR})
-    if(f MATCHES "_D.lib$")
-      set(HDF5_LIBRARIES ${HDF5_LIBRARIES} debug ${f})
-	elseif(f MATCHES ".lib$")
-	  set(HDF5_LIBRARIES ${HDF5_LIBRARIES} optimized ${f})
-	endif()
-  endforeach()
-elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-  include_directories(${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/include)
-  file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
-else()
-  find_package(HDF5 REQUIRED)
-  include_directories(${HDF5_INCLUDE_DIRS})
-  #file(GLOB HDF5_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/hdf5/mac/lib/*.a)
-endif()
+#hdf5 (provided by vcpkg, built from source, static)
+set(HDF5_USE_STATIC_LIBRARIES ON)
+find_package(HDF5 REQUIRED COMPONENTS C CXX HL)
+include_directories(${HDF5_INCLUDE_DIRS})
+set(HDF5_LIBRARIES ${HDF5_CXX_LIBRARIES} ${HDF5_HL_LIBRARIES} ${HDF5_LIBRARIES})
 
 #libCZI
-find_path(CZI_INCLUDE_DIR NAMES libCZI.h PATHS ${CZI_INCLUDE_DIR} /usr/local/include/libCZI /usr/include/libCZI /opt/local/include/libCZI)
+find_path(CZI_INCLUDE_DIR NAMES libCZI.h PATH_SUFFIXES libCZI PATHS ${CZI_INCLUDE_DIR} /usr/local/include/libCZI /usr/include/libCZI /opt/local/include/libCZI)
 include_directories(${CZI_INCLUDE_DIR})
-set(CZI_NAMES ${CZI_NAMES} libCZIStatic liblibCZIStatic)
+set(CZI_NAMES ${CZI_NAMES} libCZIStatic liblibCZIStatic libCZI CZI)
 find_library(LIBCZI_LIBRARY NAMES ${CZI_NAMES} HINTS ${CZI_LIBRARY_DIR})
 find_library(JXRDECODE_LIBRARY NAMES libJxrDecodeStatic HINTS ${CZI_LIBRARY_DIR})
 set(CZI_LIBRARIES ${LIBCZI_LIBRARY})
@@ -317,8 +325,10 @@ mark_as_advanced(CZI_LIBRARY)
 message(CZI_INCLUDE_DIR="${CZI_INCLUDE_DIR}")
 message(CZI_LIBRARIES="${CZI_LIBRARIES}")
 
-#nd2 (not available on macOS)
-if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+#nd2 (Nikon, closed-source SDK; disabled by default so the auto-build needs no proprietary SDK)
+option(ENABLE_ND2 "Enable the Nikon ND2 reader (requires the proprietary Nd2ReadSdk)" OFF)
+if(ENABLE_ND2 AND NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+add_definitions(-D_ENABLE_ND2)
 find_path(ND2_INCLUDE_DIR NAMES Nd2ReadSdk.h PATHS ${ND2_INCLUDE_DIR} /usr/local/nd2readsdk/include /usr/nd2readsdk/include /opt/nd2readsdk/include /opt/local/nd2readsdk/include)
 include_directories(${ND2_INCLUDE_DIR})
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -337,11 +347,9 @@ message(ND2_INCLUDE_DIR="${ND2_INCLUDE_DIR}")
 message(ND2_LIBRARIES="${ND2_LIBRARIES}")
 endif()
 
-#png
-if( NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows" )
-	find_package(PNG REQUIRED)
-	include_directories(${PNG_INCLUDE_DIR})
-endif()
+#png (provided by vcpkg, built from source, static)
+find_package(PNG REQUIRED)
+include_directories(${PNG_INCLUDE_DIRS})
 
 #bzip2
 find_package(BZip2 REQUIRED)
@@ -358,12 +366,14 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(
 
 mark_as_advanced(LZ4_INCLUDE_DIR LZ4_LIBRARY)
 include_directories(${LZ4_INCLUDE_DIR})
+# find_library sets LZ4_LIBRARY (singular); the link step uses LZ4_LIBRARIES.
+set(LZ4_LIBRARIES ${LZ4_LIBRARY})
 
 #blosc2
 find_path(BLOSC_INCLUDE_DIR blosc2.h)
 include_directories(${BLOSC_INCLUDE_DIR})
 	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	set(BLOSC_NAMES ${BLOSC_NAMES} libblosc2.lib)
+	set(BLOSC_NAMES ${BLOSC_NAMES} blosc2 libblosc2.lib blosc2.lib)
 else()
 	set(BLOSC_NAMES ${BLOSC_NAMES} libblosc2.a)
 endif()
@@ -394,15 +404,15 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(
 mark_as_advanced(ZSTD_INCLUDE_DIR ZSTD_LIBRARY)
 include_directories(${ZSTD_INCLUDE_DIR})
 endif()
+# find_library sets ZSTD_LIBRARY (singular); the link step uses ZSTD_LIBRARIES.
+set(ZSTD_LIBRARIES ${ZSTD_LIBRARY})
 
-#freetype
-include_directories(${VVDViewer_SOURCE_DIR}/fluorender/freetype/include)
-if (WIN32)
-    file(GLOB FREETYPE_LIBRARIES ${VVDViewer_SOURCE_DIR}/fluorender/freetype/lib/*.lib)
-else()
-    find_package(Freetype REQUIRED)
-    include_directories(${FREETYPE_INCLUDE_DIRS})
-endif()
+# zfp: floating-point codec pulled in by blosc2 (provides zfp_* and stream_* symbols).
+find_library(ZFP_LIBRARY NAMES zfp)
+
+#freetype (provided by vcpkg, built from source, static)
+find_package(Freetype REQUIRED)
+include_directories(${FREETYPE_INCLUDE_DIRS})
 
 #Vulkan
 file(GLOB vsrc ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Vulkan/*.cpp)
@@ -420,8 +430,19 @@ include_directories(${Vulkan_INCLUDE_DIR})
 include_directories(${Vulkan_INCLUDE_DIR}/glslang)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	add_definitions(-DVK_USE_PLATFORM_WIN32_KHR)
-    file(GLOB SPIRV_LIBRARIES_R "$ENV{VULKAN_SDK}/glslang/lib/*.lib")
-	file(GLOB SPIRV_LIBRARIES_D "$ENV{VULKAN_SDK}/glslang/lib/Debug/*.lib")
+    # glslang/SPIRV static libs. Newer Vulkan SDKs ship them in Lib/ (release
+    # name.lib, debug named.lib) rather than glslang/lib/{,Debug}.
+    set(SPIRV_LIBRARIES_R)
+    set(SPIRV_LIBRARIES_D)
+    foreach(_l glslang MachineIndependent GenericCodeGen OSDependent glslang-default-resource-limits SPIRV SPIRV-Tools-opt SPIRV-Tools)
+        if(EXISTS "$ENV{VULKAN_SDK}/Lib/${_l}.lib")
+            list(APPEND SPIRV_LIBRARIES_R "$ENV{VULKAN_SDK}/Lib/${_l}.lib")
+        endif()
+        if(EXISTS "$ENV{VULKAN_SDK}/Lib/${_l}d.lib")
+            list(APPEND SPIRV_LIBRARIES_D "$ENV{VULKAN_SDK}/Lib/${_l}d.lib")
+        endif()
+    endforeach()
+	# (SPIRV_LIBRARIES_R / SPIRV_LIBRARIES_D populated above)
 	foreach(f ${SPIRV_LIBRARIES_R})
 		if( NOT f MATCHES "SPIRV-Tools-shared.lib$" )
 			set(SPIRV_LIBRARIES ${SPIRV_LIBRARIES} optimized ${f})
@@ -632,9 +653,9 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		  SET(CMAKE_STATIC_LINKER_FLAGS_RELEASE "${CMAKE_STATIC_LINKER_FLAGS_RELEASE} /LTCG")
 		  SET(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG /FORCE:MULTIPLE")
 		  SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -MDd")
-		  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -MDd -std:c++latest")
+		  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -MDd -std:c++latest /permissive")
 		  SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -MD /O2 /Ob2 /Oi /Ot /Oy /GT /GL /Qpar")
-		  SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -MD /O2 /Ob2 /Oi /Ot /Oy /GT /GL /Qpar -std:c++latest")
+		  SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -MD /O2 /Ob2 /Oi /Ot /Oy /GT /GL /Qpar -std:c++latest /permissive")
 	  endif()
       add_executable(VVDViewer WIN32
           			 ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
@@ -702,9 +723,10 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	   ${CURL_LIBRARIES}
 	   ${JPEG_LIBRARIES}
 	   ${ZLIB_LIBRARIES}
+	   ${PNG_LIBRARIES}
 	   ${TIFF_LIBRARIES}
 	   ${OPENSSL_LIBRARIES} ws2_32.lib Wldap32.lib
-	   ${ffmpeg_LIBRARIES} Secur32.lib  Normaliz.lib crypt32.lib Bcrypt.lib
+	   ${ffmpeg_LIBRARIES} Secur32.lib  Normaliz.lib crypt32.lib Bcrypt.lib windowscodecs.lib ${ZFP_LIBRARY}
 	   ${Boost_LIBRARIES}
 	   ${FREETYPE_LIBRARIES}
 	   ${wxWidgets_LIBRARIES}
@@ -985,11 +1007,11 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	# Shell vars use \$ to survive CMake string substitution.
 	file(WRITE "${CMAKE_BINARY_DIR}/fix_bundle.sh"
 		"#!/bin/sh\nset -e\n"
-		"FRAMEWORKS_DIR=\"\$1\"\nRESOURCES_DIR=\"\$2\"\nEXECUTABLE=\"\$3\"\nDYLIB_SRC=\"\$4\"\nLZMA_LIB=\"\$5\"\nVULKAN_LIB=\"\$6\"\n"
+		"FRAMEWORKS_DIR=\"\$1\"\nRESOURCES_DIR=\"\$2\"\nEXECUTABLE=\"\$3\"\nDYLIB_SRC=\"\$4\"\nLZMA_LIB=\"\$5\"\nVULKAN_LIB=\"\$6\"\nWX_LIB_DIR_ARG=\"\$7\"\n"
 		"PLUGINS_DIR=\"\$(dirname \"\${FRAMEWORKS_DIR}\")/PlugIns/gui\"\n"
 		"FW_PREFIX=\"@executable_path/../Frameworks\"\n"
 		"PL_PREFIX=\"@executable_path/../PlugIns/gui\"\n"
-		"WX_LIB_DIR=\"/usr/local/lib\"\n\n"
+		"WX_LIB_DIR=\"\${WX_LIB_DIR_ARG:-/usr/local/lib}\"\n\n"
 		"# Discover the wxWidgets dylibs and their build prefix from the\n"
 		"# just-built binary, so any wxWidgets version is handled automatically.\n"
 		"WX_REFS=\$(otool -L \"\${DYLIB_SRC}/libVVDMainFrame.dylib\" | awk '/\\/libwx_/{print \$1}')\n"
@@ -1100,13 +1122,23 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			"${CMAKE_BINARY_DIR}/$<CONFIG>"
 			"${LZMA_LIBRARY}"
 			"${Vulkan_LIBRARY}"
+			"${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
 		COMMENT "Bundling dylibs and fixing paths in VVDViewer.app")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-#TODO
+	# Deploy vcpkg runtime DLLs (wxWidgets) next to VVDViewer.exe.
+	# VCPKG_APPLOCAL_DEPS=ON already auto-copies dependent DLLs during the build;
+	# this is an explicit fallback that copies the whole vcpkg bin directory.
+	if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+		add_custom_command(TARGET VVDViewer POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_directory
+			"$<IF:$<CONFIG:Debug>,${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin,${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin>"
+			"$<TARGET_FILE_DIR:VVDViewer>"
+			COMMENT "Deploying vcpkg runtime DLLs (wxWidgets) next to VVDViewer.exe")
+	endif()
 else()
 	foreach (f ${vvd_dlls})
 		add_custom_command(TARGET VVDViewer POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy  
+			COMMAND ${CMAKE_COMMAND} -E copy
 			"${CMAKE_BINARY_DIR}/${f}"
 			"$<TARGET_FILE_DIR:VVDViewer>/lib")
 	endforeach()

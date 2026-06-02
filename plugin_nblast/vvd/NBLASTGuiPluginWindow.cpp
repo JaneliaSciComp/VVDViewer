@@ -1050,7 +1050,7 @@ void NBLASTListCtrl::LoadResults(wxString csvfilepath)
 			wxString fimgpath;
 			if (dir1.GetFirst(&fimgpath, "*.png"))
 			{
-				wxBitmap img(_(thumbdir+wxFILE_SEP_PATH+fimgpath), wxBITMAP_TYPE_PNG);
+				wxBitmap img(thumbdir+wxFILE_SEP_PATH+fimgpath, wxBITMAP_TYPE_PNG);
 				if (img.IsOk())
 				{
 					w = img.GetWidth();
@@ -1075,7 +1075,7 @@ void NBLASTListCtrl::LoadResults(wxString csvfilepath)
 				wxString fimgpath;
 				if (dir2.GetFirst(&fimgpath, "*.png"))
 				{
-					wxBitmap img(_(prevdir+wxFILE_SEP_PATH+fimgpath), wxBITMAP_TYPE_PNG);
+					wxBitmap img(prevdir+wxFILE_SEP_PATH+fimgpath, wxBITMAP_TYPE_PNG);
 					if (img.IsOk())
 					{
 						w = img.GetWidth();

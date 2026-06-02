@@ -27,7 +27,7 @@ DEALINGS IN THE SOFTWARE.
 */
 #include "nd2_reader.h"
 
-#ifndef _DARWIN
+#if defined(_ENABLE_ND2) && !defined(_DARWIN)
 
 #include <json.hpp>
 #include "../compatibility.h"

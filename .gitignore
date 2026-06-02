@@ -167,3 +167,11 @@ resource.h
 *.git
 *.zip
 *.gz
+
+# --- VVDViewer auto-build (vcpkg) ---
+/build/
+/vcpkg/
+vcpkg_installed/
+# keep the custom vcpkg triplets despite the blanket *.cmake rule above
+!triplets/
+!triplets/*.cmake

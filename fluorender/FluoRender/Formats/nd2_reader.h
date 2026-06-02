@@ -28,7 +28,7 @@ DEALINGS IN THE SOFTWARE.
 #ifndef _ND2_READER_H_
 #define _ND2_READER_H_
 
-#ifndef _DARWIN
+#if defined(_ENABLE_ND2) && !defined(_DARWIN)
 
 #include <Nd2ReadSdk.h>
 #include <base_reader.h>

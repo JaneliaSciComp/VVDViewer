@@ -38,6 +38,7 @@
 #include "Public/ShaderLang.h"
 #include "SPIRV/GlslangToSpv.h"
 #else
+#include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
 #endif
 

@@ -119,7 +119,7 @@ void TIFReader::Preprocess()
 	if (!SEP_PATH_NAME(m_path_name, path, name))
 		return;//READER_OPEN_FAIL;
 	std::wstring suffix = GET_SUFFIX(m_path_name);
-	if (suffix == ".zip")
+	if (suffix == L".zip")
 		m_decomp_path = ZipDecompressionTemp(m_path_name);
 
 	//determine if it is an ImageJ hyperstack
@@ -405,7 +405,7 @@ void TIFReader::Preprocess()
 			m_4d_seq[m_cur_time].slices.size()>0)
 		{
 			suffix = GET_SUFFIX(m_4d_seq[m_cur_time].slices[0].slice);
-			if (m_4d_seq[m_cur_time].slices[0].decomp_slice.empty() && suffix == ".zip")
+			if (m_4d_seq[m_cur_time].slices[0].decomp_slice.empty() && suffix == L".zip")
 				m_4d_seq[m_cur_time].slices[0].decomp_slice = ZipDecompressionTemp(m_4d_seq[m_cur_time].slices[0].slice);
 			wstring tiff_name = m_4d_seq[m_cur_time].slices[0].decomp_slice.empty() ? m_4d_seq[m_cur_time].slices[0].slice : m_4d_seq[m_cur_time].slices[0].decomp_slice;
 			if (tiff_name.size() > 0)
@@ -1755,7 +1755,7 @@ Nrrd* TIFReader::ReadTiff(std::vector<SliceInfo> &filelist,
 		filename = m_decomp_path.empty() ? m_path_name.c_str() : m_decomp_path.c_str();
 	else {
 		std::wstring suffix = GET_SUFFIX(filelist[0].slice);
-		if (filelist[0].decomp_slice.empty() && suffix == ".zip")
+		if (filelist[0].decomp_slice.empty() && suffix == L".zip")
 			filelist[0].decomp_slice = ZipDecompressionTemp(filelist[0].slice);
 		filename = filelist[0].decomp_slice.empty() ? filelist[0].slice : filelist[0].decomp_slice;
 	}

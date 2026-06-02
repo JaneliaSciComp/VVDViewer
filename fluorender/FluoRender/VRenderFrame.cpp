@@ -40,6 +40,9 @@ DEALINGS IN THE SOFTWARE.
 #include "Formats/msk_reader.h"
 #include "Converters/VolumeMeshConv.h"
 #include "compatibility.h"
+#ifdef _WIN32
+#include <shellapi.h>   // ShellExecute (excluded from <windows.h> by WIN32_LEAN_AND_MEAN)
+#endif
 #include <cstdio>
 #include <iostream>
 #include <sstream>

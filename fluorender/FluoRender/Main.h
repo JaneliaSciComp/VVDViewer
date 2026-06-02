@@ -27,6 +27,9 @@ DEALINGS IN THE SOFTWARE.
 */
 
 #include <wx/wx.h>
+#ifdef _WIN32
+#include <objbase.h>   // CoUninitialize (excluded from <windows.h> by WIN32_LEAN_AND_MEAN)
+#endif
 #include "InterprocessCommunication.h"
 
 #ifndef _MAIN_H_
