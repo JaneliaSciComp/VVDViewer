@@ -31,7 +31,8 @@
     "blosc2",
     {
       "name": "hdf5",
-      "features": [ "cpp", "hl" ]
+      "default-features": false,
+      "features": [ "cpp", "hl", "zlib" ]
     },
     {
       "name": "ffmpeg",

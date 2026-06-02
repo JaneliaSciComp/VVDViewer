@@ -61,6 +61,15 @@ IF((COMMAND cmake_policy) AND NOT (CMAKE_MAJOR_VERSION LESS 3))
     CMAKE_POLICY(SET CMP0043 NEW)
 ENDIF()
 
+# Project-wide C++ standard. Setting CMAKE_CXX_STANDARD here (before any
+# add_library/add_executable) ensures every target — including those compiled
+# under the Xcode generator — uses C++17. Appending -std=c++17 to
+# CMAKE_CXX_FLAGS later did not propagate to the VVDMainFrame target's Xcode
+# response file, which caused std::make_unique to be unavailable.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    # Mac OS X
    set(ARCHITECTURE 64)
@@ -421,15 +430,19 @@ file(GLOB vsrc ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Vulkan/*.cpp)
 file(GLOB vhdr ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Vulkan/*.h ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Vulkan/*.hpp)
 file(GLOB imgui_src ${VVDViewer_SOURCE_DIR}/external/imgui/*.cpp)
 file(GLOB imgui_hdr ${VVDViewer_SOURCE_DIR}/external/imgui/*.h )
+# Vulkan SDK headers must precede ${VVDViewer_SOURCE_DIR}/external — the latter
+# contains a stale, bundled vulkan/vulkan.h (VK_HEADER_VERSION 101) that would
+# otherwise shadow the real SDK and break newer extensions like
+# VK_KHR_portability_enumeration on macOS.
+find_package(Vulkan REQUIRED)
+include_directories(${Vulkan_INCLUDE_DIR})
+include_directories(${Vulkan_INCLUDE_DIR}/glslang)
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Vulkan)
 include_directories(${VVDViewer_SOURCE_DIR}/external)
 include_directories(${VVDViewer_SOURCE_DIR}/external/assimp)
 include_directories(${VVDViewer_SOURCE_DIR}/external/gli)
 #include_directories(${VVDViewer_SOURCE_DIR}/external/glm)
 include_directories(${VVDViewer_SOURCE_DIR}/external/imgui)
-find_package(Vulkan REQUIRED)
-include_directories(${Vulkan_INCLUDE_DIR})
-include_directories(${Vulkan_INCLUDE_DIR}/glslang)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	add_definitions(-DVK_USE_PLATFORM_WIN32_KHR)
     # glslang/SPIRV static libs. Newer Vulkan SDKs ship them in Lib/ (release
@@ -589,7 +602,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    add_definitions(-D_DARWIN)
    set(CFLAGS "-fPIC")
    set(CXXFLAGS "-fPIC ")
-   include(BundleUtilities)
    #icon file for Apple, bundle properties
    set(ICON_FILE_PATH "FluoRender_icon")
    SET( MACOSX_BUNDLE_ICON_FILE ${ICON_FILE_PATH} )
@@ -709,14 +721,10 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    set(CMAKE_EXE_LINKER_FLAGS "-L/usr/local/lib -L/usr/lib ${CMAKE_EXE_LINKER_FLAGS} -framework IOSurface -framework Metal -framework VideoToolbox -framework CoreMedia -framework Security -framework CoreFoundation -framework CoreVideo -framework VideoDecodeAcceleration -framework QuartzCore")
    set(CMAKE_SHARED_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWX_PRECOMP -std=c++17 -stdlib=libc++")
-   #make sure png is static linked
-   string(REGEX REPLACE "-lpng" "/usr/local/lib/libpng.a" 
-			wxWidgets_LIBRARIES ${wxWidgets_LIBRARIES})
-   string(REGEX REPLACE "-lpng" "/usr/local/lib/libpng.a" 
-			CMAKE_MAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
-   string(REGEX REPLACE "/usr/local/lib/libfreetype.dylib" "/usr/local/lib/libfreetype.a;/usr/local/lib/libpng.a" 
-     FREETYPE_LIBRARIES ${FREETYPE_LIBRARIES})
-   message(STATUS "${FREETYPE_LIBRARIES}")
+   # Homebrew-era libpng/freetype path swaps removed. They (a) no longer match
+   # vcpkg-installed library paths and (b) were corrupting FREETYPE_LIBRARIES
+   # because the unquoted ${FREETYPE_LIBRARIES} expansion concatenated the
+   # 'optimized;<rel>;debug;<dbg>' list into one mangled string and broke linking.
 endif()
 
 # Per-config static libs so a multi-config (VS) Debug build links the debug
@@ -803,6 +811,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   ${PNG_LIBRARIES}
 	   ${BLOSC_LIBRARIES}
 	   ${ZSTD_LIBRARIES}
+	   ${ZFP_LIBRARY}
        ${Vulkan_LIBRARY}
        ${SPIRV_LIBRARIES})
 	target_link_libraries(VVDViewer
@@ -1062,6 +1071,10 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"  WX_OLD_PREFIX=\"\${WX_LIB_DIR}\"\n"
 		"fi\n\n"
 		"mkdir -p \"\${FRAMEWORKS_DIR}\"\nmkdir -p \"\${PLUGINS_DIR}\"\nmkdir -p \"\${RESOURCES_DIR}/vulkan/icd.d\"\n\n"
+		"# Remove any non-Mach-O artifacts left in Frameworks/ from earlier failed runs.\n"
+		"# codesign treats every file in Frameworks/ as a subcomponent and rejects the\n"
+		"# whole bundle if it finds a static archive (.a) or other non-signable file.\n"
+		"find \"\${FRAMEWORKS_DIR}\" -maxdepth 1 -name '*.a' -delete 2>/dev/null || true\n\n"
 		"# Frameworks: VVDMainFrame + wxGuiPluginBase\n"
 		"FW_DYLIBS=\"libVVDMainFrame.dylib libwxGuiPluginBase.dylib\"\n"
 		"for dylib in \${FW_DYLIBS}; do\n"
@@ -1100,10 +1113,13 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"cp -f /usr/local/lib/libMoltenVK.dylib \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
 		"chmod u+w \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
 		"install_name_tool -id \"\${FW_PREFIX}/libMoltenVK.dylib\" \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n\n"
-		"# Bundle liblzma (required by libtiff)\n"
+		"# Bundle liblzma if it is a dynamic library. When vcpkg provides liblzma\n"
+		"# as a static archive (.a), its symbols are already inside libVVDMainFrame.dylib\n"
+		"# (via static libtiff), and install_name_tool on a static archive errors.\n"
 		"LZMA_DYLIB=\"\"\n"
 		"LZMA_OLD_PATH=\"\"\n"
-		"if [ -n \"\${LZMA_LIB}\" ] && [ -f \"\${LZMA_LIB}\" ]; then\n"
+		"case \"\${LZMA_LIB}\" in *.dylib|*.so) lzma_is_dynamic=1 ;; *) lzma_is_dynamic=0 ;; esac\n"
+		"if [ \"\${lzma_is_dynamic}\" = \"1\" ] && [ -n \"\${LZMA_LIB}\" ] && [ -f \"\${LZMA_LIB}\" ]; then\n"
 		"  LZMA_REAL=\$(readlink -f \"\${LZMA_LIB}\" 2>/dev/null || python3 -c \"import os,sys; print(os.path.realpath(sys.argv[1]))\" \"\${LZMA_LIB}\")\n"
 		"  LZMA_DYLIB=\$(basename \"\${LZMA_REAL}\")\n"
 		"  LZMA_OLD_PATH=\$(otool -D \"\${LZMA_REAL}\" 2>/dev/null | tail -1)\n"
@@ -1114,13 +1130,16 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"fix_refs() {\n  bin=\"\$1\"\n"
 		"  for dylib in \${FW_DYLIBS}; do\n"
 		"    install_name_tool -change \"\${DYLIB_SRC}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    install_name_tool -change \"@rpath/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
 		"  done\n"
 		"  for dylib in \${PLUGIN_DYLIBS}; do\n"
 		"    install_name_tool -change \"\${DYLIB_SRC}/\${dylib}\" \"\${PL_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    install_name_tool -change \"@rpath/\${dylib}\" \"\${PL_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
 		"  done\n"
 		"  for dylib in \${WX_DYLIBS}; do\n"
 		"    install_name_tool -change \"\${WX_OLD_PREFIX}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
 		"    install_name_tool -change \"\${WX_LIB_DIR}/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    install_name_tool -change \"@rpath/\${dylib}\" \"\${FW_PREFIX}/\${dylib}\" \"\${bin}\" 2>/dev/null || true\n"
 		"  done\n"
 		"  install_name_tool -change \"@rpath/libvulkan.1.dylib\" \"\${FW_PREFIX}/\${VULKAN_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"
 		"  install_name_tool -change \"@rpath/\${VULKAN_DYLIB}\" \"\${FW_PREFIX}/\${VULKAN_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"

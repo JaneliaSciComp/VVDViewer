@@ -1423,7 +1423,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 				wxString key(std::filesystem::relative(p, root));
 				list.Add(key);
 				cout << "zarr paths" << endl;
-				cout << p << endl;
+				cout << ws2s(p) << endl;
 			}
 			if (zpaths.size() >= 2)
 			{

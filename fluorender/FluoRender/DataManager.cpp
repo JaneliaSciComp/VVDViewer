@@ -7177,7 +7177,7 @@ wxArrayString RulerBalloon::GetAnnotations()
             while (getline(ls, elem, '\t'))
             {
                 if(i == 0) annotations.Add(wxString(elem) + wxT(": "));
-                else if (j < annotations.size()) annotations.Item(j) += wxT(" ") + elem;
+                else if (j < annotations.size()) annotations.Item(j) += wxT(" ") + wxString(elem);
                 j++;
             }
             i++;
@@ -10367,7 +10367,7 @@ wxThread::ExitCode VolumeDecompressorThread::Entry()
 			{
                 m_vl->ms_pThreadCS->Enter();
                 
-                cerr << "failed to load " << q.finfo->filename << endl;
+                cerr << "failed to load " << ws2s(q.finfo->filename) << endl;
                 
                 delete[] q.in_data;
                 shared_ptr<VL_Array> sp = make_shared<VL_Array>(result, bsize);
