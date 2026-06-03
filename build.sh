@@ -57,6 +57,26 @@ case "$OS" in
     ;;
   Linux)
     TRIPLET="x64-linux-vvd"
+    # WSL: the Windows PATH is auto-imported (appendWindowsPath), and CMake
+    # searches PATH-adjacent prefixes for packages. A Windows miniconda/MSYS/SDK
+    # on PATH then gets discovered by vcpkg port builds (e.g. wxwidgets picked up
+    # a Windows TIFF whose include dir shadowed the system X11 headers, breaking
+    # the build). Drop Windows drive mounts from PATH for a clean toolchain env.
+    case ":$PATH:" in
+      *:/mnt/[a-z]/*)
+        _clean=""
+        _oifs="$IFS"; IFS=':'
+        for _p in $PATH; do
+          case "$_p" in
+            /mnt/[a-z]/*|/mnt/[a-z]) ;;   # drop Windows drive mounts (/mnt/c/...)
+            *) _clean="${_clean:+$_clean:}$_p" ;;
+          esac
+        done
+        IFS="$_oifs"
+        export PATH="$_clean"
+        echo "Note: removed Windows (/mnt/*) entries from PATH (WSL) so CMake/vcpkg use the Linux toolchain only."
+        ;;
+    esac
     # System display libraries are NOT provided by vcpkg; verify they exist.
     MISSING=""
     if command -v pkg-config >/dev/null 2>&1; then
@@ -68,8 +88,22 @@ case "$OS" in
     fi
     if [ -n "$MISSING" ]; then
       echo "WARNING: missing system dev packages:$MISSING"
-      echo "  Debian/Ubuntu: sudo apt install build-essential pkg-config libgtk-3-dev libx11-dev libxcb1-dev libwayland-dev wayland-protocols libva-dev"
-      echo "  Fedora:        sudo dnf install gtk3-devel libX11-devel libxcb-devel wayland-devel wayland-protocols-devel libva-devel"
+      echo "  Debian/Ubuntu: sudo apt install build-essential pkg-config libgtk-3-dev libx11-dev libxcb1-dev libwayland-dev wayland-protocols libva-dev libvdpau-dev"
+      echo "  Fedora:        sudo dnf install gtk3-devel libX11-devel libxcb-devel wayland-devel wayland-protocols-devel libva-devel libvdpau-devel"
+    fi
+    # vcpkg compiles every dependency from source; these tools must be present or
+    # the build fails deep inside a port (e.g. nasm for x264/ffmpeg assembly,
+    # autotools for several ports). Warn early rather than 30+ min in.
+    TOOLS_MISSING=""
+    command -v cc  >/dev/null 2>&1 || command -v gcc   >/dev/null 2>&1 || command -v clang   >/dev/null 2>&1 || TOOLS_MISSING="$TOOLS_MISSING c-compiler"
+    command -v c++ >/dev/null 2>&1 || command -v g++   >/dev/null 2>&1 || command -v clang++ >/dev/null 2>&1 || TOOLS_MISSING="$TOOLS_MISSING c++-compiler"
+    for tool in make nasm autoconf automake libtool; do
+      command -v "$tool" >/dev/null 2>&1 || TOOLS_MISSING="$TOOLS_MISSING $tool"
+    done
+    if [ -n "$TOOLS_MISSING" ]; then
+      echo "WARNING: missing build tools needed by vcpkg to compile dependencies:$TOOLS_MISSING"
+      echo "  Debian/Ubuntu: sudo apt install build-essential nasm autoconf automake libtool autoconf-archive"
+      echo "  Fedora:        sudo dnf install gcc gcc-c++ make nasm autoconf automake libtool autoconf-archive"
     fi
     ;;
   *) fail "Unsupported OS: $OS" ;;

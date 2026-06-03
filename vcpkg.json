@@ -40,6 +40,11 @@
       "features": [ "avcodec", "avformat", "avdevice", "avfilter", "swscale", "swresample", "x264", "x265" ]
     },
     "wxwidgets",
-    "libczi"
+    "libczi",
+    {
+      "name": "gtk3",
+      "features": [ "wayland" ],
+      "platform": "linux"
+    }
   ]
 }

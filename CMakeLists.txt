@@ -471,10 +471,20 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	include_directories("$ENV{VULKAN_SDK}/glslang/include")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	add_definitions(-DVK_USE_PLATFORM_MACOS_MVK)
+    # glslang/SPIRV-Tools static archives live in $VULKAN_SDK/lib. Recent LunarG
+    # SDKs (>=1.4.x) moved the loader into $VULKAN_SDK/lib/VulkanLoader/lib, so
+    # dirname(Vulkan_LIBRARY) is no longer that directory — prefer $VULKAN_SDK/lib.
     get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
+    if(EXISTS "$ENV{VULKAN_SDK}/lib")
+        set(VULKAN_LIB_DIR "$ENV{VULKAN_SDK}/lib")
+    endif()
     file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
 else()
+    # See the Darwin note above: prefer $VULKAN_SDK/lib over dirname(Vulkan_LIBRARY).
     get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
+    if(EXISTS "$ENV{VULKAN_SDK}/lib")
+        set(VULKAN_LIB_DIR "$ENV{VULKAN_SDK}/lib")
+    endif()
     file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
 endif()
 add_definitions(-DGLM_FORCE_DEPTH_ZERO_TO_ONE)
@@ -818,81 +828,89 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})
 else()
+    # --- VA-API / VDPAU (optional) ------------------------------------------
+    # The vcpkg ffmpeg here is built WITHOUT vaapi/vdpau and nothing in the
+    # sources references them, so link these system libraries ONLY when present.
+    # A missing libva-dev / libvdpau-dev must not break the link.
+    set(VAVDPAU_LIBRARIES)
+    foreach(_valib va va-drm va-x11 vdpau)
+        find_library(VAVDPAU_${_valib}_LIB NAMES ${_valib})
+        if(VAVDPAU_${_valib}_LIB)
+            list(APPEND VAVDPAU_LIBRARIES ${VAVDPAU_${_valib}_LIB})
+        endif()
+    endforeach()
+
+    # --- X11/XCB for the Vulkan XCB surface ---------------------------------
+    # VRenderView.cpp includes <X11/Xlib-xcb.h> (libx11-xcb-dev) and calls xcb_*
+    # (libxcb). find_package(X11) locates these but does NOT add them to
+    # X11_LIBRARIES, so link them explicitly when present.
+    set(X11_XCB_LIBRARIES)
+    foreach(_xlib xcb X11-xcb)
+        find_library(X11XCB_${_xlib}_LIB NAMES ${_xlib})
+        if(X11XCB_${_xlib}_LIB)
+            list(APPEND X11_XCB_LIBRARIES ${X11XCB_${_xlib}_LIB})
+        endif()
+    endforeach()
+
+    # --- OpenMP runtime -----------------------------------------------------
+    # vcpkg's zfp (pulled in by blosc2) is built with OpenMP, so libVVDMainFrame
+    # has undefined GOMP_parallel/omp_* references. Link the OpenMP runtime
+    # (OpenMP_CXX_LIBRARIES = libgomp) to resolve them. We link the runtime
+    # library only, NOT the -fopenmp compile flag, so VVDViewer's own #pragma omp
+    # usage keeps its current (serial) behavior.
+    find_package(OpenMP)
+
+    # --- glslang / SPIRV-Tools ----------------------------------------------
+    # These static archives (from the Vulkan SDK) have circular inter-deps and
+    # the GLOB above lists them alphabetically, not in link order. Wrap them in
+    # a linker group so GNU ld resolves them regardless of order. The app uses
+    # glslang at runtime (FLIVR/ShaderProgram.cpp: GlslangToSpv, ...).
+    set(SPIRV_GROUP)
+    if(SPIRV_LIBRARIES)
+        set(SPIRV_GROUP -Wl,--start-group ${SPIRV_LIBRARIES} -Wl,--end-group)
+    endif()
+
+    # Every third-party library from vcpkg is a STATIC archive (.a), linked
+    # directly as found. wxWidgets (shared), the GTK3/X11 display libraries and
+    # the Vulkan loader stay dynamic. NOTE: do NOT rewrite the vcpkg .a paths to
+    # .so — those .so files do not exist in the static vcpkg tree and the rewrite
+    # would silently pull in mismatched system libraries. (That rewrite was a
+    # leftover from the old, pre-vcpkg system-library Linux build.)
     set(LINK_LIBRARIES_LINUX
        ${CURL_LIBRARIES}
-	   ${JPEG_LIBRARIES}
-	   ${ZLIB_LIBRARIES}
-	   ${TIFF_LIBRARIES}
-	   ${OPENSSL_LIBRARIES}
-	   ${SSL_DEP_LIBRARIES}
-	   ${ffmpeg_LIBRARIES}
-	   ${Boost_LIBRARIES}
-	   ${FREETYPE_LIBRARIES}
-	   ${wxWidgets_LIBRARIES}
-	   ${HDF5_LIBRARIES}
-	   ${CZI_LIBRARIES}
-	   ${ND2_LIBRARIES}
-	   ${BZIP2_LIBRARIES}
-	   ${LZ4_LIBRARIES}
-	   ${PNG_LIBRARIES}
-	   ${BLOSC_LIBRARIES}
-	   ${ZSTD_LIBRARIES}
+       ${JPEG_LIBRARIES}
+       ${ZLIB_LIBRARIES}
+       ${TIFF_LIBRARIES}
+       ${OPENSSL_LIBRARIES}
+       ${SSL_DEP_LIBRARIES}
+       ${ffmpeg_LIBRARIES}
+       ${Boost_LIBRARIES}
+       ${FREETYPE_LIBRARIES}
+       ${wxWidgets_LIBRARIES}
+       ${HDF5_LIBRARIES}
+       ${CZI_LIBRARIES}
+       ${ND2_LIBRARIES}
+       ${BZIP2_LIBRARIES}
+       ${LZ4_LIBRARIES}
+       ${PNG_LIBRARIES}
+       ${BLOSC_LIBRARIES}
+       ${ZSTD_LIBRARIES}
        ${Vulkan_LIBRARY}
-       ${SPIRV_LIBRARIES}
-	   ${GTK3_LIBRARIES}
-	   ${X11_LIBRARIES} vdpau va va-drm va-x11)
-	list(REMOVE_DUPLICATES LINK_LIBRARIES_LINUX)
-	set(LINK_LIBRARIES_LINUX_FINAL)
-	foreach(lib ${LINK_LIBRARIES_LINUX})
-		if( lib MATCHES "libmcheck.a$" OR 
-			lib MATCHES "libm-2.31.a$" OR 
-			lib MATCHES "libm-2.35.a$" OR 
-			lib MATCHES "dl$" OR 
-			lib MATCHES "libc_nonshared.a$")
-			message(lib="${lib}")
-		elseif( lib MATCHES "libpixman-1.a$" OR
-				lib MATCHES "libdl.so$" OR 
-				lib MATCHES "libselinux.a$" OR
-				lib MATCHES "libuuid.a$" OR
-				lib MATCHES "libX11.a$" OR 
-				lib MATCHES "libc.a$" OR
-				lib MATCHES "libm.a$" OR
-				lib MATCHES "libbz2.a$" OR
-				lib MATCHES "libmount.a$" OR
-				lib MATCHES "libmvec.a$" OR
-				lib MATCHES "libboost_chrono.a$" OR
-				lib MATCHES "libboost_filesystem.a$" OR
-				lib MATCHES "libfontconfig.a$" OR
-				lib MATCHES "libhdf5_cpp.a$" OR
-				lib MATCHES "libhdf5_serial.a$" OR
-				lib MATCHES "libhdf5_serial_cpp.a$" OR
-				lib MATCHES "libXrender.a$" OR
-				lib MATCHES "libXcomposite.a$" OR
-				lib MATCHES "libXcursor.a$" OR
-				lib MATCHES "libXdamage.a$" OR
-				lib MATCHES "libXfixes.a$" OR
-				lib MATCHES "libXext.a$" OR
-				lib MATCHES "libSM.a$" OR
-				lib MATCHES "libcairo.a$" OR
-				lib MATCHES "libresolv.a$" OR
-				lib MATCHES "libnuma.a$" OR
-				lib MATCHES "libpng.a$" OR
-				lib MATCHES "libpng16.a$" )
-			message(lib="${lib}")
-			string(REGEX REPLACE "a$" "so" lib ${lib})
-			message(lib="${lib}")
-			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
-		elseif( lib MATCHES "libx264.a$" )
-			set( lib "/usr/lib/x86_64-linux-gnu/libx264.so" )
-			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
-		else()
-			set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} ${lib})
-  		endif()
-	endforeach()
-	#set(LINK_LIBRARIES_LINUX_FINAL ${LINK_LIBRARIES_LINUX_FINAL} "/usr/lib/x86_64-linux-gnu/libva.so")
-	message(LINK_LIBRARIES_LINUX_FINAL="${LINK_LIBRARIES_LINUX_FINAL}")
+       ${GTK3_LIBRARIES}
+       ${X11_LIBRARIES}
+       ${X11_XCB_LIBRARIES}
+       ${VAVDPAU_LIBRARIES})
+    # zfp is pulled in by blosc2; link it after blosc2 when vcpkg provides it.
+    if(ZFP_LIBRARY)
+        list(APPEND LINK_LIBRARIES_LINUX ${ZFP_LIBRARY})
+    endif()
+    # libgomp etc. for the OpenMP symbols referenced by zfp (see above).
+    if(OpenMP_CXX_FOUND)
+        list(APPEND LINK_LIBRARIES_LINUX ${OpenMP_CXX_LIBRARIES})
+    endif()
+    message(LINK_LIBRARIES_LINUX="${LINK_LIBRARIES_LINUX}")
 
-	target_link_libraries(VVDMainFrame ${LINK_LIBRARIES_LINUX_FINAL})
+    target_link_libraries(VVDMainFrame ${LINK_LIBRARIES_LINUX} ${SPIRV_GROUP})
 	target_link_libraries(VVDViewer
 	   VVDMainFrame
 	   ${wxWidgets_LIBRARIES})
@@ -1195,11 +1213,18 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 			COMMENT "Deploying vcpkg runtime DLLs (wxWidgets) next to VVDViewer.exe")
 	endif()
 else()
+	# Deploy the VVD shared libraries next to the executable, in lib/ (the
+	# executable's rpath is $ORIGIN/lib). Create the directory FIRST: a single-
+	# source `cmake -E copy <file> <dest>` treats a non-existent <dest> as a
+	# FILENAME, so without this the loop overwrites one file named "lib" instead
+	# of populating a lib/ directory, and the app can't find libVVDMainFrame.so.
+	add_custom_command(TARGET VVDViewer POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:VVDViewer>/lib")
 	foreach (f ${vvd_dlls})
 		add_custom_command(TARGET VVDViewer POST_BUILD
 			COMMAND ${CMAKE_COMMAND} -E copy
 			"${CMAKE_BINARY_DIR}/${f}"
-			"$<TARGET_FILE_DIR:VVDViewer>/lib")
+			"$<TARGET_FILE_DIR:VVDViewer>/lib/")
 	endforeach()
 endif()
 
