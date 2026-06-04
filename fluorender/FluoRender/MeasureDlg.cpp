@@ -1294,17 +1294,23 @@ wxPanel(parent, id, pos, size, style, name),
 	sizer_2->Add(st2, 0, wxALIGN_CENTER);
 	sizer_2->Add(1, 10);
 	sizer_2->Add(m_density_txt, 0, wxALIGN_CENTER);
-    sizer_2->Add(30, 10);
-    sizer_2->Add(m_warp_btn, 0, wxALIGN_CENTER);
-    //m_warp_btn->Hide();
-    sizer_2->Add(5, 10);
-    sizer_2->Add(m_warp_type_combo, 0, wxALIGN_CENTER);
-    sizer_2->Add(5, 10);
-    sizer_2->Add(st3, 0, wxALIGN_CENTER);
-    sizer_2->Add(1, 10);
-    sizer_2->Add(m_warp_stiffness_sldr, 0, wxALIGN_CENTER);
-    sizer_2->Add(1, 10);
-    sizer_2->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
+
+	//warp / registration row (BigWarp-style transforms on its own line)
+	wxBoxSizer* sizer_3 = new wxBoxSizer(wxHORIZONTAL);
+	wxStaticText* st4 = new wxStaticText(this, 0, "Transform:",
+		wxDefaultPosition, wxSize(70, -1), wxALIGN_CENTER);
+	sizer_3->Add(10, 10);
+	sizer_3->Add(st4, 0, wxALIGN_CENTER);
+	sizer_3->Add(5, 10);
+	sizer_3->Add(m_warp_type_combo, 0, wxALIGN_CENTER);
+	sizer_3->Add(5, 10);
+	sizer_3->Add(m_warp_btn, 0, wxALIGN_CENTER);
+	sizer_3->Add(30, 10);
+	sizer_3->Add(st3, 0, wxALIGN_CENTER);
+	sizer_3->Add(1, 10);
+	sizer_3->Add(m_warp_stiffness_sldr, 0, wxALIGN_CENTER);
+	sizer_3->Add(1, 10);
+	sizer_3->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
 
 	//list
 	m_rulerlist = new RulerListCtrl(frame, this, wxID_ANY);
@@ -1317,6 +1323,8 @@ wxPanel(parent, id, pos, size, style, name),
 	sizerV->Add(sizer_1, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(sizer_2, 0, wxEXPAND);
+	sizerV->Add(10, 10);
+	sizerV->Add(sizer_3, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(m_rulerlist, 1, wxEXPAND);
 
