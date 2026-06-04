@@ -824,7 +824,8 @@ public:
     void ImportBigWarpCSV(wxString inputpath);
     void ExportBigWarpCSV(wxString outpath);
     void WarpCurrentVolume();
-	
+    void WarpCurrentVolumeInternal();
+
 	void ScatterRulers(long density);
 
 	void SetSyncClippingPlanes(bool val) { m_sync_clipping_planes = val; }
@@ -2431,6 +2432,11 @@ public:
     void WarpCurrentVolume()
     {
         if (m_glview) m_glview->WarpCurrentVolume();
+    }
+
+    void WarpCurrentVolumeInternal()
+    {
+        if (m_glview) m_glview->WarpCurrentVolumeInternal();
     }
 
 	void ScatterRulers(long density)

@@ -818,6 +818,9 @@ public:
 	//calculation
 	void Calculate(int type, VolumeData* vd_a, VolumeData* vd_b, VolumeData* vd_c = NULL);
 
+	//thin plate spline warp: resample vd_in (moving) into this volume (fixed)
+	void Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp = 1);
+
 	//set 2d mask for segmentation
 	void Set2dMask(std::shared_ptr<vks::VTexture>& mask);
 	//set 2d weight map for segmentation

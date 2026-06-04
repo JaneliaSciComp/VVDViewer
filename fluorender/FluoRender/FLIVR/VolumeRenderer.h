@@ -38,6 +38,7 @@
 #include "Texture.h"
 #include "TextureRenderer.h"
 #include "FLIVR/Quaternion.h"
+#include "FLIVR/ThinPlateSpline.h"
 
 namespace FLIVR
 {
@@ -403,6 +404,10 @@ public:
 		void calculate(int type, VolumeRenderer* vr_a, VolumeRenderer* vr_b, VolumeRenderer* vr_c = NULL,
 			Texture* ext_msk = NULL, Texture* ext_lbl = NULL);
 
+		//thin plate spline warp: resample vr_in (moving) into this volume (fixed)
+		//interp: 0=nearest, 1=linear
+		void warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp = 1);
+
 		//double calc_hist_3d(GLuint, GLuint, size_t, size_t, size_t);
 		////return
 		void return_component(int c);//base function
@@ -527,6 +532,15 @@ public:
 		static std::vector<VCalPipeline> m_cal_pipelines;
 		int m_prev_cal_pipeline;
 		VCalPipeline prepareCalPipeline(vks::VulkanDevice* device, int type, int out_bytes);
+
+		struct VWarpPipeline {
+			VkPipeline vkpipeline;
+			ShaderProgram* shader;
+			vks::VulkanDevice* device;
+		};
+		static std::vector<VWarpPipeline> m_warp_pipelines;
+		int m_prev_warp_pipeline;
+		VWarpPipeline prepareWarpPipeline(vks::VulkanDevice* device, int out_bytes);
 
 
 		static void saveScreenshot(const char* filename, const std::shared_ptr<vks::VTexture> tex);

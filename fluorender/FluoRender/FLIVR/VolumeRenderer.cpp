@@ -69,6 +69,8 @@ namespace FLIVR
 	
 	std::vector<VolumeRenderer::VCalPipeline> VolumeRenderer::m_cal_pipelines;
 
+	std::vector<VolumeRenderer::VWarpPipeline> VolumeRenderer::m_warp_pipelines;
+
 	std::vector<VolumeRenderer::VSlicePipeline> VolumeRenderer::m_vslice_pipelines;
 
 	//VolKernelFactory TextureRenderer::vol_kernel_factory_;
@@ -162,6 +164,7 @@ namespace FLIVR
 		m_prev_vray_pipeline = -1;
 		m_prev_seg_pipeline = -1;
 		m_prev_cal_pipeline = -1;
+		m_prev_warp_pipeline = -1;
 		m_prev_vslice_pipeline = -1;
 	}
 
@@ -252,6 +255,7 @@ namespace FLIVR
 		m_prev_vray_pipeline = copy.m_prev_vray_pipeline;
 		m_prev_seg_pipeline = copy.m_prev_seg_pipeline;
 		m_prev_cal_pipeline = copy.m_prev_cal_pipeline;
+		m_prev_warp_pipeline = copy.m_prev_warp_pipeline;
 		m_prev_vslice_pipeline = copy.m_prev_vslice_pipeline;
 	}
 
@@ -3585,7 +3589,7 @@ namespace FLIVR
 
 			params.clear = clear_framebuf;
 			params.clearColor = clearColor;
-			
+
 			if (!framebuf->renderPass)
 				framebuf->replaceRenderPass(params.pipeline.pass);
 
@@ -4613,6 +4617,329 @@ namespace FLIVR
 		{
 			m_vulkan->eraseBricksFromTexpools(bricks_c, 0);
 			vr_c->compression_ = compression_c;
+		}
+	}
+
+	VolumeRenderer::VWarpPipeline VolumeRenderer::prepareWarpPipeline(vks::VulkanDevice* device, int out_bytes)
+	{
+		VWarpPipeline ret_pipeline;
+
+		ShaderProgram* warp_shader = m_vulkan->warp_shader_factory_->shader(device->logicalDevice, out_bytes);
+
+		if (m_prev_warp_pipeline >= 0) {
+			if (m_warp_pipelines[m_prev_warp_pipeline].device == device &&
+				m_warp_pipelines[m_prev_warp_pipeline].shader == warp_shader)
+				return m_warp_pipelines[m_prev_warp_pipeline];
+		}
+		for (int i = 0; i < m_warp_pipelines.size(); i++) {
+			if (m_warp_pipelines[i].device == device &&
+				m_warp_pipelines[i].shader == warp_shader)
+			{
+				m_prev_warp_pipeline = i;
+				return m_warp_pipelines[i];
+			}
+		}
+
+		VkComputePipelineCreateInfo computePipelineCreateInfo =
+			vks::initializers::computePipelineCreateInfo(m_vulkan->warp_shader_factory_->pipeline_[device].pipelineLayout, 0);
+
+		computePipelineCreateInfo.stage = warp_shader->get_compute_shader();
+		VK_CHECK_RESULT(
+			vkCreateComputePipelines(
+				device->logicalDevice,
+				device->pipelineCache,
+				1,
+				&computePipelineCreateInfo,
+				nullptr,
+				&ret_pipeline.vkpipeline
+			)
+		);
+
+		ret_pipeline.device = device;
+		ret_pipeline.shader = warp_shader;
+
+		m_warp_pipelines.push_back(ret_pipeline);
+		m_prev_warp_pipeline = m_warp_pipelines.size() - 1;
+
+		return ret_pipeline;
+	}
+
+	//thin plate spline warp: resample vr_in (moving) into this volume (fixed space)
+	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp)
+	{
+		if (!vr_in || !tex_ || !vr_in->tex_ || !m_vulkan || !tps.valid())
+			return;
+
+		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
+		tex_->set_sort_bricks();
+		vector<TextureBrick*>* bricks = tex_->get_sorted_bricks(view_ray);
+		if (!bricks || bricks->size() == 0)
+			return;
+
+		bool compression_this = compression_;
+		if (compression_)
+		{
+			m_vulkan->eraseBricksFromTexpools(bricks, 0);
+			compression_ = false;
+		}
+
+		const int out_bytes = tex_->nb(0);
+		const int src_nb = vr_in->tex_->nb(0);
+		const VkFilter ifilter = (interp == 0) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+		const VkFormat tile_format =
+			(out_bytes == 2) ? VK_FORMAT_R16_UNORM :
+			(out_bytes == 4) ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R8_UNORM;
+
+		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
+		VWarpPipeline pipeline = prepareWarpPipeline(prim_dev, out_bytes);
+		VkPipelineLayout pipelineLayout = m_vulkan->warp_shader_factory_->pipeline_[prim_dev].pipelineLayout;
+
+		//source (moving) dimensions and pyramid level
+		const bool src_brxml = vr_in->tex_->isBrxml();
+		int svx, svy, svz, srclevel = 0;
+		if (src_brxml)
+		{
+			srclevel = vr_in->tex_->GetCopyableLevel();
+			size_t dw = 0, dh = 0, dd = 0;
+			vr_in->tex_->get_dimensions(dw, dh, dd, srclevel);
+			svx = (int)dw; svy = (int)dh; svz = (int)dd;
+		}
+		else
+		{
+			svx = vr_in->tex_->nx(); svy = vr_in->tex_->ny(); svz = vr_in->tex_->nz();
+		}
+		if (svx <= 0 || svy <= 0 || svz <= 0)
+			return;
+
+		//output (fixed) full-volume dimensions
+		const int ovx = tex_->nx();
+		const int ovy = tex_->ny();
+		const int ovz = tex_->nz();
+
+		const int max3d = (int)prim_dev->properties.limits.maxImageDimension3D;
+		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d);
+
+		//landmark storage buffer (src_i, W_i) in source-normalized coords
+		const int N = tps.num_landmarks();
+		std::vector<glm::vec4> packed;
+		packed.reserve((size_t)2 * N);
+		const std::vector<glm::dvec3>& srcL = tps.sources();
+		const std::vector<glm::dvec3>& wL = tps.weights();
+		for (int i = 0; i < N; ++i)
+		{
+			packed.push_back(glm::vec4((float)srcL[i].x, (float)srcL[i].y, (float)srcL[i].z, 0.0f));
+			packed.push_back(glm::vec4((float)wL[i].x, (float)wL[i].y, (float)wL[i].z, 0.0f));
+		}
+		vks::Buffer lm_buf;
+		prim_dev->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&lm_buf, packed.size() * sizeof(glm::vec4), packed.data());
+
+		//transform uniform buffer
+		VolWarpShaderFactory::WarpCompShaderUBO ubo = {};
+		{
+			glm::dmat3 A = tps.affine();
+			glm::dvec3 b = tps.translation();
+			glm::dmat3 Ai = tps.affineInv();
+			glm::dvec3 bi = -(Ai * b);
+			ubo.A = glm::mat4(1.0f);
+			ubo.A[0] = glm::vec4((float)A[0].x, (float)A[0].y, (float)A[0].z, 0.0f);
+			ubo.A[1] = glm::vec4((float)A[1].x, (float)A[1].y, (float)A[1].z, 0.0f);
+			ubo.A[2] = glm::vec4((float)A[2].x, (float)A[2].y, (float)A[2].z, 0.0f);
+			ubo.A[3] = glm::vec4((float)b.x, (float)b.y, (float)b.z, 1.0f);
+			ubo.Ainv = glm::mat4(1.0f);
+			ubo.Ainv[0] = glm::vec4((float)Ai[0].x, (float)Ai[0].y, (float)Ai[0].z, 0.0f);
+			ubo.Ainv[1] = glm::vec4((float)Ai[1].x, (float)Ai[1].y, (float)Ai[1].z, 0.0f);
+			ubo.Ainv[2] = glm::vec4((float)Ai[2].x, (float)Ai[2].y, (float)Ai[2].z, 0.0f);
+			ubo.Ainv[3] = glm::vec4((float)bi.x, (float)bi.y, (float)bi.z, 1.0f);
+			ubo.cfg = glm::ivec4(N, 20, 15, 0);
+			ubo.prm = glm::vec4(1e-6f, 0.5f, 1e-4f, 0.0f);
+		}
+		vks::Buffer ubo_buf;
+		prim_dev->createBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&ubo_buf, sizeof(ubo), &ubo);
+
+		//build an exactly-sized source tile texture for a voxel sub-region [st, st+whd)
+		auto buildTile = [&](size_t stx, size_t sty, size_t stz, size_t w, size_t h, size_t d)
+			-> std::shared_ptr<vks::VTexture>
+		{
+			std::shared_ptr<vks::VTexture> t =
+				prim_dev->GenTexture3D(tile_format, ifilter, (uint32_t)w, (uint32_t)h, (uint32_t)d);
+			if (!t)
+				return nullptr;
+			if (src_brxml)
+			{
+				Nrrd* sub = vr_in->tex_->getSubData(srclevel, 0, nullptr, stx, sty, stz, w, h, d, nullptr);
+				if (!sub)
+					return nullptr;
+				prim_dev->UploadTexture3D(t, sub->data, { 0, 0, 0 },
+					(uint32_t)(w * src_nb), (uint32_t)(w * h * src_nb), true, nullptr, true);
+				if (sub->data) delete[](unsigned char*)sub->data;
+				nrrdNix(sub);
+			}
+			else
+			{
+				Nrrd* full = vr_in->tex_->get_nrrd_raw(0);
+				if (!full || !full->data)
+					return nullptr;
+				//copy the sub-region directly from the full contiguous volume
+				VkOffset3D off = { (int32_t)stx, (int32_t)sty, (int32_t)stz };
+				prim_dev->UploadTexture3D(t, full->data, off,
+					(uint32_t)((size_t)svx * src_nb), (uint32_t)((size_t)svx * svy * src_nb), true, nullptr, true);
+			}
+			return t;
+		};
+
+		vkQueueWaitIdle(prim_dev->compute_queue);
+		VkCommandBuffer cmdbuf = prim_dev->createComputeCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+
+		//when the whole source fits in one texture, build it once and reuse
+		std::shared_ptr<vks::VTexture> wholeTex;
+		if (wholeFits)
+			wholeTex = buildTile(0, 0, 0, (size_t)svx, (size_t)svy, (size_t)svz);
+
+		for (unsigned int i = 0; i < bricks->size(); ++i)
+		{
+			TextureBrick* b = (*bricks)[i];
+			const int bmx = b->mx(), bmy = b->my(), bmz = b->mz();
+			if (bmx <= 0 || bmy <= 0 || bmz <= 0)
+				continue;
+
+			VolWarpShaderFactory::WarpCompShaderBrickConst pc = {};
+			pc.volDimInv = glm::vec4(1.0f / ovx, 1.0f / ovy, 1.0f / ovz, 0.0f);
+			pc.brickOrigin = glm::ivec4(b->ox(), b->oy(), b->oz(), 0);
+			pc.validDims = glm::ivec4(bmx, bmy, bmz, 0);
+
+			std::shared_ptr<vks::VTexture> srctex;
+			if (wholeFits)
+			{
+				srctex = wholeTex;
+				pc.tileOrigin = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+				pc.tileSizeInv = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+			}
+			else
+			{
+				//estimate the moving source AABB for this output brick (numeric inverse)
+				double mnx = 1e30, mny = 1e30, mnz = 1e30, mxx = -1e30, mxy = -1e30, mxz = -1e30;
+				const int SS = 3;
+				for (int kz = 0; kz <= SS; ++kz)
+				for (int ky = 0; ky <= SS; ++ky)
+				for (int kx = 0; kx <= SS; ++kx)
+				{
+					double fx = (b->ox() + (double)kx / SS * bmx) / ovx;
+					double fy = (b->oy() + (double)ky / SS * bmy) / ovy;
+					double fz = (b->oz() + (double)kz / SS * bmz) / ovz;
+					glm::dvec3 mm;
+					tps.evaluateInverse(glm::dvec3(fx, fy, fz), mm);
+					if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
+					if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
+					if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;
+				}
+				double mgx = 0.1 * (mxx - mnx) + 3.0 / svx;
+				double mgy = 0.1 * (mxy - mny) + 3.0 / svy;
+				double mgz = 0.1 * (mxz - mnz) + 3.0 / svz;
+				mnx -= mgx; mny -= mgy; mnz -= mgz;
+				mxx += mgx; mxy += mgy; mxz += mgz;
+				if (mnx < 0) mnx = 0; if (mny < 0) mny = 0; if (mnz < 0) mnz = 0;
+				if (mxx > 1) mxx = 1; if (mxy > 1) mxy = 1; if (mxz > 1) mxz = 1;
+
+				long stx = (long)std::floor(mnx * svx); if (stx < 0) stx = 0; if (stx > svx - 1) stx = svx - 1;
+				long sty = (long)std::floor(mny * svy); if (sty < 0) sty = 0; if (sty > svy - 1) sty = svy - 1;
+				long stz = (long)std::floor(mnz * svz); if (stz < 0) stz = 0; if (stz > svz - 1) stz = svz - 1;
+				long etx = (long)std::ceil(mxx * svx); if (etx <= stx) etx = stx + 1; if (etx > svx) etx = svx;
+				long ety = (long)std::ceil(mxy * svy); if (ety <= sty) ety = sty + 1; if (ety > svy) ety = svy;
+				long etz = (long)std::ceil(mxz * svz); if (etz <= stz) etz = stz + 1; if (etz > svz) etz = svz;
+				size_t w = (size_t)(etx - stx);
+				size_t h = (size_t)(ety - sty);
+				size_t d = (size_t)(etz - stz);
+
+				srctex = buildTile((size_t)stx, (size_t)sty, (size_t)stz, w, h, d);
+				pc.tileOrigin = glm::vec4((float)stx / svx, (float)sty / svy, (float)stz / svz, 0.0f);
+				pc.tileSizeInv = glm::vec4((float)svx / w, (float)svy / h, (float)svz / d, 0.0f);
+			}
+			if (!srctex)
+				continue;
+
+			b->prevent_tex_deletion(true);
+			std::shared_ptr<vks::VTexture> dsttex =
+				load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, false, 0, false);
+			b->prevent_tex_deletion(false);
+			if (!dsttex)
+				continue;
+
+			std::vector<VkWriteDescriptorSet> descriptorWrites;
+			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
+			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetSrc(VK_NULL_HANDLE, &srctex->descriptor));
+			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, &lm_buf.descriptor));
+			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetUBO(VK_NULL_HANDLE, &ubo_buf.descriptor));
+
+			VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+			VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
+
+			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
+
+			vks::tools::setImageLayout(
+				cmdbuf,
+				dsttex->image,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_GENERAL,
+				dsttex->subresourceRange);
+			dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+			prim_dev->vkCmdPushDescriptorSetKHR(
+				cmdbuf,
+				VK_PIPELINE_BIND_POINT_COMPUTE,
+				pipelineLayout,
+				0,
+				(uint32_t)descriptorWrites.size(),
+				descriptorWrites.data());
+
+			vkCmdPushConstants(
+				cmdbuf,
+				pipelineLayout,
+				VK_SHADER_STAGE_COMPUTE_BIT,
+				0,
+				sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst),
+				&pc);
+
+			uint32_t gx = bmx / 4 + ((bmx % 4) > 0 ? 1 : 0);
+			uint32_t gy = bmy / 4 + ((bmy % 4) > 0 ? 1 : 0);
+			uint32_t gz = bmz / 4 + ((bmz % 4) > 0 ? 1 : 0);
+			vkCmdDispatch(cmdbuf, gx, gy, gz);
+
+			vkEndCommandBuffer(cmdbuf);
+
+			VkSubmitInfo submitInfo = vks::initializers::submitInfo();
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &cmdbuf;
+
+			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
+			VkFence fence;
+			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
+			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
+
+			b->set_dirty(0, true);
+			b->set_modified(0, true);
+			//per-brick temp source texture (srctex) is released here (after the fence)
+		}
+
+		if (tex_->isBrxml())
+			tex_->SetModifiedAllLevels(true, 0);
+
+		vkFreeCommandBuffers(prim_dev->logicalDevice, prim_dev->compute_commandPool, 1, &cmdbuf);
+
+		lm_buf.destroy();
+		ubo_buf.destroy();
+
+		if (compression_this)
+		{
+			m_vulkan->eraseBricksFromTexpools(bricks, 0);
+			compression_ = compression_this;
 		}
 	}
 
