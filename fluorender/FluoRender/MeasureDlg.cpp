@@ -8,6 +8,7 @@
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
 #include <wx/statline.h>
+#include <wx/slider.h>
 #include <wx/tokenzr.h>
 #include "Formats/png_resource.h"
 #include "ruler.xpm"
@@ -1166,6 +1167,7 @@ BEGIN_EVENT_TABLE(MeasureDlg, wxPanel)
 	EVT_CHECKBOX(ID_UseTransferChk, MeasureDlg::OnUseTransferCheck)
 	EVT_CHECKBOX(ID_TransientChk, MeasureDlg::OnTransientCheck)
     EVT_BUTTON(ID_WarpBtn, MeasureDlg::OnWarp)
+	EVT_COMMAND_SCROLL(ID_WarpStiffnessSldr, MeasureDlg::OnWarpStiffness)
 	EVT_BUTTON(ID_ScatterBtn, MeasureDlg::OnScatterRulers)
 	END_EVENT_TABLE()
 
@@ -1264,6 +1266,13 @@ wxPanel(parent, id, pos, size, style, name),
 		wxDefaultPosition, wxSize(60, 20), 0, vald_int);
     m_warp_btn = new wxButton(this, ID_WarpBtn, "Apply Transform",
         wxDefaultPosition, wxSize(120, 20));
+	m_warp_lambda = 0.0;
+	wxStaticText* st3 = new wxStaticText(this, 0, "Stiffness:",
+		wxDefaultPosition, wxSize(60, -1), wxALIGN_CENTER);
+	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 100,
+		wxDefaultPosition, wxSize(100, 20));
+	m_warp_stiffness_text = new wxStaticText(this, 0, "0.00",
+		wxDefaultPosition, wxSize(40, -1), wxALIGN_CENTER);
 	sizer_2->Add(10, 10);
 	sizer_2->Add(m_transient_chk, 0, wxALIGN_CENTER);
 	sizer_2->Add(10, 10);
@@ -1277,6 +1286,12 @@ wxPanel(parent, id, pos, size, style, name),
     sizer_2->Add(30, 10);
     sizer_2->Add(m_warp_btn, 0, wxALIGN_CENTER);
     //m_warp_btn->Hide();
+    sizer_2->Add(5, 10);
+    sizer_2->Add(st3, 0, wxALIGN_CENTER);
+    sizer_2->Add(1, 10);
+    sizer_2->Add(m_warp_stiffness_sldr, 0, wxALIGN_CENTER);
+    sizer_2->Add(1, 10);
+    sizer_2->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
 
 	//list
 	m_rulerlist = new RulerListCtrl(frame, this, wxID_ANY);
@@ -1529,7 +1544,17 @@ void MeasureDlg::OnWarp(wxCommandEvent& event)
     if (!m_view)
         return;
 
-    m_view->WarpCurrentVolume();
+    m_view->WarpCurrentVolumeInternal();
+}
+
+void MeasureDlg::OnWarpStiffness(wxScrollEvent& event)
+{
+    if (!m_warp_stiffness_sldr)
+        return;
+    int v = m_warp_stiffness_sldr->GetValue();
+    m_warp_lambda = (double)v / 100.0;
+    if (m_warp_stiffness_text)
+        m_warp_stiffness_text->SetLabel(wxString::Format("%.2f", m_warp_lambda));
 }
 
 void MeasureDlg::OnScatterRulers(wxCommandEvent& event)

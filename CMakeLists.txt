@@ -63,10 +63,14 @@ ENDIF()
 
 # Project-wide C++ standard. Setting CMAKE_CXX_STANDARD here (before any
 # add_library/add_executable) ensures every target — including those compiled
-# under the Xcode generator — uses C++17. Appending -std=c++17 to
+# under the Xcode generator — uses C++20. Appending -std=c++20 to
 # CMAKE_CXX_FLAGS later did not propagate to the VVDMainFrame target's Xcode
 # response file, which caused std::make_unique to be unavailable.
-set(CMAKE_CXX_STANDARD 17)
+# C++20 (not 17) is required so the standard the compiler actually uses is
+# consistent with the MSVC -std:c++latest forced below for Debug/Release;
+# otherwise the generated /std:c++17 wins the flag ordering and C++20 features
+# (e.g. designated initializers, error C7555) fail to compile.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

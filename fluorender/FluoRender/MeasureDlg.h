@@ -146,7 +146,8 @@ public:
 		ID_TransientChk,
         ID_WarpBtn,
 		ID_ScatterBtn,
-		ID_DensityText
+		ID_DensityText,
+		ID_WarpStiffnessSldr
 	};
 
 	MeasureDlg(wxWindow* frame,
@@ -167,6 +168,8 @@ public:
            return m_rulerlist->GetCount(ann);
         return 0;
     }
+	//TPS warp stiffness (lambda)
+	double GetWarpLambda() { return m_warp_lambda; }
 
 private:
 	wxWindow* m_frame;
@@ -184,6 +187,9 @@ private:
     wxButton *m_warp_btn;
 	wxButton *m_scatter_btn;
 	wxTextCtrl* m_density_txt;
+	wxSlider* m_warp_stiffness_sldr;
+	wxStaticText* m_warp_stiffness_text;
+	double m_warp_lambda;
 
 private:
 	void OnNewLocator(wxCommandEvent& event);
@@ -199,6 +205,7 @@ private:
 	void OnTransientCheck(wxCommandEvent& event);
 	void OnScatterRulers(wxCommandEvent& event);
     void OnWarp(wxCommandEvent& event);
+	void OnWarpStiffness(wxScrollEvent& event);
 
 	DECLARE_EVENT_TABLE();
 };

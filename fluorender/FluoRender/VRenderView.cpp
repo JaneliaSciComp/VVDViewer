@@ -733,6 +733,23 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_clip_dist_y(0),
 	m_clip_dist_z(0)
 {
+	// The Vulkan swapchain presents directly to this window's HWND. wxWidgets must
+	// NOT erase/paint the background, otherwise it covers the presented image (black).
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+
+	// Root cause of the "black render view" regression after the wxWidgets update:
+	// newer wxWidgets puts WS_EX_COMPOSITED (double buffering) on the parent panels.
+	// WS_EX_COMPOSITED composites a window and ALL its children from a single
+	// offscreen buffer, so the child Vulkan canvas's swapchain present is never
+	// shown (the parent's empty buffer is displayed instead). wxWidgets 3.1.3 used
+	// non-composited (wxWindowNR) windows, so the Vulkan present worked. Turn off
+	// double buffering on this window and every ancestor to restore direct present.
+	for (wxWindow* w = this; w; w = w->GetParent())
+	{
+		if (w->IsDoubleBuffered())
+			w->SetDoubleBuffered(false);
+	}
+
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
@@ -1891,7 +1908,7 @@ void VRenderVulkanView::DrawVolumes(int peel)
 		params.clear = m_frame_clear;
 		params.clearColor = { (float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b(), 1.0f };
 		m_frame_clear = false;
-		
+
 		if (!current_fbo->renderPass)
 			current_fbo->replaceRenderPass(params.pipeline.pass);
 
@@ -10312,7 +10329,7 @@ void VRenderVulkanView::UpdateScreen()
         
         m_v2drender->render(m_fbo_record, params);
     }
-	
+
 	m_vulkan->submitFrame();
 
 	if ( m_recording &&
@@ -20682,6 +20699,134 @@ void VRenderVulkanView::WarpCurrentVolume()
             vframe->RunPlugin(fi_name, command);
         }
     }
+}
+
+void VRenderVulkanView::WarpCurrentVolumeInternal()
+{
+    if (!m_cur_vol)
+        return;
+
+    Texture* tex = m_cur_vol->GetTexture();
+    if (!tex)
+        return;
+
+    //single-channel scalar only (1/2/4 bytes per voxel)
+    int src_nb = tex->nb(0);
+    if (tex->nc() > 1 || (src_nb != 1 && src_nb != 2 && src_nb != 4))
+    {
+        wxMessageBox("GPU warp supports single-channel scalar volumes only.", "Warp");
+        return;
+    }
+
+    //collect landmark pairs in normalized [0,1] coords (src=moving p1, tgt=fixed p2)
+    Transform* tf = tex->transform();
+    if (!tf)
+        return;
+    std::vector<glm::dvec3> srcPts, tgtPts;
+    for (size_t i = 0; i < m_ruler_list.size(); ++i)
+    {
+        Ruler* r = m_ruler_list[i];
+        if (!r) continue;
+        if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
+        {
+            Point* p0 = r->GetPoint(0);
+            Point* p1 = r->GetPoint(1);
+            if (!p0 || !p1) continue;
+            Point pm = tf->unproject(*p0); //moving -> src
+            Point pf = tf->unproject(*p1); //fixed  -> tgt
+            srcPts.push_back(glm::dvec3(pm.x(), pm.y(), pm.z()));
+            tgtPts.push_back(glm::dvec3(pf.x(), pf.y(), pf.z()));
+        }
+        else if (r->GetRulerType() == 2 && r->GetNumPoint() >= 1)
+        {
+            Point* p0 = r->GetPoint(0);
+            if (!p0) continue;
+            Point pp = tf->unproject(*p0); //locator = zero-displacement anchor
+            srcPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
+            tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
+        }
+    }
+    if (srcPts.size() < 4)
+    {
+        wxMessageBox("Need at least 4 landmark pairs (2-point rulers) for a 3D TPS warp.", "Warp");
+        return;
+    }
+
+    //stiffness (lambda) from the measure dialog
+    double lambda = 0.0;
+    VRenderFrame* vframe = (VRenderFrame*)m_frame;
+    if (vframe && vframe->GetMeasureDlg())
+        lambda = vframe->GetMeasureDlg()->GetWarpLambda();
+
+    FLIVR::ThinPlateSpline tps;
+    if (!tps.solve(srcPts, tgtPts, lambda))
+    {
+        wxMessageBox("TPS solve failed (degenerate or coplanar landmarks).", "Warp");
+        return;
+    }
+
+    //create the result volume (same resolution/spacing/bits as the source)
+    int resx, resy, resz;
+    double spcx, spcy, spcz;
+    m_cur_vol->GetResolution(resx, resy, resz);
+    m_cur_vol->GetSpacings(spcx, spcy, spcz);
+    int bits = src_nb * 8;
+
+    VolumeData* vd = new VolumeData();
+    vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
+    vd->SetSpcFromFile(true);
+    vd->SetName(m_cur_vol->GetName() + "_WARPED");
+    if (!vd->GetTexture())
+    {
+        delete vd;
+        return;
+    }
+
+    //GPU warp (linear interpolation)
+    vd->Warp(m_cur_vol, tps, 1);
+
+    //copy display properties from the source
+    vector<Plane*>* planes = m_cur_vol->GetVR() ? m_cur_vol->GetVR()->get_planes() : 0;
+    if (planes && vd->GetVR())
+        vd->GetVR()->set_planes(planes);
+    vd->Set3DGamma(m_cur_vol->Get3DGamma());
+    vd->SetBoundary(m_cur_vol->GetBoundary());
+    vd->SetOffset(m_cur_vol->GetOffset());
+    vd->SetLeftThresh(m_cur_vol->GetLeftThresh());
+    vd->SetRightThresh(m_cur_vol->GetRightThresh());
+    FLIVR::Color col = m_cur_vol->GetColor();
+    vd->SetColor(col);
+    vd->SetAlpha(m_cur_vol->GetAlpha());
+    vd->SetShading(m_cur_vol->GetShading());
+    double amb, diff, spec, shine;
+    m_cur_vol->GetMaterial(amb, diff, spec, shine);
+    vd->SetMaterial(amb, diff, spec, shine);
+    vd->SetShadow(m_cur_vol->GetShadow());
+    double shadow_int;
+    m_cur_vol->GetShadowParams(shadow_int);
+    vd->SetShadowParams(shadow_int);
+    vd->SetSampleRate(m_cur_vol->GetSampleRate());
+    col = m_cur_vol->GetGamma(); vd->SetGamma(col);
+    col = m_cur_vol->GetBrightness(); vd->SetBrightness(col);
+    col = m_cur_vol->GetHdr(); vd->SetHdr(col);
+    col = m_cur_vol->GetLevels(); vd->SetLevels(col);
+    vd->SetSyncR(m_cur_vol->GetSyncR());
+    vd->SetSyncG(m_cur_vol->GetSyncG());
+    vd->SetSyncB(m_cur_vol->GetSyncB());
+    vd->SetScalarScale(m_cur_vol->GetScalarScale());
+
+    //add as a new layer (in the current volume's group)
+    if (vframe)
+    {
+        bool btmp = vframe->GetDataManager()->GetOverrideVox();
+        vframe->GetDataManager()->SetOverrideVox(false);
+        vframe->GetDataManager()->AddVolumeData(vd);
+        AddVolumeData(vd, "");
+        vframe->GetDataManager()->SetOverrideVox(btmp);
+        vframe->UpdateTree(vd->GetName(), 2, false);
+    }
+
+    RefreshGL();
 }
 
 void VRenderVulkanView::ScatterRulers(long density)

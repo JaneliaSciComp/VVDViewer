@@ -3373,6 +3373,31 @@ void VolumeData::Calculate(int type, VolumeData *vd_a, VolumeData *vd_b, VolumeD
 	}
 }
 
+//thin plate spline warp: resample vd_in (moving) into this volume (fixed)
+void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp)
+{
+	if (m_vr && vd_in && vd_in->GetVR())
+	{
+		m_vr->warp(vd_in->GetVR(), tps, interp);
+		m_vr->return_volume();
+		if (m_tex && m_tex->get_nrrd(0))
+		{
+			Nrrd* nrrd_data = m_tex->get_nrrd(0)->getNrrd();
+			uint8* val8nr = (uint8*)nrrd_data->data;
+			int max_val = 255;
+			int bytes = m_tex->get_nrrd(0)->getBytesPerSample();
+			unsigned long long mem_size = (unsigned long long)m_res_x * (unsigned long long)m_res_y * (unsigned long long)m_res_z * bytes;
+			if (nrrd_data->type == nrrdTypeUChar)
+				max_val = *std::max_element(val8nr, val8nr + mem_size);
+			else if (nrrd_data->type == nrrdTypeUShort)
+				max_val = *std::max_element((uint16*)val8nr, (uint16*)val8nr + mem_size / bytes);
+			else if (nrrd_data->type == nrrdTypeFloat)
+				max_val = *std::max_element((float*)val8nr, (float*)val8nr + mem_size / bytes);
+			SetMaxValue(max_val);
+		}
+	}
+}
+
 //set 2d mask for segmentation
 void VolumeData::Set2dMask(std::shared_ptr<vks::VTexture>& mask)
 {
