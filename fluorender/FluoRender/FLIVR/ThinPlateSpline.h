@@ -35,6 +35,14 @@
 // system on the CPU (N is the number of landmarks, typically small). The inverse
 // transform (needed for image resampling) is computed numerically with a
 // Gauss-Newton iteration plus backtracking line search, matching jitk-tps.
+//
+// The same class also provides BigWarp's *linear* transform models
+// (Translation, Rigid, Similarity, Affine) through the solveLinear* methods.
+// These produce a pure linear transform F(m) = A*m + b with NO radial-basis
+// terms (num_landmarks() == 0), which the GPU warp shader resamples exactly via
+// the analytic affine inverse. Only the way A and b are fit to the landmark
+// pairs differs between models; the forward/inverse evaluation and the GPU path
+// are shared with the TPS case.
 
 #ifndef ThinPlateSpline_h
 #define ThinPlateSpline_h
@@ -59,6 +67,22 @@ namespace FLIVR
 		bool solve(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt,
 			double lambda = 0.0);
+
+		// BigWarp linear transform models. Each fits A,b so that F(src_i) ~= tgt_i
+		// (moving -> fixed) in a least-squares sense and leaves num_landmarks()==0
+		// (no radial-basis terms). Return false on degenerate/insufficient input.
+		//   Translation: A = I, b = mean(tgt) - mean(src)            (>= 1 pair)
+		//   Rigid:       A = R   (proper rotation, Horn quaternion)  (>= 3 pairs, non-collinear)
+		//   Similarity:  A = s*R (uniform scale + rotation)          (>= 3 pairs, non-collinear)
+		//   Affine:      A = general 3x3 (normal equations)          (>= 4 pairs, non-coplanar)
+		bool solveTranslation(const std::vector<glm::dvec3>& src,
+			const std::vector<glm::dvec3>& tgt);
+		bool solveRigid(const std::vector<glm::dvec3>& src,
+			const std::vector<glm::dvec3>& tgt);
+		bool solveSimilarity(const std::vector<glm::dvec3>& src,
+			const std::vector<glm::dvec3>& tgt);
+		bool solveAffine(const std::vector<glm::dvec3>& src,
+			const std::vector<glm::dvec3>& tgt);
 
 		bool valid() const { return valid_; }
 		int num_landmarks() const { return static_cast<int>(src_.size()); }
@@ -85,6 +109,20 @@ namespace FLIVR
 		// On success B holds the solution; returns false if singular.
 		static bool solveDense(std::vector<double>& A, int n,
 			std::vector<double>& B, int rhs);
+
+		// Finish a pure-linear fit: clear the radial-basis terms (N==0), compute
+		// Ainv_, set valid_. Returns false if A_ is singular (non-invertible).
+		bool finalizeLinear();
+
+		// Largest-eigenvalue eigenvector of a symmetric 4x4 matrix (row-major) via
+		// cyclic Jacobi rotations. Writes the unit eigenvector into evec[4].
+		static void jacobiEigenSym4(const double M[16], double evec[4]);
+
+		// Least-squares proper rotation mapping (src-sc) onto (tgt-tc) (Horn 1987,
+		// unit-quaternion method). sc/tc are the source/target centroids.
+		static glm::dmat3 fitRotation(const std::vector<glm::dvec3>& src,
+			const std::vector<glm::dvec3>& tgt,
+			const glm::dvec3& sc, const glm::dvec3& tc);
 
 		std::vector<glm::dvec3> src_;   // source landmarks
 		std::vector<glm::dvec3> W_;     // per-landmark weight vectors

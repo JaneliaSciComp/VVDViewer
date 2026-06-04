@@ -147,7 +147,8 @@ public:
         ID_WarpBtn,
 		ID_ScatterBtn,
 		ID_DensityText,
-		ID_WarpStiffnessSldr
+		ID_WarpStiffnessSldr,
+		ID_WarpTypeCombo
 	};
 
 	MeasureDlg(wxWindow* frame,
@@ -170,6 +171,8 @@ public:
     }
 	//TPS warp stiffness (lambda)
 	double GetWarpLambda() { return m_warp_lambda; }
+	//selected transform model (0=Thin Plate Spline,1=Affine,2=Similarity,3=Rigid,4=Translation)
+	int GetWarpTransformType();
 
 private:
 	wxWindow* m_frame;
@@ -185,6 +188,7 @@ private:
 	wxCheckBox *m_use_transfer_chk;
 	wxCheckBox *m_transient_chk;
     wxButton *m_warp_btn;
+	wxChoice* m_warp_type_combo;
 	wxButton *m_scatter_btn;
 	wxTextCtrl* m_density_txt;
 	wxSlider* m_warp_stiffness_sldr;
@@ -206,6 +210,7 @@ private:
 	void OnScatterRulers(wxCommandEvent& event);
     void OnWarp(wxCommandEvent& event);
 	void OnWarpStiffness(wxScrollEvent& event);
+	void OnWarpType(wxCommandEvent& event);
 
 	DECLARE_EVENT_TABLE();
 };

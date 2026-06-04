@@ -20746,22 +20746,41 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
             tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
         }
     }
-    if (srcPts.size() < 4)
+    //transform type and stiffness from the measure dialog
+    //(0=Thin Plate Spline, 1=Affine, 2=Similarity, 3=Rigid, 4=Translation)
+    VRenderFrame* vframe = (VRenderFrame*)m_frame;
+    int ttype = 0;
+    double lambda = 0.0;
+    if (vframe && vframe->GetMeasureDlg())
     {
-        wxMessageBox("Need at least 4 landmark pairs (2-point rulers) for a 3D TPS warp.", "Warp");
+        ttype = vframe->GetMeasureDlg()->GetWarpTransformType();
+        lambda = vframe->GetMeasureDlg()->GetWarpLambda();
+    }
+
+    //minimum landmark pairs required by the chosen model
+    size_t minpts = (ttype == 4) ? 1 : (ttype == 2 || ttype == 3) ? 3 : 4;
+    if (srcPts.size() < minpts)
+    {
+        wxMessageBox(wxString::Format(
+            "Need at least %d landmark pair(s) (2-point rulers) for this transform.",
+            (int)minpts), "Warp");
         return;
     }
 
-    //stiffness (lambda) from the measure dialog
-    double lambda = 0.0;
-    VRenderFrame* vframe = (VRenderFrame*)m_frame;
-    if (vframe && vframe->GetMeasureDlg())
-        lambda = vframe->GetMeasureDlg()->GetWarpLambda();
-
     FLIVR::ThinPlateSpline tps;
-    if (!tps.solve(srcPts, tgtPts, lambda))
+    bool ok = false;
+    wxString suffix;
+    switch (ttype)
     {
-        wxMessageBox("TPS solve failed (degenerate or coplanar landmarks).", "Warp");
+    case 1: ok = tps.solveAffine(srcPts, tgtPts);      suffix = "_AFFINE"; break;
+    case 2: ok = tps.solveSimilarity(srcPts, tgtPts);  suffix = "_SIM";    break;
+    case 3: ok = tps.solveRigid(srcPts, tgtPts);       suffix = "_RIGID";  break;
+    case 4: ok = tps.solveTranslation(srcPts, tgtPts); suffix = "_TRANS";  break;
+    default: ok = tps.solve(srcPts, tgtPts, lambda);   suffix = "_WARPED"; break;
+    }
+    if (!ok)
+    {
+        wxMessageBox("Transform solve failed (degenerate, collinear or coplanar landmarks).", "Warp");
         return;
     }
 
@@ -20775,7 +20794,7 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
     VolumeData* vd = new VolumeData();
     vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
     vd->SetSpcFromFile(true);
-    vd->SetName(m_cur_vol->GetName() + "_WARPED");
+    vd->SetName(m_cur_vol->GetName() + suffix);
     if (!vd->GetTexture())
     {
         delete vd;
