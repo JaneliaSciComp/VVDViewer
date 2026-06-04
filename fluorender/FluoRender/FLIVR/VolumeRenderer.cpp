@@ -4730,6 +4730,14 @@ namespace FLIVR
 			packed.push_back(glm::vec4((float)srcL[i].x, (float)srcL[i].y, (float)srcL[i].z, 0.0f));
 			packed.push_back(glm::vec4((float)wL[i].x, (float)wL[i].y, (float)wL[i].z, 0.0f));
 		}
+		//linear transforms (Affine/Similarity/Rigid/Translation) carry no landmarks
+		//(N==0). Keep the storage buffer non-empty (VkBuffer size must be > 0); the
+		//shader never reads it because cfg.x (numLandmarks) is 0.
+		if (packed.empty())
+		{
+			packed.push_back(glm::vec4(0.0f));
+			packed.push_back(glm::vec4(0.0f));
+		}
 		vks::Buffer lm_buf;
 		prim_dev->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,

@@ -1167,6 +1167,7 @@ BEGIN_EVENT_TABLE(MeasureDlg, wxPanel)
 	EVT_CHECKBOX(ID_UseTransferChk, MeasureDlg::OnUseTransferCheck)
 	EVT_CHECKBOX(ID_TransientChk, MeasureDlg::OnTransientCheck)
     EVT_BUTTON(ID_WarpBtn, MeasureDlg::OnWarp)
+	EVT_CHOICE(ID_WarpTypeCombo, MeasureDlg::OnWarpType)
 	EVT_COMMAND_SCROLL(ID_WarpStiffnessSldr, MeasureDlg::OnWarpStiffness)
 	EVT_BUTTON(ID_ScatterBtn, MeasureDlg::OnScatterRulers)
 	END_EVENT_TABLE()
@@ -1267,6 +1268,16 @@ wxPanel(parent, id, pos, size, style, name),
     m_warp_btn = new wxButton(this, ID_WarpBtn, "Apply Transform",
         wxDefaultPosition, wxSize(120, 20));
 	m_warp_lambda = 0.0;
+	//transform model selector (matches BigWarp's transform types)
+	wxArrayString warp_types;
+	warp_types.Add("Thin Plate Spline");
+	warp_types.Add("Affine");
+	warp_types.Add("Similarity");
+	warp_types.Add("Rigid");
+	warp_types.Add("Translation");
+	m_warp_type_combo = new wxChoice(this, ID_WarpTypeCombo,
+		wxDefaultPosition, wxSize(140, 20), warp_types);
+	m_warp_type_combo->SetSelection(0);
 	wxStaticText* st3 = new wxStaticText(this, 0, "Stiffness:",
 		wxDefaultPosition, wxSize(60, -1), wxALIGN_CENTER);
 	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 100,
@@ -1286,6 +1297,8 @@ wxPanel(parent, id, pos, size, style, name),
     sizer_2->Add(30, 10);
     sizer_2->Add(m_warp_btn, 0, wxALIGN_CENTER);
     //m_warp_btn->Hide();
+    sizer_2->Add(5, 10);
+    sizer_2->Add(m_warp_type_combo, 0, wxALIGN_CENTER);
     sizer_2->Add(5, 10);
     sizer_2->Add(st3, 0, wxALIGN_CENTER);
     sizer_2->Add(1, 10);
@@ -1555,6 +1568,21 @@ void MeasureDlg::OnWarpStiffness(wxScrollEvent& event)
     m_warp_lambda = (double)v / 100.0;
     if (m_warp_stiffness_text)
         m_warp_stiffness_text->SetLabel(wxString::Format("%.2f", m_warp_lambda));
+}
+
+int MeasureDlg::GetWarpTransformType()
+{
+    return m_warp_type_combo ? m_warp_type_combo->GetSelection() : 0;
+}
+
+void MeasureDlg::OnWarpType(wxCommandEvent& event)
+{
+    //stiffness (lambda) only applies to the Thin Plate Spline model
+    bool is_tps = (GetWarpTransformType() == 0);
+    if (m_warp_stiffness_sldr)
+        m_warp_stiffness_sldr->Enable(is_tps);
+    if (m_warp_stiffness_text)
+        m_warp_stiffness_text->Enable(is_tps);
 }
 
 void MeasureDlg::OnScatterRulers(wxCommandEvent& event)
