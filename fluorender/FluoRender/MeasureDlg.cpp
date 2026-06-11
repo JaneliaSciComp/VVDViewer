@@ -1306,12 +1306,16 @@ wxPanel(parent, id, pos, size, style, name),
 	wxBoxSizer* sizer_3 = new wxBoxSizer(wxHORIZONTAL);
 	wxStaticText* st4 = new wxStaticText(this, 0, "Transform:",
 		wxDefaultPosition, wxSize(70, -1), wxALIGN_CENTER);
+	wxStaticText* st5 = new wxStaticText(this, 0, "Interpolation:",
+		wxDefaultPosition, wxSize(90, -1), wxALIGN_CENTER);
 	sizer_3->Add(10, 10);
 	sizer_3->Add(st4, 0, wxALIGN_CENTER);
 	sizer_3->Add(5, 10);
 	sizer_3->Add(m_warp_type_combo, 0, wxALIGN_CENTER);
 	sizer_3->Add(5, 10);
-	sizer_3->Add(m_warp_btn, 0, wxALIGN_CENTER);
+	sizer_3->Add(st5, 0, wxALIGN_CENTER);
+	sizer_3->Add(5, 10);
+	sizer_3->Add(m_warp_interp_combo, 0, wxALIGN_CENTER);
 	sizer_3->Add(30, 10);
 	sizer_3->Add(st3, 0, wxALIGN_CENTER);
 	sizer_3->Add(1, 10);
@@ -1319,14 +1323,11 @@ wxPanel(parent, id, pos, size, style, name),
 	sizer_3->Add(1, 10);
 	sizer_3->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
 
-	//warp result interpolation row
+	//warp apply row (Apply Transform button aligned to the right)
 	wxBoxSizer* sizer_4 = new wxBoxSizer(wxHORIZONTAL);
-	wxStaticText* st5 = new wxStaticText(this, 0, "Interpolation:",
-		wxDefaultPosition, wxSize(90, -1), wxALIGN_CENTER);
+	sizer_4->AddStretchSpacer(1);
+	sizer_4->Add(m_warp_btn, 0, wxALIGN_CENTER);
 	sizer_4->Add(10, 10);
-	sizer_4->Add(st5, 0, wxALIGN_CENTER);
-	sizer_4->Add(5, 10);
-	sizer_4->Add(m_warp_interp_combo, 0, wxALIGN_CENTER);
 
 	//list
 	m_rulerlist = new RulerListCtrl(frame, this, wxID_ANY);
