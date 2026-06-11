@@ -21,13 +21,30 @@
 #include <FLIVR/TextureBrick.h>
 
 namespace vks
-{	
+{
 	class VTexture;
 	class VFrameBuffer;
 	class VSemaphore;
-	struct TexParam;
 	struct VulkanSemaphoreSettings;
-	
+
+	// Full TexParam definition must precede VulkanDevice. libc++'s std::vector<T>
+	// requires T to be complete at the point its destructor is instantiated, which
+	// happens implicitly when VulkanDevice declares a std::vector<TexParam> member.
+	struct TexParam
+	{
+		std::shared_ptr<VTexture> tex;
+		FLIVR::TextureBrick *brick;
+		int comp;
+		bool delayed_del;
+		TexParam() :
+			tex(0), brick(0), comp(0),
+			delayed_del(false)
+		{}
+		TexParam(int c, const std::shared_ptr<VTexture> &t) :
+			tex(t), brick(0), comp(c), delayed_del(false)
+		{}
+	};
+
 	struct VulkanDevice
 	{
 		/** @brief Physical device representation */
@@ -1137,21 +1154,6 @@ namespace vks
 
 			return VK_SUCCESS;
 		}
-	};
-
-	struct TexParam
-	{
-		std::shared_ptr<VTexture> tex;
-		FLIVR::TextureBrick *brick;
-		int comp;
-		bool delayed_del;
-		TexParam() :
-			tex(0), brick(0), comp(0),
-			delayed_del(false)
-		{}
-		TexParam(int c, const std::shared_ptr<VTexture> &t) :
-			tex(t), brick(0), comp(c), delayed_del(false)
-		{}
 	};
 
 	class VSemaphore {
