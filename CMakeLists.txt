@@ -1216,6 +1216,42 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 			"$<TARGET_FILE_DIR:VVDViewer>"
 			COMMENT "Deploying vcpkg runtime DLLs (wxWidgets) next to VVDViewer.exe")
 	endif()
+
+	# --- App-local VC++ runtime (CRT) DLLs --------------------------------
+	# The app and the wxWidgets DLL are built /MD (dynamic CRT, see the custom
+	# triplet), so a clean machine would otherwise need the "Visual C++
+	# 2015-2022 Redistributable" installed. Deploy the CRT DLLs app-locally
+	# next to VVDViewer.exe instead (Microsoft-sanctioned; no installer, no
+	# admin, no UAC). The Windows loader searches the exe's own directory
+	# before System32, so these copies are picked up automatically.
+	set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE) # we copy manually; no install() step
+	include(InstallRequiredSystemLibraries)          # sets CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS
+	set(_vvd_crt_libs ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
+	if(NOT _vvd_crt_libs)
+		# Fallback: derive the redist dir straight from the compiler path so it
+		# works without importing vcvars and matches the exact toolset used.
+		#   .../VC/Tools/MSVC/<ver>/bin/Hostx64/x64/cl.exe  ->  .../VC
+		get_filename_component(_vc "${CMAKE_CXX_COMPILER}" DIRECTORY)
+		foreach(_i RANGE 1 6) # x64 -> Hostx64 -> bin -> <ver> -> MSVC -> Tools -> VC
+			get_filename_component(_vc "${_vc}" DIRECTORY)
+		endforeach()
+		file(GLOB _crtdirs LIST_DIRECTORIES true "${_vc}/Redist/MSVC/*/x64/Microsoft.VC*.CRT")
+		if(_crtdirs)
+			list(SORT _crtdirs)
+			list(GET _crtdirs -1 _crtdir)            # newest version dir
+			file(GLOB _vvd_crt_libs "${_crtdir}/*.dll")
+		endif()
+	endif()
+	if(_vvd_crt_libs)
+		add_custom_command(TARGET VVDViewer POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_vvd_crt_libs}
+					"$<TARGET_FILE_DIR:VVDViewer>"
+			COMMAND_EXPAND_LISTS
+			COMMENT "Deploying app-local VC++ runtime (CRT) DLLs next to VVDViewer.exe")
+	else()
+		message(WARNING "VC++ CRT redist DLLs not found; end users will need the "
+						"Visual C++ 2015-2022 Redistributable (x64) installed.")
+	endif()
 else()
 	# Deploy the VVD shared libraries next to the executable, in lib/ (the
 	# executable's rpath is $ORIGIN/lib). Create the directory FIRST: a single-
