@@ -20695,7 +20695,12 @@ void VRenderVulkanView::WarpCurrentVolume()
             offsety = sy;
             offsetz = sz;
             
-            wxString command = wxString::Format("Apply Bigwarp Filter, landmark_file=%s x_size=%d y_size=%d z_size=%d x_spacing=%f y_spacing=%f z_spacing=%f x_offset=%f y_offset=%f z_offset=%f transform_type=[Thin Plate Spline] interpolation=Linear threads=8;false;false", temp_csv_path, resx, resy, resz, spcx, spcy, spcz, offsetx, offsety, offsetz);
+            //interpolation from the measure dialog (0=Nearest Neighbor, 1=Linear)
+            int interp = 0;
+            if (vframe->GetMeasureDlg())
+                interp = vframe->GetMeasureDlg()->GetWarpInterpolation();
+            wxString interp_str = (interp == 0) ? "[Nearest Neighbor]" : "Linear";
+            wxString command = wxString::Format("Apply Bigwarp Filter, landmark_file=%s x_size=%d y_size=%d z_size=%d x_spacing=%f y_spacing=%f z_spacing=%f x_offset=%f y_offset=%f z_offset=%f transform_type=[Thin Plate Spline] interpolation=%s threads=8;false;false", temp_csv_path, resx, resy, resz, spcx, spcy, spcz, offsetx, offsety, offsetz, interp_str);
             vframe->RunPlugin(fi_name, command);
         }
     }
@@ -20746,15 +20751,18 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
             tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
         }
     }
-    //transform type and stiffness from the measure dialog
-    //(0=Thin Plate Spline, 1=Affine, 2=Similarity, 3=Rigid, 4=Translation)
+    //transform type, stiffness and interpolation from the measure dialog
+    //(ttype: 0=Thin Plate Spline, 1=Affine, 2=Similarity, 3=Rigid, 4=Translation)
+    //(interp: 0=Nearest Neighbor, 1=Linear)
     VRenderFrame* vframe = (VRenderFrame*)m_frame;
     int ttype = 0;
     double lambda = 0.0;
+    int interp = 0;
     if (vframe && vframe->GetMeasureDlg())
     {
         ttype = vframe->GetMeasureDlg()->GetWarpTransformType();
         lambda = vframe->GetMeasureDlg()->GetWarpLambda();
+        interp = vframe->GetMeasureDlg()->GetWarpInterpolation();
     }
 
     //minimum landmark pairs required by the chosen model
@@ -20801,8 +20809,8 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
         return;
     }
 
-    //GPU warp (linear interpolation)
-    vd->Warp(m_cur_vol, tps, 1);
+    //GPU warp
+    vd->Warp(m_cur_vol, tps, interp);
 
     //copy display properties from the source
     vector<Plane*>* planes = m_cur_vol->GetVR() ? m_cur_vol->GetVR()->get_planes() : 0;

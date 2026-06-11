@@ -148,7 +148,8 @@ public:
 		ID_ScatterBtn,
 		ID_DensityText,
 		ID_WarpStiffnessSldr,
-		ID_WarpTypeCombo
+		ID_WarpTypeCombo,
+		ID_WarpInterpCombo
 	};
 
 	MeasureDlg(wxWindow* frame,
@@ -173,6 +174,8 @@ public:
 	double GetWarpLambda() { return m_warp_lambda; }
 	//selected transform model (0=Thin Plate Spline,1=Affine,2=Similarity,3=Rigid,4=Translation)
 	int GetWarpTransformType();
+	//selected warp result interpolation (0=Nearest Neighbor,1=Linear; matches VolumeRenderer::warp)
+	int GetWarpInterpolation();
 
 private:
 	wxWindow* m_frame;
@@ -189,6 +192,7 @@ private:
 	wxCheckBox *m_transient_chk;
     wxButton *m_warp_btn;
 	wxChoice* m_warp_type_combo;
+	wxChoice* m_warp_interp_combo;
 	wxButton *m_scatter_btn;
 	wxTextCtrl* m_density_txt;
 	wxSlider* m_warp_stiffness_sldr;

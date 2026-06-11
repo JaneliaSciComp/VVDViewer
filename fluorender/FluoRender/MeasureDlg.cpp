@@ -1278,6 +1278,13 @@ wxPanel(parent, id, pos, size, style, name),
 	m_warp_type_combo = new wxChoice(this, ID_WarpTypeCombo,
 		wxDefaultPosition, wxSize(140, 20), warp_types);
 	m_warp_type_combo->SetSelection(0);
+	//warp result interpolation (NN preserves exact voxel values, e.g. label volumes)
+	wxArrayString warp_interps;
+	warp_interps.Add("Nearest Neighbor");
+	warp_interps.Add("Linear");
+	m_warp_interp_combo = new wxChoice(this, ID_WarpInterpCombo,
+		wxDefaultPosition, wxSize(140, 20), warp_interps);
+	m_warp_interp_combo->SetSelection(0);
 	wxStaticText* st3 = new wxStaticText(this, 0, "Stiffness:",
 		wxDefaultPosition, wxSize(60, -1), wxALIGN_CENTER);
 	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 100,
@@ -1312,6 +1319,15 @@ wxPanel(parent, id, pos, size, style, name),
 	sizer_3->Add(1, 10);
 	sizer_3->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
 
+	//warp result interpolation row
+	wxBoxSizer* sizer_4 = new wxBoxSizer(wxHORIZONTAL);
+	wxStaticText* st5 = new wxStaticText(this, 0, "Interpolation:",
+		wxDefaultPosition, wxSize(90, -1), wxALIGN_CENTER);
+	sizer_4->Add(10, 10);
+	sizer_4->Add(st5, 0, wxALIGN_CENTER);
+	sizer_4->Add(5, 10);
+	sizer_4->Add(m_warp_interp_combo, 0, wxALIGN_CENTER);
+
 	//list
 	m_rulerlist = new RulerListCtrl(frame, this, wxID_ANY);
 
@@ -1325,6 +1341,8 @@ wxPanel(parent, id, pos, size, style, name),
 	sizerV->Add(sizer_2, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(sizer_3, 0, wxEXPAND);
+	sizerV->Add(10, 10);
+	sizerV->Add(sizer_4, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(m_rulerlist, 1, wxEXPAND);
 
@@ -1581,6 +1599,11 @@ void MeasureDlg::OnWarpStiffness(wxScrollEvent& event)
 int MeasureDlg::GetWarpTransformType()
 {
     return m_warp_type_combo ? m_warp_type_combo->GetSelection() : 0;
+}
+
+int MeasureDlg::GetWarpInterpolation()
+{
+    return m_warp_interp_combo ? m_warp_interp_combo->GetSelection() : 0;
 }
 
 void MeasureDlg::OnWarpType(wxCommandEvent& event)

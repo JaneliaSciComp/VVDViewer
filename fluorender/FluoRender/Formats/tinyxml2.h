@@ -210,7 +210,8 @@ template <class T, int INIT>
 class DynArray
 {
 public:
-    DynArray< T, INIT >() {
+    //C++20 disallows the template-id form (DynArray< T, INIT >) as a ctor name
+    DynArray() {
         _mem = _pool;
         _allocated = INIT;
         _size = 0;
