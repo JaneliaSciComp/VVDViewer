@@ -1287,9 +1287,9 @@ wxPanel(parent, id, pos, size, style, name),
 	m_warp_interp_combo->SetSelection(0);
 	wxStaticText* st3 = new wxStaticText(this, 0, "Stiffness:",
 		wxDefaultPosition, wxSize(60, -1), wxALIGN_CENTER);
-	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 100,
+	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 300,
 		wxDefaultPosition, wxSize(100, 20));
-	m_warp_stiffness_text = new wxStaticText(this, 0, "0.00",
+	m_warp_stiffness_text = new wxStaticText(this, 0, "0.000",
 		wxDefaultPosition, wxSize(40, -1), wxALIGN_CENTER);
 	sizer_2->Add(10, 10);
 	sizer_2->Add(m_transient_chk, 0, wxALIGN_CENTER);
@@ -1316,12 +1316,16 @@ wxPanel(parent, id, pos, size, style, name),
 	sizer_3->Add(st5, 0, wxALIGN_CENTER);
 	sizer_3->Add(5, 10);
 	sizer_3->Add(m_warp_interp_combo, 0, wxALIGN_CENTER);
-	sizer_3->Add(30, 10);
-	sizer_3->Add(st3, 0, wxALIGN_CENTER);
-	sizer_3->Add(1, 10);
-	sizer_3->Add(m_warp_stiffness_sldr, 0, wxALIGN_CENTER);
-	sizer_3->Add(1, 10);
-	sizer_3->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
+
+	//stiffness row (slider stretches to full width so one pixel covers one 0.001 step)
+	wxBoxSizer* sizer_3s = new wxBoxSizer(wxHORIZONTAL);
+	sizer_3s->Add(10, 10);
+	sizer_3s->Add(st3, 0, wxALIGN_CENTER);
+	sizer_3s->Add(1, 10);
+	sizer_3s->Add(m_warp_stiffness_sldr, 1, wxALIGN_CENTER);
+	sizer_3s->Add(1, 10);
+	sizer_3s->Add(m_warp_stiffness_text, 0, wxALIGN_CENTER);
+	sizer_3s->Add(10, 10);
 
 	//warp apply row (Apply Transform button aligned to the right)
 	wxBoxSizer* sizer_4 = new wxBoxSizer(wxHORIZONTAL);
@@ -1342,6 +1346,8 @@ wxPanel(parent, id, pos, size, style, name),
 	sizerV->Add(sizer_2, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(sizer_3, 0, wxEXPAND);
+	sizerV->Add(10, 10);
+	sizerV->Add(sizer_3s, 0, wxEXPAND);
 	sizerV->Add(10, 10);
 	sizerV->Add(sizer_4, 0, wxEXPAND);
 	sizerV->Add(10, 10);
@@ -1592,9 +1598,9 @@ void MeasureDlg::OnWarpStiffness(wxScrollEvent& event)
     if (!m_warp_stiffness_sldr)
         return;
     int v = m_warp_stiffness_sldr->GetValue();
-    m_warp_lambda = (double)v / 100.0;
+    m_warp_lambda = (double)v / 1000.0;
     if (m_warp_stiffness_text)
-        m_warp_stiffness_text->SetLabel(wxString::Format("%.2f", m_warp_lambda));
+        m_warp_stiffness_text->SetLabel(wxString::Format("%.3f", m_warp_lambda));
 }
 
 int MeasureDlg::GetWarpTransformType()
