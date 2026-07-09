@@ -16760,8 +16760,10 @@ double VRenderVulkanView::GetPointVolume(Point& mp, int mx, int my,
 					{
 						alpha = 1.0 - pow(Clamp(1.0 - value, 0.0, 1.0), vd->GetSampleRate());
 						max_int += alpha * (1.0 - max_int);
-						mp = Point((xx + 0.5) / resx, (yy + 0.5) / resy, (zz + 0.5) / resz);
-						mp = textrans->project(mp);
+						//use the sample position instead of the voxel center:
+						//the voxel center can fall outside a clipping plane
+						//cutting through the voxel
+						mp = textrans->project(hp1);
 					}
 					if (max_int >= thresh)
 						break;
@@ -16774,7 +16776,28 @@ double VRenderVulkanView::GetPointVolume(Point& mp, int mx, int my,
 	if (mode==1)
 	{
 		if (max_int > 0.0)
+		{
+			if (planes)
+			{
+				//the returned point is a voxel center, which can fall outside
+				//a clipping plane cutting through the voxel; snap it back
+				//inside the clipped region
+				Point tp = tex->transform()->unproject(mp);
+				bool clamped = false;
+				for (int i = 0; i < 6; i++)
+				{
+					if ((*planes)[i] &&
+						(*planes)[i]->eval_point(tp) < 0.0)
+					{
+						tp = (*planes)[i]->project(tp);
+						clamped = true;
+					}
+				}
+				if (clamped)
+					mp = tex->transform()->project(tp);
+			}
 			return_val = (mp-mp1).length();
+		}
 	}
 	else if (mode==2)
 	{
@@ -17848,6 +17871,12 @@ void VRenderVulkanView::AddRulerPoint(int mx, int my)
 		{
 			double t = GetPointVolume(p, mx, my, m_cur_vol,
 				m_point_volume_mode, m_ruler_use_transf);
+			//with narrow clipping the accumulated opacity may never reach
+			//the threshold; fall back to the maximum intensity point,
+			//which stays inside the clipped region, before the view plane
+			if (t <= 0.0 && m_point_volume_mode == 2)
+				t = GetPointVolume(p, mx, my, m_cur_vol,
+					1, m_ruler_use_transf);
 			if (t <= 0.0)
 			{
 				t = GetPointPlane(p, mx, my);
@@ -19076,6 +19105,12 @@ void VRenderVulkanView::OnMouse(wxMouseEvent& event)
 						event.GetX(), event.GetY(),
 						m_cur_vol, m_point_volume_mode,
 						m_ruler_use_transf);
+					//fall back to the maximum intensity point, which stays
+					//inside the clipped region, before the view plane
+					if (t <= 0.0 && m_point_volume_mode == 2)
+						t = GetPointVolume(point,
+						event.GetX(), event.GetY(),
+						m_cur_vol, 1, m_ruler_use_transf);
 					if (t <= 0.0)
 						t = GetPointPlane(point,
 						event.GetX(), event.GetY(),
