@@ -109,8 +109,13 @@ namespace FLIVR
 		"		}\n"
 		"		m += t*dir;\n"
 		"	}\n"
-		"	vec3 tc = (m - pc.tileOrigin.xyz) * pc.tileSizeInv.xyz;\n"
-		"	float v = texture(srctile, clamp(tc, 0.0, 1.0)).r;\n"
+		"	//outside the moving volume there is no data: write 0 instead of\n"
+		"	//stretching the border voxels (m is in source-normalized [0,1] coords)\n"
+		"	float v = 0.0;\n"
+		"	if(all(greaterThanEqual(m, vec3(0.0))) && all(lessThanEqual(m, vec3(1.0)))){\n"
+		"		vec3 tc = (m - pc.tileOrigin.xyz) * pc.tileSizeInv.xyz;\n"
+		"		v = texture(srctile, clamp(tc, 0.0, 1.0)).r;\n"
+		"	}\n"
 		"	imageStore(outimg, gid + pc.outOffset.xyz, vec4(v));\n"
 		"}\n";
 
