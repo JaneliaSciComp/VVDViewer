@@ -4863,6 +4863,16 @@ namespace FLIVR
 				size_t w = (size_t)(etx - stx);
 				size_t h = (size_t)(ety - sty);
 				size_t d = (size_t)(etz - stz);
+				//A single output brick can inverse-map to a source AABB wider than the
+				//GPU's max 3D texture size (moving volumes larger than that are the whole
+				//reason we tile). Clamp so GenTexture3D never gets an oversized request
+				//(which it would reject, yielding a null-image texture and a crash in
+				//vkCmdCopyBufferToImage). tileSizeInv below stays consistent with w/h/d;
+				//the few output voxels mapping past the loaded region sample the clamped
+				//tile edge instead of crashing.
+				if (w > (size_t)max3d) w = (size_t)max3d;
+				if (h > (size_t)max3d) h = (size_t)max3d;
+				if (d > (size_t)max3d) d = (size_t)max3d;
 
 				srctex = buildTile((size_t)stx, (size_t)sty, (size_t)stz, w, h, d);
 				pc.tileOrigin = glm::vec4((float)stx / svx, (float)sty / svy, (float)stz / svz, 0.0f);

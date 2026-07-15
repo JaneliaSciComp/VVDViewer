@@ -781,14 +781,17 @@ namespace vks
 		if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
 		{
 			std::cout << "Error: Device does not support flag TRANSFER_DST for selected texture format!" << std::endl;
-			return std::move(ret);
+			//return an empty shared_ptr (not a half-built texture) so callers'
+			//"if (!t)" guards actually detect the failure instead of later
+			//dereferencing a VK_NULL_HANDLE image in vkCmdCopyBufferToImage.
+			return nullptr;
 		}
-		// Check if GPU supports requested 3D texture dimensions
+		// Check if GPU supports requested 3D texture dimensions (all three axes)
 		uint32_t maxImageDimension3D(ret->device->properties.limits.maxImageDimension3D);
-		if (w > maxImageDimension3D || h > maxImageDimension3D)
+		if (w > maxImageDimension3D || h > maxImageDimension3D || d > maxImageDimension3D)
 		{
 			std::cout << "Error: Requested texture dimensions is greater than supported 3D texture dimension!" << std::endl;
-			return std::move(ret);
+			return nullptr;
 		}
 
 		// Create optimal tiled target image
