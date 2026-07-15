@@ -77,10 +77,21 @@ namespace FLIVR
 		//   Affine:      A = general 3x3 (normal equations)          (>= 4 pairs, non-coplanar)
 		bool solveTranslation(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt);
+		// Rigid/Similarity impose isotropic constraints (one rotation / one
+		// uniform scale), so they must be fit in a physically isotropic space.
+		// Landmarks arrive in grid-normalized [0,1] coords whose axes have very
+		// different physical lengths (res*spacing); `aspect` is that per-axis
+		// physical length. The fit is done in aspect-scaled (isotropic) space and
+		// the resulting A,b are mapped back to grid-normalized coords (what the GPU
+		// warp samples in). Default (1,1,1) == treat the input as already isotropic.
 		bool solveRigid(const std::vector<glm::dvec3>& src,
-			const std::vector<glm::dvec3>& tgt);
+			const std::vector<glm::dvec3>& tgt,
+			const glm::dvec3& aspect = glm::dvec3(1.0));
 		bool solveSimilarity(const std::vector<glm::dvec3>& src,
-			const std::vector<glm::dvec3>& tgt);
+			const std::vector<glm::dvec3>& tgt,
+			const glm::dvec3& aspect = glm::dvec3(1.0));
+		// Affine/TPS absorb axis anisotropy in their own degrees of freedom, so
+		// they need no aspect and are fit directly in grid-normalized coords.
 		bool solveAffine(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt);
 
@@ -113,6 +124,12 @@ namespace FLIVR
 		// Finish a pure-linear fit: clear the radial-basis terms (N==0), compute
 		// Ainv_, set valid_. Returns false if A_ is singular (non-invertible).
 		bool finalizeLinear();
+
+		// Map a linear transform fitted in isotropic (aspect-scaled) space into the
+		// grid-normalized coords the GPU samples in: A_ = Dinv*Aiso*D, b_ = Dinv*biso
+		// with D = diag(aspect). Writes A_ and b_.
+		void mapFromIsotropic(const glm::dmat3& Aiso, const glm::dvec3& biso,
+			const glm::dvec3& aspect);
 
 		// Largest-eigenvalue eigenvector of a symmetric 4x4 matrix (row-major) via
 		// cyclic Jacobi rotations. Writes the unit eigenvector into evec[4].

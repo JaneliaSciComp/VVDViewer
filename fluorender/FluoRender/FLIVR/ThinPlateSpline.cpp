@@ -373,48 +373,69 @@ namespace FLIVR
 		return finalizeLinear();
 	}
 
+	void ThinPlateSpline::mapFromIsotropic(const glm::dmat3& Aiso,
+		const glm::dvec3& biso, const glm::dvec3& aspect)
+	{
+		// A_ = Dinv * Aiso * D, b_ = Dinv * biso with D = diag(aspect).
+		// glm is column-major (A[col][row]): A_(r,c) = Aiso(r,c)*aspect[c]/aspect[r].
+		for (int c = 0; c < 3; ++c)
+			for (int r = 0; r < 3; ++r)
+				A_[c][r] = Aiso[c][r] * aspect[c] / aspect[r];
+		b_ = glm::dvec3(biso.x / aspect.x, biso.y / aspect.y, biso.z / aspect.z);
+	}
+
 	bool ThinPlateSpline::solveRigid(const std::vector<glm::dvec3>& src,
-		const std::vector<glm::dvec3>& tgt)
+		const std::vector<glm::dvec3>& tgt, const glm::dvec3& aspect)
 	{
 		valid_ = false;
 		src_.clear(); W_.clear();
 		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
 		if (src.size() != tgt.size() || src.size() < 3)
 			return false;
+		// fit the rotation in isotropic (aspect-scaled) space
+		std::vector<glm::dvec3> s2(src.size()), t2(tgt.size());
+		for (size_t i = 0; i < src.size(); ++i) { s2[i] = src[i] * aspect; t2[i] = tgt[i] * aspect; }
 		glm::dvec3 sc(0.0), tc(0.0);
-		for (size_t i = 0; i < src.size(); ++i) { sc += src[i]; tc += tgt[i]; }
-		double inv = 1.0 / (double)src.size();
+		for (size_t i = 0; i < s2.size(); ++i) { sc += s2[i]; tc += t2[i]; }
+		double inv = 1.0 / (double)s2.size();
 		sc *= inv; tc *= inv;
-		A_ = fitRotation(src, tgt, sc, tc);
-		b_ = tc - A_ * sc;
+		glm::dmat3 Aiso = fitRotation(s2, t2, sc, tc);
+		glm::dvec3 biso = tc - Aiso * sc;
+		mapFromIsotropic(Aiso, biso, aspect);
 		return finalizeLinear();
 	}
 
 	bool ThinPlateSpline::solveSimilarity(const std::vector<glm::dvec3>& src,
-		const std::vector<glm::dvec3>& tgt)
+		const std::vector<glm::dvec3>& tgt, const glm::dvec3& aspect)
 	{
 		valid_ = false;
 		src_.clear(); W_.clear();
 		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
 		if (src.size() != tgt.size() || src.size() < 3)
 			return false;
+		// fit rotation + uniform scale in isotropic (aspect-scaled) space so the
+		// "uniform" scale is physically uniform, not uniform in the anisotropic
+		// grid-normalized coords (which would compress/stretch the result)
+		std::vector<glm::dvec3> s2(src.size()), t2(tgt.size());
+		for (size_t i = 0; i < src.size(); ++i) { s2[i] = src[i] * aspect; t2[i] = tgt[i] * aspect; }
 		glm::dvec3 sc(0.0), tc(0.0);
-		for (size_t i = 0; i < src.size(); ++i) { sc += src[i]; tc += tgt[i]; }
-		double inv = 1.0 / (double)src.size();
+		for (size_t i = 0; i < s2.size(); ++i) { sc += s2[i]; tc += t2[i]; }
+		double inv = 1.0 / (double)s2.size();
 		sc *= inv; tc *= inv;
-		glm::dmat3 R = fitRotation(src, tgt, sc, tc);
+		glm::dmat3 R = fitRotation(s2, t2, sc, tc);
 		// least-squares uniform scale for the fixed optimal rotation
 		double num = 0.0, den = 0.0;
-		for (size_t i = 0; i < src.size(); ++i)
+		for (size_t i = 0; i < s2.size(); ++i)
 		{
-			glm::dvec3 p = src[i] - sc;
-			glm::dvec3 q = tgt[i] - tc;
+			glm::dvec3 p = s2[i] - sc;
+			glm::dvec3 q = t2[i] - tc;
 			num += glm::dot(q, R * p);
 			den += glm::dot(p, p);
 		}
 		double s = (den > 1e-12) ? num / den : 1.0;
-		A_ = R; A_[0] *= s; A_[1] *= s; A_[2] *= s;   // s * R
-		b_ = tc - A_ * sc;
+		glm::dmat3 Aiso = R; Aiso[0] *= s; Aiso[1] *= s; Aiso[2] *= s;   // s * R
+		glm::dvec3 biso = tc - Aiso * sc;
+		mapFromIsotropic(Aiso, biso, aspect);
 		return finalizeLinear();
 	}
 

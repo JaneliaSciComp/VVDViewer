@@ -20810,16 +20810,28 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
         return;
     }
 
+    //landmarks are in grid-normalized [0,1] coords whose axes are physically
+    //anisotropic (each axis length = res*spacing). Rigid/Similarity must be fit
+    //in isotropic space, so pass the per-axis physical length as the aspect.
+    int arx = 0, ary = 0, arz = 0;
+    double aspx = 1.0, aspy = 1.0, aspz = 1.0;
+    m_cur_vol->GetResolution(arx, ary, arz);
+    m_cur_vol->GetSpacings(aspx, aspy, aspz);
+    glm::dvec3 aspect(
+        (arx > 0 ? arx : 1) * (aspx > 0.0 ? aspx : 1.0),
+        (ary > 0 ? ary : 1) * (aspy > 0.0 ? aspy : 1.0),
+        (arz > 0 ? arz : 1) * (aspz > 0.0 ? aspz : 1.0));
+
     FLIVR::ThinPlateSpline tps;
     bool ok = false;
     wxString suffix;
     switch (ttype)
     {
-    case 1: ok = tps.solveAffine(srcPts, tgtPts);      suffix = "_AFFINE"; break;
-    case 2: ok = tps.solveSimilarity(srcPts, tgtPts);  suffix = "_SIM";    break;
-    case 3: ok = tps.solveRigid(srcPts, tgtPts);       suffix = "_RIGID";  break;
-    case 4: ok = tps.solveTranslation(srcPts, tgtPts); suffix = "_TRANS";  break;
-    default: ok = tps.solve(srcPts, tgtPts, lambda);   suffix = "_WARPED"; break;
+    case 1: ok = tps.solveAffine(srcPts, tgtPts);              suffix = "_AFFINE"; break;
+    case 2: ok = tps.solveSimilarity(srcPts, tgtPts, aspect);  suffix = "_SIM";    break;
+    case 3: ok = tps.solveRigid(srcPts, tgtPts, aspect);       suffix = "_RIGID";  break;
+    case 4: ok = tps.solveTranslation(srcPts, tgtPts);         suffix = "_TRANS";  break;
+    default: ok = tps.solve(srcPts, tgtPts, lambda);           suffix = "_WARPED"; break;
     }
     if (!ok)
     {
