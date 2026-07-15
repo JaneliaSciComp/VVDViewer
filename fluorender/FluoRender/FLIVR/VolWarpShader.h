@@ -98,13 +98,18 @@ namespace FLIVR
 			glm::vec4 prm;    // (eps, beta, c_armijo, 0)
 		};
 
-		// Per-output-brick parameters (push constants, <= 128 bytes).
+		// Per-dispatch parameters (push constants, <= 128 bytes). One dispatch
+		// covers an output sub-region: normally a whole brick, but bricks whose
+		// inverse-mapped source AABB exceeds the GPU 3D-texture limit are
+		// subdivided, each sub-region getting its own source tile.
 		struct WarpCompShaderBrickConst {
 			glm::vec4 volDimInv;     // (1/volNx, 1/volNy, 1/volNz, 0) full volume
-			glm::ivec4 brickOrigin;  // (ox, oy, oz, 0) output brick offset in volume
-			glm::ivec4 validDims;    // (mx, my, mz, 0) output brick valid data dims
+			glm::ivec4 brickOrigin;  // (ox, oy, oz, 0) sub-region offset in volume
+			glm::ivec4 validDims;    // (mx, my, mz, 0) sub-region valid data dims
 			glm::vec4 tileOrigin;    // source tile origin in source-normalized coords
 			glm::vec4 tileSizeInv;   // 1 / tile size in source-normalized coords
+			glm::ivec4 outOffset;    // (ox, oy, oz, 0) sub-region offset within the
+			                         // output brick image (0 when not subdivided)
 		};
 
 		static inline VkWriteDescriptorSet writeDescriptorSetStrageImage(

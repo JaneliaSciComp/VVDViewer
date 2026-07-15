@@ -63,6 +63,7 @@ namespace FLIVR
 		"	ivec4 validDims;\n"
 		"	vec4 tileOrigin;\n"
 		"	vec4 tileSizeInv;\n"
+		"	ivec4 outOffset;//sub-region offset within the output brick image\n"
 		"} pc;\n"
 		"\n"
 		"vec3 Fwd(vec3 m){\n"
@@ -110,7 +111,7 @@ namespace FLIVR
 		"	}\n"
 		"	vec3 tc = (m - pc.tileOrigin.xyz) * pc.tileSizeInv.xyz;\n"
 		"	float v = texture(srctile, clamp(tc, 0.0, 1.0)).r;\n"
-		"	imageStore(outimg, gid, vec4(v));\n"
+		"	imageStore(outimg, gid + pc.outOffset.xyz, vec4(v));\n"
 		"}\n";
 
 	VolWarpShader::VolWarpShader(VkDevice device, int out_bytes) :

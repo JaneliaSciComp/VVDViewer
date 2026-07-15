@@ -4801,6 +4801,46 @@ namespace FLIVR
 			return t;
 		};
 
+		//estimate the moving-source voxel range [st, st+whd) for an output
+		//sub-region [go, go+n) given in global output voxels: numeric inverse at
+		//a (SS+1)^3 sample grid, a 10% + 3 voxel margin, clamped to the volume
+		auto estimateTile = [&](int gox, int goy, int goz, int nx, int ny, int nz,
+			long& stx, long& sty, long& stz, size_t& w, size_t& h, size_t& d)
+		{
+			double mnx = 1e30, mny = 1e30, mnz = 1e30, mxx = -1e30, mxy = -1e30, mxz = -1e30;
+			const int SS = 3;
+			for (int kz = 0; kz <= SS; ++kz)
+			for (int ky = 0; ky <= SS; ++ky)
+			for (int kx = 0; kx <= SS; ++kx)
+			{
+				double fx = (gox + (double)kx / SS * nx) / ovx;
+				double fy = (goy + (double)ky / SS * ny) / ovy;
+				double fz = (goz + (double)kz / SS * nz) / ovz;
+				glm::dvec3 mm;
+				tps.evaluateInverse(glm::dvec3(fx, fy, fz), mm);
+				if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
+				if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
+				if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;
+			}
+			double mgx = 0.1 * (mxx - mnx) + 3.0 / svx;
+			double mgy = 0.1 * (mxy - mny) + 3.0 / svy;
+			double mgz = 0.1 * (mxz - mnz) + 3.0 / svz;
+			mnx -= mgx; mny -= mgy; mnz -= mgz;
+			mxx += mgx; mxy += mgy; mxz += mgz;
+			if (mnx < 0) mnx = 0; if (mny < 0) mny = 0; if (mnz < 0) mnz = 0;
+			if (mxx > 1) mxx = 1; if (mxy > 1) mxy = 1; if (mxz > 1) mxz = 1;
+
+			stx = (long)std::floor(mnx * svx); if (stx < 0) stx = 0; if (stx > svx - 1) stx = svx - 1;
+			sty = (long)std::floor(mny * svy); if (sty < 0) sty = 0; if (sty > svy - 1) sty = svy - 1;
+			stz = (long)std::floor(mnz * svz); if (stz < 0) stz = 0; if (stz > svz - 1) stz = svz - 1;
+			long etx = (long)std::ceil(mxx * svx); if (etx <= stx) etx = stx + 1; if (etx > svx) etx = svx;
+			long ety = (long)std::ceil(mxy * svy); if (ety <= sty) ety = sty + 1; if (ety > svy) ety = svy;
+			long etz = (long)std::ceil(mxz * svz); if (etz <= stz) etz = stz + 1; if (etz > svz) etz = svz;
+			w = (size_t)(etx - stx);
+			h = (size_t)(ety - sty);
+			d = (size_t)(etz - stz);
+		};
+
 		vkQueueWaitIdle(prim_dev->compute_queue);
 		VkCommandBuffer cmdbuf = prim_dev->createComputeCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
@@ -4809,6 +4849,15 @@ namespace FLIVR
 		if (wholeFits)
 			wholeTex = buildTile(0, 0, 0, (size_t)svx, (size_t)svy, (size_t)svz);
 
+		//an output sub-region (brick-local) and its precomputed source tile
+		struct OutRegion
+		{
+			int ox, oy, oz;      //offset within the output brick (voxels)
+			int nx, ny, nz;      //size (voxels)
+			long stx, sty, stz;  //source tile origin (voxels)
+			size_t w, h, d;      //source tile size (voxels)
+		};
+
 		for (unsigned int i = 0; i < bricks->size(); ++i)
 		{
 			TextureBrick* b = (*bricks)[i];
@@ -4816,70 +4865,64 @@ namespace FLIVR
 			if (bmx <= 0 || bmy <= 0 || bmz <= 0)
 				continue;
 
-			VolWarpShaderFactory::WarpCompShaderBrickConst pc = {};
-			pc.volDimInv = glm::vec4(1.0f / ovx, 1.0f / ovy, 1.0f / ovz, 0.0f);
-			pc.brickOrigin = glm::ivec4(b->ox(), b->oy(), b->oz(), 0);
-			pc.validDims = glm::ivec4(bmx, bmy, bmz, 0);
-
-			std::shared_ptr<vks::VTexture> srctex;
+			//subdivide the output brick until every sub-region's source tile fits
+			//the GPU 3D-texture limit: with large displacements one brick's
+			//inverse-mapped source AABB can exceed max3d, which a single (clamped)
+			//tile could not cover without artifacts
+			std::vector<OutRegion> regions;
 			if (wholeFits)
 			{
-				srctex = wholeTex;
-				pc.tileOrigin = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-				pc.tileSizeInv = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+				regions.push_back({ 0, 0, 0, bmx, bmy, bmz,
+					0, 0, 0, (size_t)svx, (size_t)svy, (size_t)svz });
 			}
 			else
 			{
-				//estimate the moving source AABB for this output brick (numeric inverse)
-				double mnx = 1e30, mny = 1e30, mnz = 1e30, mxx = -1e30, mxy = -1e30, mxz = -1e30;
-				const int SS = 3;
-				for (int kz = 0; kz <= SS; ++kz)
-				for (int ky = 0; ky <= SS; ++ky)
-				for (int kx = 0; kx <= SS; ++kx)
+				const size_t max_regions = 512; //safety cap (degenerate inverses)
+				std::vector<OutRegion> work;
+				work.push_back({ 0, 0, 0, bmx, bmy, bmz, 0, 0, 0, 0, 0, 0 });
+				while (!work.empty())
 				{
-					double fx = (b->ox() + (double)kx / SS * bmx) / ovx;
-					double fy = (b->oy() + (double)ky / SS * bmy) / ovy;
-					double fz = (b->oz() + (double)kz / SS * bmz) / ovz;
-					glm::dvec3 mm;
-					tps.evaluateInverse(glm::dvec3(fx, fy, fz), mm);
-					if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
-					if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
-					if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;
+					OutRegion r = work.back();
+					work.pop_back();
+					estimateTile(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz,
+						r.nx, r.ny, r.nz, r.stx, r.sty, r.stz, r.w, r.h, r.d);
+					bool oversized = r.w > (size_t)max3d || r.h > (size_t)max3d || r.d > (size_t)max3d;
+					bool splittable = (r.nx > 1 || r.ny > 1 || r.nz > 1) &&
+						regions.size() + work.size() + 2 <= max_regions;
+					if (oversized && splittable)
+					{
+						//bisect the longest output axis and re-examine both halves
+						OutRegion r0 = r, r1 = r;
+						if (r.nx >= r.ny && r.nx >= r.nz)
+						{
+							r0.nx = r.nx / 2;
+							r1.ox = r.ox + r0.nx; r1.nx = r.nx - r0.nx;
+						}
+						else if (r.ny >= r.nz)
+						{
+							r0.ny = r.ny / 2;
+							r1.oy = r.oy + r0.ny; r1.ny = r.ny - r0.ny;
+						}
+						else
+						{
+							r0.nz = r.nz / 2;
+							r1.oz = r.oz + r0.nz; r1.nz = r.nz - r0.nz;
+						}
+						work.push_back(r0);
+						work.push_back(r1);
+						continue;
+					}
+					if (oversized)
+					{
+						//cannot split further: clamp as a last resort so the GPU
+						//limit is never exceeded (edge voxels sample the tile border)
+						if (r.w > (size_t)max3d) r.w = (size_t)max3d;
+						if (r.h > (size_t)max3d) r.h = (size_t)max3d;
+						if (r.d > (size_t)max3d) r.d = (size_t)max3d;
+					}
+					regions.push_back(r);
 				}
-				double mgx = 0.1 * (mxx - mnx) + 3.0 / svx;
-				double mgy = 0.1 * (mxy - mny) + 3.0 / svy;
-				double mgz = 0.1 * (mxz - mnz) + 3.0 / svz;
-				mnx -= mgx; mny -= mgy; mnz -= mgz;
-				mxx += mgx; mxy += mgy; mxz += mgz;
-				if (mnx < 0) mnx = 0; if (mny < 0) mny = 0; if (mnz < 0) mnz = 0;
-				if (mxx > 1) mxx = 1; if (mxy > 1) mxy = 1; if (mxz > 1) mxz = 1;
-
-				long stx = (long)std::floor(mnx * svx); if (stx < 0) stx = 0; if (stx > svx - 1) stx = svx - 1;
-				long sty = (long)std::floor(mny * svy); if (sty < 0) sty = 0; if (sty > svy - 1) sty = svy - 1;
-				long stz = (long)std::floor(mnz * svz); if (stz < 0) stz = 0; if (stz > svz - 1) stz = svz - 1;
-				long etx = (long)std::ceil(mxx * svx); if (etx <= stx) etx = stx + 1; if (etx > svx) etx = svx;
-				long ety = (long)std::ceil(mxy * svy); if (ety <= sty) ety = sty + 1; if (ety > svy) ety = svy;
-				long etz = (long)std::ceil(mxz * svz); if (etz <= stz) etz = stz + 1; if (etz > svz) etz = svz;
-				size_t w = (size_t)(etx - stx);
-				size_t h = (size_t)(ety - sty);
-				size_t d = (size_t)(etz - stz);
-				//A single output brick can inverse-map to a source AABB wider than the
-				//GPU's max 3D texture size (moving volumes larger than that are the whole
-				//reason we tile). Clamp so GenTexture3D never gets an oversized request
-				//(which it would reject, yielding a null-image texture and a crash in
-				//vkCmdCopyBufferToImage). tileSizeInv below stays consistent with w/h/d;
-				//the few output voxels mapping past the loaded region sample the clamped
-				//tile edge instead of crashing.
-				if (w > (size_t)max3d) w = (size_t)max3d;
-				if (h > (size_t)max3d) h = (size_t)max3d;
-				if (d > (size_t)max3d) d = (size_t)max3d;
-
-				srctex = buildTile((size_t)stx, (size_t)sty, (size_t)stz, w, h, d);
-				pc.tileOrigin = glm::vec4((float)stx / svx, (float)sty / svy, (float)stz / svz, 0.0f);
-				pc.tileSizeInv = glm::vec4((float)svx / w, (float)svy / h, (float)svz / d, 0.0f);
 			}
-			if (!srctex)
-				continue;
 
 			b->prevent_tex_deletion(true);
 			std::shared_ptr<vks::VTexture> dsttex =
@@ -4888,62 +4931,99 @@ namespace FLIVR
 			if (!dsttex)
 				continue;
 
-			std::vector<VkWriteDescriptorSet> descriptorWrites;
-			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
-			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetSrc(VK_NULL_HANDLE, &srctex->descriptor));
-			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, &lm_buf.descriptor));
-			descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetUBO(VK_NULL_HANDLE, &ubo_buf.descriptor));
+			//the first transition may discard (the output volume starts empty);
+			//later sub-region passes must preserve what earlier passes wrote
+			VkImageLayout dst_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			bool written = false;
+			for (size_t ri = 0; ri < regions.size(); ++ri)
+			{
+				const OutRegion& r = regions[ri];
 
-			VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-			VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
+				VolWarpShaderFactory::WarpCompShaderBrickConst pc = {};
+				pc.volDimInv = glm::vec4(1.0f / ovx, 1.0f / ovy, 1.0f / ovz, 0.0f);
+				pc.brickOrigin = glm::ivec4(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz, 0);
+				pc.validDims = glm::ivec4(r.nx, r.ny, r.nz, 0);
+				pc.outOffset = glm::ivec4(r.ox, r.oy, r.oz, 0);
 
-			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
+				std::shared_ptr<vks::VTexture> srctex;
+				if (wholeFits)
+				{
+					srctex = wholeTex;
+					pc.tileOrigin = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+					pc.tileSizeInv = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
+				}
+				else
+				{
+					srctex = buildTile((size_t)r.stx, (size_t)r.sty, (size_t)r.stz, r.w, r.h, r.d);
+					pc.tileOrigin = glm::vec4((float)r.stx / svx, (float)r.sty / svy, (float)r.stz / svz, 0.0f);
+					pc.tileSizeInv = glm::vec4((float)svx / r.w, (float)svy / r.h, (float)svz / r.d, 0.0f);
+				}
+				if (!srctex)
+					continue;
 
-			vks::tools::setImageLayout(
-				cmdbuf,
-				dsttex->image,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_GENERAL,
-				dsttex->subresourceRange);
-			dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+				std::vector<VkWriteDescriptorSet> descriptorWrites;
+				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
+				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetSrc(VK_NULL_HANDLE, &srctex->descriptor));
+				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, &lm_buf.descriptor));
+				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetUBO(VK_NULL_HANDLE, &ubo_buf.descriptor));
 
-			prim_dev->vkCmdPushDescriptorSetKHR(
-				cmdbuf,
-				VK_PIPELINE_BIND_POINT_COMPUTE,
-				pipelineLayout,
-				0,
-				(uint32_t)descriptorWrites.size(),
-				descriptorWrites.data());
+				VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+				VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
 
-			vkCmdPushConstants(
-				cmdbuf,
-				pipelineLayout,
-				VK_SHADER_STAGE_COMPUTE_BIT,
-				0,
-				sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst),
-				&pc);
+				vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
 
-			uint32_t gx = bmx / 4 + ((bmx % 4) > 0 ? 1 : 0);
-			uint32_t gy = bmy / 4 + ((bmy % 4) > 0 ? 1 : 0);
-			uint32_t gz = bmz / 4 + ((bmz % 4) > 0 ? 1 : 0);
-			vkCmdDispatch(cmdbuf, gx, gy, gz);
+				vks::tools::setImageLayout(
+					cmdbuf,
+					dsttex->image,
+					dst_layout,
+					VK_IMAGE_LAYOUT_GENERAL,
+					dsttex->subresourceRange);
+				dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+				dst_layout = VK_IMAGE_LAYOUT_GENERAL;
 
-			vkEndCommandBuffer(cmdbuf);
+				prim_dev->vkCmdPushDescriptorSetKHR(
+					cmdbuf,
+					VK_PIPELINE_BIND_POINT_COMPUTE,
+					pipelineLayout,
+					0,
+					(uint32_t)descriptorWrites.size(),
+					descriptorWrites.data());
 
-			VkSubmitInfo submitInfo = vks::initializers::submitInfo();
-			submitInfo.commandBufferCount = 1;
-			submitInfo.pCommandBuffers = &cmdbuf;
+				vkCmdPushConstants(
+					cmdbuf,
+					pipelineLayout,
+					VK_SHADER_STAGE_COMPUTE_BIT,
+					0,
+					sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst),
+					&pc);
 
-			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-			VkFence fence;
-			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
-			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
-			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
+				uint32_t gx = r.nx / 4 + ((r.nx % 4) > 0 ? 1 : 0);
+				uint32_t gy = r.ny / 4 + ((r.ny % 4) > 0 ? 1 : 0);
+				uint32_t gz = r.nz / 4 + ((r.nz % 4) > 0 ? 1 : 0);
+				vkCmdDispatch(cmdbuf, gx, gy, gz);
 
-			b->set_dirty(0, true);
-			b->set_modified(0, true);
-			//per-brick temp source texture (srctex) is released here (after the fence)
+				vkEndCommandBuffer(cmdbuf);
+
+				VkSubmitInfo submitInfo = vks::initializers::submitInfo();
+				submitInfo.commandBufferCount = 1;
+				submitInfo.pCommandBuffers = &cmdbuf;
+
+				VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
+				VkFence fence;
+				VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+				VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
+				VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+				vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
+
+				written = true;
+				//per-sub-region temp source texture (srctex) is released here (after the fence)
+			}
+
+			if (written)
+			{
+				b->set_dirty(0, true);
+				b->set_modified(0, true);
+			}
 		}
 
 		if (tex_->isBrxml())
