@@ -134,13 +134,20 @@ namespace FLIVR
 		inv_(false),
 		compression_(false),
 		m_mask_hide_mode(VOL_MASK_HIDE_NONE),
+		est_thresh_(0.0),
 		m_use_fog(false),
+		m_fog_intensity(0.0),
+		m_fog_start(0.0),
+		m_fog_end(0.0),
         m_na_mode(false),
         m_highlight(false),
         m_highlight_th(0.0)
 	{
 		//mode
 		mode_ = MODE_OVER;
+#ifdef _DARWIN
+		slice_mode_ = false;
+#endif
 		//done loop
 		for (int i=0; i<TEXTURE_RENDER_MODES; i++)
 			done_loop_[i] = false;
@@ -183,6 +190,7 @@ namespace FLIVR
 		hi_thresh_(copy.hi_thresh_),
 		color_(copy.color_),
 		mask_color_(copy.mask_color_),
+		mask_alpha_(copy.mask_alpha_),
 		mask_color_set_(copy.mask_color_set_),
 		mask_thresh_(0.0),
 		alpha_(copy.alpha_),
@@ -221,6 +229,12 @@ namespace FLIVR
 		inv_(copy.inv_),
 		compression_(copy.compression_),
 		m_mask_hide_mode(copy.m_mask_hide_mode),
+		est_thresh_(copy.est_thresh_),
+		m_use_fog(copy.m_use_fog),
+		m_fog_intensity(copy.m_fog_intensity),
+		m_fog_start(copy.m_fog_start),
+		m_fog_end(copy.m_fog_end),
+		m_na_mode(copy.m_na_mode),
         m_highlight(false),
         m_highlight_th(copy.m_highlight_th)
 	{
@@ -232,10 +246,14 @@ namespace FLIVR
 			Plane* plane = new Plane(*copy.planes_[i]);
 			planes_.push_back(plane);
 		}
+#ifdef _DARWIN
+		slice_mode_ = false;
+#endif
 		//done loop
 		for (int i=0; i<TEXTURE_RENDER_MODES; i++)
 			done_loop_[i] = false;
 
+		m_fog_col = copy.m_fog_col;
 		m_clear_color = copy.m_clear_color;
 
 		if (m_vulkan)
@@ -269,6 +287,9 @@ namespace FLIVR
 		}
 		planes_.clear();
 
+		if (!m_vulkan)
+			return;
+
 		for (auto vdev : m_vulkan->devices)
 		{
 			if (m_vertbufs.count(vdev) > 0)
@@ -293,10 +314,12 @@ namespace FLIVR
 			}
 			if (m_segUniformBuffers.count(vdev) > 0) 
 				m_segUniformBuffers[vdev].frag_base.destroy();
-			if (m_commandBuffers.count(vdev) > 0) 
+			if (m_commandBuffers.count(vdev) > 0)
 				vkFreeCommandBuffers(vdev->logicalDevice, vdev->commandPool, 1, &m_commandBuffers[vdev]);
-			if (m_seg_commandBuffers.count(vdev) > 0) 
+			if (m_seg_commandBuffers.count(vdev) > 0)
 				vkFreeCommandBuffers(vdev->logicalDevice, vdev->compute_commandPool, 1, &m_seg_commandBuffers[vdev]);
+			if (m_compute_fences.count(vdev) > 0)
+				vkDestroyFence(vdev->logicalDevice, m_compute_fences[vdev], nullptr);
 		}
 	}
 
@@ -956,6 +979,18 @@ namespace FLIVR
 		return true;
 	}
 
+	VkFence VolumeRenderer::getComputeFence(vks::VulkanDevice* dev)
+	{
+		auto it = m_compute_fences.find(dev);
+		if (it != m_compute_fences.end())
+			return it->second;
+		VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
+		VkFence fence = VK_NULL_HANDLE;
+		VK_CHECK_RESULT(vkCreateFence(dev->logicalDevice, &fenceInfo, nullptr, &fence));
+		m_compute_fences[dev] = fence;
+		return fence;
+	}
+
 	void VolumeRenderer::eval_ml_mode(Texture* ext_msk, Texture* ext_lbl)
 	{
 		//reassess the mask/label mode
@@ -968,7 +1003,7 @@ namespace FLIVR
 			label_ = false;
 			break;
 		case 1:
-			if (tex_->nmask() == -1 && (ext_msk && ext_msk->nmask() == -1))
+			if (tex_->nmask() == -1 && (!ext_msk || ext_msk->nmask() == -1))
 			{
 				mask_ = false;
 				ml_mode_ = 0;
@@ -978,7 +1013,7 @@ namespace FLIVR
 			label_ = false;
 			break;
 		case 2:
-			if (tex_->nmask() == -1 && (ext_msk && ext_msk->nmask() == -1))
+			if (tex_->nmask() == -1 && (!ext_msk || ext_msk->nmask() == -1))
 			{
 				mask_ = false;
 				ml_mode_ = 0;
@@ -988,7 +1023,7 @@ namespace FLIVR
 			label_ = false;
 			break;
 		case 3:
-			if (tex_->nlabel() == -1 && (ext_lbl && ext_lbl->nlabel() == -1))
+			if (tex_->nlabel() == -1 && (!ext_lbl || ext_lbl->nlabel() == -1))
 			{
 				label_ = false;
 				ml_mode_ = 0;
@@ -998,7 +1033,7 @@ namespace FLIVR
 			mask_ = false;
 			break;
 		case 4:
-			if (tex_->nlabel() == -1 && (ext_lbl && ext_lbl->nlabel() == -1))
+			if (tex_->nlabel() == -1 && (!ext_lbl || ext_lbl->nlabel() == -1))
 			{
 				if (tex_->nmask() > -1 || (ext_msk && ext_msk->nmask() > -1))
 				{
@@ -1282,8 +1317,8 @@ namespace FLIVR
 
 	VolumeRenderer::VRayPipeline VolumeRenderer::prepareVRayPipeline(vks::VulkanDevice* device, int mode, int update_order, int colormap_mode, bool persp, int multi_mode, bool na_mode, Texture* ext_msk, bool highlight)
 	{
-		VRayPipeline ret_pipeline;
-        
+		VRayPipeline ret_pipeline = {};
+
 #ifdef _DARWIN
         bool cur_solid = solid_;
         if (slice_mode_)
@@ -1304,6 +1339,15 @@ namespace FLIVR
         if (slice_mode_)
             solid_ = cur_solid;
 #endif
+
+		if (!shader)
+		{
+			//shader compilation failed; return an empty pipeline (vkpipeline == VK_NULL_HANDLE)
+#ifdef _WIN32
+			OutputDebugStringA("VolumeRenderer::prepareVRayPipeline: shader compilation failed\n");
+#endif
+			return ret_pipeline;
+		}
 
 		if (m_prev_vray_pipeline >= 0) {
 			if (m_vray_pipelines[m_prev_vray_pipeline].device == device &&
@@ -2674,6 +2718,8 @@ namespace FLIVR
 		bool lbl_exists = tex_->nlabel() != -1 || (ext_lbl && ext_lbl->nlabel() != -1);
         bool msk_exists = tex_->nmask() != -1 || (ext_msk && ext_msk->nmask() != -1);
 		VRayPipeline pipeline = prepareVRayPipeline(prim_dev, mode_, update_order_, colormap_mode_, !orthographic_p, 0, !label_ && m_na_mode && lbl_exists, ext_msk);
+		if (pipeline.vkpipeline == VK_NULL_HANDLE)
+			return;
 		VkPipelineLayout pipelineLayout = m_vulkan->vray_shader_factory_->pipeline_[prim_dev].pipelineLayout;
 
 		prepareVRayVertexBuffers(prim_dev);
@@ -2718,9 +2764,9 @@ namespace FLIVR
 		//std::cout << "vu w: " << m_vulkan->destWidth << " h: " << m_vulkan->destHeight << std::endl;
 		//std::cout << "3d w: " << blend_framebuffer_->w << " h: " << blend_framebuffer_->h << std::endl;
 
-		VRayShaderFactory::VRayVertShaderUBO vert_ubo;
-		VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo;
-		VRayShaderFactory::VRayFragShaderBrickConst frag_const;
+		VRayShaderFactory::VRayVertShaderUBO vert_ubo = {};
+		VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo = {};
+		VRayShaderFactory::VRayFragShaderBrickConst frag_const = {};
 
 		Vector light = view_ray.direction();
 		light.safe_normalize();
@@ -2812,6 +2858,8 @@ namespace FLIVR
 
 		frag_ubo.proj_mat_inv = glm::inverse(m_proj_mat);
 		frag_ubo.mv_mat_inv = glm::inverse(m_mv_mat2);
+		frag_ubo.proj_mat = m_proj_mat;
+		frag_ubo.mv_mat = m_mv_mat2;
 
 		vert_ubuf.copyTo(&vert_ubo, sizeof(VRayShaderFactory::VRayVertShaderUBO), vert_ubuf_offset);
 		frag_ubuf.copyTo(&frag_ubo, sizeof(VRayShaderFactory::VRayFragShaderBaseUBO), frag_ubuf_offset);
@@ -2871,6 +2919,9 @@ namespace FLIVR
             
             VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
             vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
+
+            //the pipeline is loop-invariant: bind once per command buffer
+            vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkpipeline);
 		}
 
 		int count = 0;
@@ -2896,7 +2947,6 @@ namespace FLIVR
 			}
 
 			TextureBrick* b = (*bricks)[i];
-			std::vector<VkWriteDescriptorSet> descriptorWrites = descriptorWritesBase;
 
 			if (mem_swap_ && start_update_loop_ && !done_update_loop_)
 			{
@@ -3035,7 +3085,7 @@ namespace FLIVR
 					{
 						if (ext_lbl && ext_lbl->nlabel() != -1)
 						{
-							TextureBrick* nextlb = (*msk_bricks)[i];
+							TextureBrick* nextlb = (*lbl_bricks)[i];
 							if (prim_dev->findTexInPool(nextlb, nextlb->nlabel(), nextlb->nx(), nextlb->ny(), nextlb->nz(), nextlb->nb(nextlb->nlabel()), nextlb->tex_format(nextlb->nlabel())) < 0)
 								end_pass = true;
 						}
@@ -3134,17 +3184,18 @@ namespace FLIVR
 				(mask_ || label_) ? false : true, &tex_updated, !mem_swap_ ? nullptr : &(semaphores.back()));
 			if (!brktex)
 			{
-				prim_dev->m_cur_semaphore_id--;
-                semaphores.clear();
+				//roll back only the semaphore pushed for this iteration (count==0);
+				//when count > 0 the vector still holds settings needed by the pending submit
+				if (mem_swap_ && count == 0 && !semaphores.empty())
+				{
+					prim_dev->m_cur_semaphore_id--;
+					semaphores.pop_back();
+				}
 				continue;
 			}
 			b->prevent_tex_deletion(true);
 			if (tex_updated && mem_swap_)
-            {
 				semaphores.push_back(prim_dev->GetNextRenderSemaphoreSettings());
-                if (!end_pass)
-                    int dummy = 0;
-            }
 
 			if (mask_)
             {
@@ -3242,11 +3293,7 @@ namespace FLIVR
 #endif
 			}
 			if (mask_updated && mem_swap_)
-            {
 				semaphores.push_back(prim_dev->GetNextRenderSemaphoreSettings());
-                if (!end_pass)
-                    int dummy = 0;
-            }
 
 			if (label_)
 				lbltex = load_brick_label(prim_dev, bricks, i, true,true, &label_updated, !mem_swap_ ? nullptr : &(semaphores.back()));
@@ -3265,6 +3312,9 @@ namespace FLIVR
 				semaphores.push_back(prim_dev->GetNextRenderSemaphoreSettings());
 
 			b->prevent_tex_deletion(false);
+
+			//copied here, after all culling paths, to avoid a per-brick heap allocation for skipped bricks
+			std::vector<VkWriteDescriptorSet> descriptorWrites = descriptorWritesBase;
 
 			brktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			descriptorWrites.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 0, &brktex->descriptor));
@@ -3285,7 +3335,13 @@ namespace FLIVR
 			vtest.normalize();
 */
 			if (tmin < 0.0)
+			{
 				tmin = tmin - dt * ceil(tmin / dt);
+				//the ray now starts at the clamped position; recompute the step count
+				//for the remaining range (same convention as compute_slicenum) so the
+				//shader does not march far past tmax
+				slicenum = (tmax - tmin < dt) ? 1 : (unsigned int)((tmax - tmin) / dt);
+			}
 			Point p = view_ray.origin() + view_ray.direction() * tmin;
 			Point p2 = view_ray.origin() + view_ray.direction() * tmax;
 			Vector dv = view_ray.direction() * dt;
@@ -3333,6 +3389,9 @@ namespace FLIVR
                 
                 VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
                 vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
+
+                //the pipeline is loop-invariant: bind once per command buffer
+                vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkpipeline);
 			}
 
 			if (!descriptorWrites.empty())
@@ -3371,8 +3430,6 @@ namespace FLIVR
 
 				clear = false;
 			}
-
-			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkpipeline);
 
 			vkCmdPushConstants(
 				cmdbuf,
@@ -3934,8 +3991,7 @@ namespace FLIVR
 		//////////////////////////////////////////
 		//render bricks
 
-		// Flush the queue if we're rebuilding the command buffer after a pipeline change to ensure it's not currently in use
-		vkQueueWaitIdle(prim_dev->compute_queue);
+		//no queue drain needed: every submit of this command buffer is fence-waited below
 		
 		for (unsigned int i=0; i < bricks->size(); i++)
 		{
@@ -3945,20 +4001,20 @@ namespace FLIVR
 			
 			b->prevent_tex_deletion(true);
 			brktex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, compression_);
-			if (!brktex) continue;
-			
+			if (!brktex) { b->prevent_tex_deletion(false); continue; }
+
             if (ext_msk && ext_msk->nmask() != -1)
                 msktex = load_brick_mask(prim_dev, msk_bricks, i, VK_FILTER_NEAREST, false, 0, true);
             else
                 msktex = load_brick_mask(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
-            
-            
-			if (!msktex) continue;
-            
+
+
+			if (!msktex) { b->prevent_tex_deletion(false); continue; }
+
 			if (use_stroke)
 			{
 				stroketex = load_brick_stroke(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
-				if (!stroketex) continue;
+				if (!stroketex) { b->prevent_tex_deletion(false); continue; }
 			}
 			b->prevent_tex_deletion(false);
 
@@ -3972,21 +4028,25 @@ namespace FLIVR
 			//layout transition to VK_IMAGE_LAYOUT_GENERAL
 			if (write_to_vol)
 			{
+				//use the actual current layout: UNDEFINED as oldLayout allows the
+				//implementation to discard the contents this shader reads
 				vks::tools::setImageLayout(
 					cmdbuf,
 					brktex->image,
-					VK_IMAGE_LAYOUT_UNDEFINED,
+					brktex->uploaded ? brktex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 					VK_IMAGE_LAYOUT_GENERAL,
 					brktex->subresourceRange);
 				brktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+				brktex->uploaded = true;
 			}
 			vks::tools::setImageLayout(
 				cmdbuf,
 				msktex->image,
-				VK_IMAGE_LAYOUT_UNDEFINED,
+				msktex->uploaded ? msktex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_GENERAL,
 				msktex->subresourceRange);
 			msktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			msktex->uploaded = true;
 
 			if (brktex)
 			{
@@ -4007,10 +4067,11 @@ namespace FLIVR
 				vks::tools::setImageLayout(
 					cmdbuf,
 					stroketex->image,
-					VK_IMAGE_LAYOUT_UNDEFINED,
+					stroketex->uploaded ? stroketex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 					VK_IMAGE_LAYOUT_GENERAL,
 					stroketex->subresourceRange);
 				stroketex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+				stroketex->uploaded = true;
 				descriptorWrites.push_back(SegShaderFactory::writeDescriptorSetStroke(VK_NULL_HANDLE, &stroketex->descriptor));
 			}
 			
@@ -4059,16 +4120,14 @@ namespace FLIVR
 			submitInfo.commandBufferCount = 1;
 			submitInfo.pCommandBuffers = &cmdbuf;
 
-			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-			VkFence fence;
-			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+			//reuse a cached fence: create/destroy per brick costs three driver round-trips
+			VkFence fence = getComputeFence(prim_dev);
+			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
 
 			// Submit to the queue
 			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
 			// Wait for the fence to signal that command buffer has finished executing
 			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-
-			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
 
 			b->set_dirty(b->nmask(), true);
             b->set_modified(b->nmask(), true);
@@ -4148,8 +4207,7 @@ namespace FLIVR
 		////////////////////////////////////////////////////////
 		// render bricks
 
-		// Flush the queue if we're rebuilding the command buffer after a pipeline change to ensure it's not currently in use
-		vkQueueWaitIdle(prim_dev->compute_queue);
+		//no queue drain needed: every submit of this command buffer is fence-waited below
 
 		for (unsigned int i=0; i < bricks->size(); i++)
 		{
@@ -4159,14 +4217,14 @@ namespace FLIVR
 
 			b->prevent_tex_deletion(true);
 			brktex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, compression_);
-			if (!brktex) continue;
+			if (!brktex) { b->prevent_tex_deletion(false); continue; }
 			if (has_mask)
 			{
 				msktex = load_brick_mask(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
-				if (!msktex) continue;
+				if (!msktex) { b->prevent_tex_deletion(false); continue; }
 			}
 			lbltex = load_brick_label(prim_dev, bricks, i, true);
-			if (!lbltex) continue;
+			if (!lbltex) { b->prevent_tex_deletion(false); continue; }
 			b->prevent_tex_deletion(false);
 
 			
@@ -4176,14 +4234,15 @@ namespace FLIVR
 
 			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
 
-			//layout transition to VK_IMAGE_LAYOUT_GENERAL
+			//layout transition to VK_IMAGE_LAYOUT_GENERAL (from the actual current layout)
 			vks::tools::setImageLayout(
 				cmdbuf,
 				lbltex->image,
-				VK_IMAGE_LAYOUT_UNDEFINED,
+				lbltex->uploaded ? lbltex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_GENERAL,
 				lbltex->subresourceRange);
 			lbltex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			lbltex->uploaded = true;
 
 			if (brktex)
 				descriptorWrites.push_back(SegShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 0, &brktex->descriptor));
@@ -4238,16 +4297,14 @@ namespace FLIVR
 			submitInfo.commandBufferCount = 1;
 			submitInfo.pCommandBuffers = &cmdbuf;
 
-			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-			VkFence fence;
-			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+			//reuse a cached fence: create/destroy per brick costs three driver round-trips
+			VkFence fence = getComputeFence(prim_dev);
+			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
 
 			// Submit to the queue
 			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
 			// Wait for the fence to signal that command buffer has finished executing
 			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-
-			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
 
 			b->set_dirty(b->nlabel(), true);
             b->set_modified(b->nlabel(), true);
@@ -4448,7 +4505,7 @@ namespace FLIVR
 			};
 		}
 
-		vkQueueWaitIdle(prim_dev->compute_queue);
+		//no queue drain needed: every compute submit below is fence-waited
 
 		VkCommandBuffer cmdbuf = prim_dev->createComputeCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 		
@@ -4470,42 +4527,48 @@ namespace FLIVR
 			if (b_a) b_a->prevent_tex_deletion(true);
 			if (b_b) b_b->prevent_tex_deletion(true);
 			if (b_c) b_c->prevent_tex_deletion(true);
+			auto unlock_bricks = [&]() {
+				b->prevent_tex_deletion(false);
+				if (b_a) b_a->prevent_tex_deletion(false);
+				if (b_b) b_b->prevent_tex_deletion(false);
+				if (b_c) b_c->prevent_tex_deletion(false);
+			};
 
 			dsttex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, false, 0, false);
-			if (!dsttex) continue;
+			if (!dsttex) { unlock_bricks(); continue; }
 			descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
 
 			if (bricks_a)
 			{
 				tex_a = vr_a->load_brick(prim_dev, 0, 0, bricks_a, i, VK_FILTER_NEAREST, false, 0, false);
-				if (!tex_a) continue;
+				if (!tex_a) { unlock_bricks(); continue; }
 				descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 0, &tex_a->descriptor));
 			}
-				
+
 			if (bricks_b)
 			{
 				tex_b = vr_b->load_brick(prim_dev, 0, 0, bricks_b, i, VK_FILTER_NEAREST, false, 0, false);
-				if (!tex_b) continue;
+				if (!tex_b) { unlock_bricks(); continue; }
 				descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 1, &tex_b->descriptor));
 			}
 
 			if (bricks_c)
 			{
 				tex_c = vr_c->load_brick(prim_dev, 0, 0, bricks_c, i, VK_FILTER_NEAREST, false, 0, false);
-				if (!tex_c) continue;
+				if (!tex_c) { unlock_bricks(); continue; }
 				descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 4, &tex_c->descriptor));
 			}
-				
+
 			if ((type == 5 || type == 6 || type == 7) && bricks_a)
 			{
 				if (ext_msk && ext_msk->nmask() != -1 && msk_bricks)
 					mask = vr_a->load_brick_mask(prim_dev, msk_bricks, i, VK_FILTER_NEAREST, false, 0, true);
 				else
 					mask = vr_a->load_brick_mask(prim_dev, bricks_a, i, VK_FILTER_NEAREST, false, 0, true);
-				if (!mask) continue;
+				if (!mask) { unlock_bricks(); continue; }
 				descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 1, &mask->descriptor));
 			}
-				
+
 			if (type==8 || type==10 || type==11)
 			{
 				if (bricks_a)
@@ -4514,36 +4577,34 @@ namespace FLIVR
 						mask = vr_a->load_brick_mask(prim_dev, msk_bricks, i, VK_FILTER_NEAREST, false, 0, true);
 					else
 						mask = vr_a->load_brick_mask(prim_dev, bricks_a, i, VK_FILTER_NEAREST, false, 0, true);
-					if (!mask) continue;
+					if (!mask) { unlock_bricks(); continue; }
 					descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 2, &mask->descriptor));
 
 					if (ext_lbl && ext_lbl->nlabel() != -1 && lbl_bricks)
 						label = vr_a->load_brick_label(prim_dev, lbl_bricks, i, false, false);
 					else
 						label = vr_a->load_brick_label(prim_dev, bricks_a, i, false, false);
-					if (!label) continue;
+					if (!label) { unlock_bricks(); continue; }
 					descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 3, &label->descriptor));
 				}
 			}
 
-			b->prevent_tex_deletion(false);
-			if (b_a) b_a->prevent_tex_deletion(false);
-			if (b_b) b_b->prevent_tex_deletion(false);
-			if (b_c) b_c->prevent_tex_deletion(false);
+			unlock_bricks();
 
 			VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 			VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
 
 			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
 
-			//layout transition to VK_IMAGE_LAYOUT_GENERAL
+			//layout transition to VK_IMAGE_LAYOUT_GENERAL (from the actual current layout)
 			vks::tools::setImageLayout(
 				cmdbuf,
 				dsttex->image,
-				VK_IMAGE_LAYOUT_UNDEFINED,
+				dsttex->uploaded ? dsttex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_GENERAL,
 				dsttex->subresourceRange);
 			dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			dsttex->uploaded = true;
 
 			if (!descriptorWrites.empty())
 			{
@@ -4578,16 +4639,14 @@ namespace FLIVR
 			submitInfo.commandBufferCount = 1;
 			submitInfo.pCommandBuffers = &cmdbuf;
 
-			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-			VkFence fence;
-			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+			//reuse a cached fence: create/destroy per brick costs three driver round-trips
+			VkFence fence = getComputeFence(prim_dev);
+			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
 
 			// Submit to the queue
 			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
 			// Wait for the fence to signal that command buffer has finished executing
 			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-
-			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
 
 			b->set_dirty(0, true);
             b->set_modified(0, true);
@@ -4841,7 +4900,7 @@ namespace FLIVR
 			d = (size_t)(etz - stz);
 		};
 
-		vkQueueWaitIdle(prim_dev->compute_queue);
+		//no queue drain needed: every compute submit below is fence-waited
 		VkCommandBuffer cmdbuf = prim_dev->createComputeCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
 		//when the whole source fits in one texture, build it once and reuse
@@ -5008,12 +5067,11 @@ namespace FLIVR
 				submitInfo.commandBufferCount = 1;
 				submitInfo.pCommandBuffers = &cmdbuf;
 
-				VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-				VkFence fence;
-				VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+				//reuse a cached fence: create/destroy per dispatch costs three driver round-trips
+				VkFence fence = getComputeFence(prim_dev);
+				VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
 				VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
 				VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-				vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
 
 				written = true;
 				//per-sub-region temp source texture (srctex) is released here (after the fence)
@@ -5394,7 +5452,7 @@ namespace FLIVR
         cal_const.loc2_scscale_th = { inv_ ? -scalar_scale_ : scalar_scale_, gm_scale_, lo_thresh_, hi_thresh_ };
         cal_const.loc3_gamma_offset = { 1.0 / gamma3d_, gm_thresh_, offset_, sw_ };
 
-		vkQueueWaitIdle(prim_dev->compute_queue);
+		//no queue drain needed: every compute submit below is fence-waited
 
 		VkCommandBuffer cmdbuf = prim_dev->createComputeCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
@@ -5412,15 +5470,15 @@ namespace FLIVR
 			b->prevent_tex_deletion(true);
 
 			reftex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, false, 0, false);
-			if (!reftex) continue;
+			if (!reftex) { b->prevent_tex_deletion(false); continue; }
 			descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 0, &reftex->descriptor));
 
 			stroketex = load_brick_stroke(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
-			if (!stroketex) continue;
+			if (!stroketex) { b->prevent_tex_deletion(false); continue; }
 			descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 1, &stroketex->descriptor));
-			
+
 			masktex = load_brick_mask(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
-			if (!masktex) continue;
+			if (!masktex) { b->prevent_tex_deletion(false); continue; }
 			descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &masktex->descriptor));
 
 			b->prevent_tex_deletion(false);
@@ -5430,14 +5488,15 @@ namespace FLIVR
 
 			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
 
-			//layout transition to VK_IMAGE_LAYOUT_GENERAL
+			//layout transition to VK_IMAGE_LAYOUT_GENERAL (from the actual current layout)
 			vks::tools::setImageLayout(
 				cmdbuf,
 				masktex->image,
-				VK_IMAGE_LAYOUT_UNDEFINED,
+				masktex->uploaded ? masktex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_GENERAL,
 				masktex->subresourceRange);
 			masktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			masktex->uploaded = true;
 
 			if (!descriptorWrites.empty())
 			{
@@ -5472,17 +5531,15 @@ namespace FLIVR
 			submitInfo.commandBufferCount = 1;
 			submitInfo.pCommandBuffers = &cmdbuf;
 
-			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-			VkFence fence;
-			VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
+			//reuse a cached fence: create/destroy per brick costs three driver round-trips
+			VkFence fence = getComputeFence(prim_dev);
+			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
 
 			// Submit to the queue
 			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
 			// Wait for the fence to signal that command buffer has finished executing
 			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
 
-			vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
-            
             b->set_dirty(b->nmask(), true);
             b->set_modified(b->nmask(), true);
 		}

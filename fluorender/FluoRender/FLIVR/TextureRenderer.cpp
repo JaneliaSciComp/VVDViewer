@@ -1855,12 +1855,8 @@ namespace FLIVR
 		int nx = brick->nx();
 		int ny = brick->ny();
 		int nz = brick->nz();
-		if (compression) {
-			VkFormatProperties fprops;
-			vkGetPhysicalDeviceFormatProperties(device->physicalDevice, VK_FORMAT_BC4_UNORM_BLOCK, &fprops);
-			if (!fprops.optimalTilingFeatures)
-				compression = false;
-		}
+		if (compression && !device->bc4_available)
+			compression = false;
 		brick->set_compression(compression);
 		VkFormat texformat = brick->tex_format(c);
 
@@ -1954,9 +1950,6 @@ namespace FLIVR
 
 					bool brkerror = false;
 					void *texdata = brick->getBrickData();
-					if (texdata != brick->getBrickData())
-						int dummy = 0;
-					void** testptr = &texdata;
 					if (texdata)
 						device->UploadTexture(result, texdata, !mem_swap_ || (flush && semaphore == nullptr), semaphore, !swapped);
 					else

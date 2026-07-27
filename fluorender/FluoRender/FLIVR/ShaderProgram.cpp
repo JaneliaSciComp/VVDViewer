@@ -35,6 +35,7 @@
 #include <sstream>
 #include <iostream>
 #include <cfloat>
+#include <mutex>
 
 using std::string;
 
@@ -139,8 +140,6 @@ namespace FLIVR
 
 		valid_ = true;
 
-		finalize_glslang();
-
 		return false;
 
 	}
@@ -184,7 +183,10 @@ namespace FLIVR
 	}
 
 	void ShaderProgram::init_glslang() {
-		glslang::InitializeProcess();
+		//glslang process initialization rebuilds the built-in symbol tables, which is
+		//expensive; initialize once for the process lifetime instead of per compile
+		static std::once_flag once;
+		std::call_once(once, []() { glslang::InitializeProcess(); });
 	}
 
 	void ShaderProgram::finalize_glslang() {

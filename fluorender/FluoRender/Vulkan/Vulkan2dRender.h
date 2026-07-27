@@ -2,6 +2,8 @@
 #include <FLIVR/ImgShader.h>
 #include <vector>
 #include <memory>
+#include <map>
+#include <tuple>
 
 #ifndef _Vulkan2dRender_H_
 #define _Vulkan2dRender_H_
@@ -64,6 +66,11 @@ public:
 	FLIVR::ImgShaderFactory::ImgPipelineSettings m_img_pipeline_settings;
 	std::vector<V2dPipeline> m_pipelines;
 	int prev_pipeline;
+
+	//render passes cached on their true key (format, attachment count, swapchain flag):
+	//identical keys return the identical handle, so framebuffers keyed on the render
+	//pass handle (replaceRenderPass) are no longer destroyed and recreated mid-frame
+	std::map<std::tuple<VkFormat, int, bool>, VkRenderPass> m_renderpass_cache;
 
 	bool m_init;
 	std::shared_ptr<VVulkan> m_vulkan;

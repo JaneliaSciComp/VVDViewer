@@ -76,6 +76,9 @@ namespace vks
 		/** @brief Set to true when the debug marker extension is detected */
 		bool enableDebugMarkers = false;
 
+		/** @brief BC4 optimal-tiling support, cached at device creation */
+		bool bc4_available = false;
+
 		/** @brief Contains queue family indices */
 		struct
 		{
@@ -90,7 +93,20 @@ namespace vks
 
 		VkCommandPool cmd_pool;
 
+		//staging buffer for synchronous transfers (downloads, 2D sub-uploads, buffer uploads)
 		vks::Buffer staging_buf;
+
+		//ring of staging buffers for 3D texture uploads: while the GPU copies out of one
+		//slot, the CPU can fill the next one. Each slot's fence guards its reuse.
+		struct StagingRingSlot {
+			vks::Buffer buf;
+			VkFence fence = VK_NULL_HANDLE;
+			bool pending = false;
+		};
+		static const uint32_t STAGING_RING_SIZE = 3;
+		StagingRingSlot m_staging_ring[STAGING_RING_SIZE];
+		uint32_t m_staging_ring_idx = 0;
+		StagingRingSlot* acquireUploadStagingSlot(VkDeviceSize size);
 
 		VkSampler linear_sampler = VK_NULL_HANDLE;
 		VkSampler nearest_sampler = VK_NULL_HANDLE;
@@ -100,6 +116,10 @@ namespace vks
 		double mem_limit = 0.0;
 		double available_mem = 0.0;
 		std::vector<TexParam> tex_pool;
+
+		//textures evicted from tex_pool this frame; kept alive until the next frame
+		//boundary so in-flight command buffers can still reference them
+		std::vector<std::shared_ptr<VTexture>> retired_texs;
 
 		void setMemoryLimit(double limit=0);
 		void clear_tex_pool();
@@ -140,7 +160,9 @@ namespace vks
 		void setupDescriptorPool();
 
 		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+		std::string pipeline_cache_path;
 		void createPipelineCache();
+		void savePipelineCache();
 
 		void prepareSamplers();
 		void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
@@ -150,7 +172,7 @@ namespace vks
 		bool UploadTexture3D(const std::shared_ptr<VTexture> &tex, void *data, VkOffset3D offset, uint32_t ypitch, uint32_t zpitch, bool flush=true, vks::VulkanSemaphoreSettings* semaphore=nullptr, bool sync=true);
 		bool UploadSubTexture2D(const std::shared_ptr<VTexture>& tex, void* data, VkOffset2D offset, VkExtent2D extent, bool sync=true);
 		bool UploadTexture(const std::shared_ptr<VTexture> &tex, void *data, bool flush=true, vks::VulkanSemaphoreSettings* semaphore=nullptr, bool sync=true);
-		void CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore);
+		void CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore, StagingRingSlot* slot = nullptr);
 		void CopyDataStagingBuf2SubTex2D(const std::shared_ptr<VTexture>& tex, VkOffset2D offset, VkExtent2D extent);
 		bool DownloadTexture3D(const std::shared_ptr<VTexture> &tex, void *data, VkOffset3D offset, uint32_t ypitch, uint32_t zpitch);
 		bool DownloadTexture(const std::shared_ptr<VTexture> &tex, void *data);
@@ -178,6 +200,12 @@ namespace vks
 			vkGetPhysicalDeviceProperties(physicalDevice, &properties);
 			// Features should be checked by the examples before using them
 			vkGetPhysicalDeviceFeatures(physicalDevice, &features);
+			// Cache BC4 support so per-brick loads do not query the driver every frame
+			{
+				VkFormatProperties fprops = {};
+				vkGetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_BC4_UNORM_BLOCK, &fprops);
+				bc4_available = fprops.optimalTilingFeatures != 0;
+			}
 			// Memory properties are used regularly for creating all kinds of buffers
 			vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
 			// Queue family properties, used for setting up requested queues upon device creation
@@ -210,24 +238,57 @@ namespace vks
 		*/
 		~VulkanDevice()
 		{
+			//textures in the pool must release their Vulkan objects while the device is still alive
+			//(members are destroyed after this body runs, i.e. after vkDestroyDevice)
+			tex_pool.clear();
+			retired_texs.clear();
 			m_render_semaphore.clear();
 			staging_buf.destroy();
+			for (uint32_t i = 0; i < STAGING_RING_SIZE; i++)
+			{
+				if (m_staging_ring[i].fence != VK_NULL_HANDLE)
+				{
+					if (m_staging_ring[i].pending)
+						vkWaitForFences(logicalDevice, 1, &m_staging_ring[i].fence, VK_TRUE, UINT64_MAX);
+					vkDestroyFence(logicalDevice, m_staging_ring[i].fence, nullptr);
+					m_staging_ring[i].fence = VK_NULL_HANDLE;
+				}
+				m_staging_ring[i].buf.destroy();
+			}
 			m_ubo.destroy();
+			if (!m_ubos.empty())
+			{
+				for (auto& b : m_ubos)
+					b.destroy();
+				m_ubos.clear();
+			}
 			m_vbuf.destroy();
 			if (!m_vbufs.empty())
 			{
-				for (auto b : m_vbufs)
+				for (auto& b : m_vbufs)
 					b.destroy();
 				m_vbufs.clear();
 			}
-			vkFreeCommandBuffers(logicalDevice,commandPool, 1, m_cmdbufs.data());
-			vkFreeCommandBuffers(logicalDevice, transfer_commandPool, 1, m_trans_cmdbufs.data());
+			m_ibuf.destroy();
+			if (!m_ibufs.empty())
+			{
+				for (auto& b : m_ibufs)
+					b.destroy();
+				m_ibufs.clear();
+			}
+			if (!m_cmdbufs.empty())
+				vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(m_cmdbufs.size()), m_cmdbufs.data());
+			if (!m_trans_cmdbufs.empty())
+				vkFreeCommandBuffers(logicalDevice, transfer_commandPool, static_cast<uint32_t>(m_trans_cmdbufs.size()), m_trans_cmdbufs.data());
 			if (linear_sampler)
 				vkDestroySampler(logicalDevice, linear_sampler, nullptr);
 			if (nearest_sampler)
 				vkDestroySampler(logicalDevice, nearest_sampler, nullptr);
 			if (pipelineCache)
+			{
+				savePipelineCache();
 				vkDestroyPipelineCache(logicalDevice, pipelineCache, nullptr);
+			}
 			if (descriptorPool)
 				vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
 			if (commandPool)
@@ -865,6 +926,9 @@ namespace vks
 
 		VkDeviceSize memsize;
 		unsigned char* mapped;
+		//true once the image has been written at least once; until then its actual
+		//layout is VK_IMAGE_LAYOUT_UNDEFINED regardless of descriptor.imageLayout
+		bool uploaded;
 
 		VTexture()
 		{
@@ -876,6 +940,17 @@ namespace vks
 			device = VK_NULL_HANDLE;
 			free_sampler = true;
 			is_swapchain_images = false;
+			memsize = 0;
+			mapped = nullptr;
+			w = 0; h = 0; d = 0;
+			bytes = 0;
+			mipLevels = 1;
+			format = VK_FORMAT_UNDEFINED;
+			usage = 0;
+			descriptor = {};
+			attdesc = {};
+			subresourceRange = {};
+			uploaded = false;
 		}
 
 		~VTexture()

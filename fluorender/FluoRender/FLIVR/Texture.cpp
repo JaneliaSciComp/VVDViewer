@@ -409,7 +409,7 @@ namespace FLIVR
 	{
 		if (brkxml_)
 		{
-			if (lv < 0 || lv > pyramid_.size())
+			if (lv < 0 || lv >= pyramid_.size())
 				return bricks_;
 			else
 				return &pyramid_[lv].bricks;
@@ -1122,11 +1122,11 @@ namespace FLIVR
 		if (!brkxml_) return NULL;
 
 		int level = lv;
-		if (level < 0 || level > pyramid_.size()) level = pyramid_copy_lv_;
-		if (level < 0 || level > pyramid_.size()) level = pyramid_cur_lv_;
+		if (level < 0 || level >= pyramid_.size()) level = pyramid_copy_lv_;
+		if (level < 0 || level >= pyramid_.size()) level = pyramid_cur_lv_;
 		if (pyramid_cur_fr_ < 0 || pyramid_cur_fr_ >= filenames_[level].size()) return NULL;
 		if (pyramid_cur_ch_ < 0 || pyramid_cur_ch_ >= filenames_[level][pyramid_cur_fr_].size()) return NULL;
-		
+
 		vector<TextureBrick*> *bricks = &pyramid_[level].bricks;
 		
 		int bnum = bricks->size();
@@ -1228,11 +1228,11 @@ namespace FLIVR
 		bool clipping = (planes != NULL);
 
 		int level = lv;
-		if (level < 0 || level > pyramid_.size()) level = pyramid_copy_lv_;
-		if (level < 0 || level > pyramid_.size()) level = pyramid_cur_lv_;
+		if (level < 0 || level >= pyramid_.size()) level = pyramid_copy_lv_;
+		if (level < 0 || level >= pyramid_.size()) level = pyramid_cur_lv_;
 		if (pyramid_cur_fr_ < 0 || pyramid_cur_fr_ >= filenames_[level].size()) return NULL;
 		if (pyramid_cur_ch_ < 0 || pyramid_cur_ch_ >= filenames_[level][pyramid_cur_fr_].size()) return NULL;
-		
+
 		vector<TextureBrick*> *bricks = tar_bricks ? tar_bricks : &pyramid_[level].bricks;
 		
 		int bnum = bricks->size();
@@ -1683,7 +1683,7 @@ namespace FLIVR
 		if (!isBrxml()) return get_nrrd(index);
 
 		if (index < 0 || index >= TEXTURE_MAX_COMPONENTS) return NULL;
-		if (lv < 0 || lv > pyramid_.size()) return NULL;
+		if (lv < 0 || lv >= pyramid_.size()) return NULL;
 
 		return pyramid_[lv].data;
 	}

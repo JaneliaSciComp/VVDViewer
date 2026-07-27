@@ -33,6 +33,8 @@
 #include <FLIVR/Utils.h>
 
 #include <utility>
+#include <cstdint>
+#include <climits>
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
 #include <wx/wx.h>
@@ -109,8 +111,10 @@ namespace FLIVR
 
       //if it's been drawn in a full update loop
       for (int i=0; i<TEXTURE_RENDER_MODES; i++)
-      {
          drawn_[i] = false;
+      //dirty_/skip_/modified_ are per-component (TEXTURE_MAX_COMPONENTS), not per-mode
+      for (int i=0; i<TEXTURE_MAX_COMPONENTS; i++)
+      {
          dirty_[i] = false;
          skip_[i] = false;
          modified_[i] = true;
@@ -961,8 +965,8 @@ z
 	  }
 	  else if (c == nstroke_)
          return VK_FORMAT_R8_UNORM;
-      else
-         return VK_FORMAT_UNDEFINED;
+
+      return VK_FORMAT_UNDEFINED;
    }
 
    void *TextureBrick::tex_data(int c)
@@ -1003,7 +1007,7 @@ z
    
    void TextureBrick::set_priority()
    {
-      if (!data_[0] && !data_[0]->getNrrd())
+      if (!data_[0] || !data_[0]->getNrrd())
       {
          priority_ = 0;
          return;
@@ -1142,8 +1146,8 @@ z
 
 	   if (finfo->type == BRICK_FILE_TYPE_RAW)
        {
-           data = tmp;
-           size = tmpsize;
+           memcpy(data, tmp, size < tmpsize ? size : tmpsize);
+           delete[] tmp;
            return true;
        }
 	   else
@@ -1506,11 +1510,15 @@ z
     bool TextureBrick::raw_decompressor(char* out, char* in, size_t out_size, size_t in_size, bool ischunked, int nb, int w, int h, int d, int n5_w, int n5_h, int n5_d, int endianness, bool is_row_major)
     {
         if (!ischunked)
+        {
+            if (in_size > out_size)
+                return false;
             memcpy(out, in, in_size);
+        }
         else
         {
-            size_t n5out_size = nb * n5_w * n5_h * n5_d;
-            if (n5out_size <= 0 || n5out_size != in_size)
+            size_t n5out_size = (size_t)nb * n5_w * n5_h * n5_d;
+            if (n5out_size == 0 || n5out_size != in_size)
                 return false;
 
             if (!is_row_major) {
@@ -1519,19 +1527,21 @@ z
                 else if (nb == 4)
                     convertColumnMajorToRowMajor((unsigned int*)in, n5_w, n5_h, n5_d);
                 else if (nb == 8)
-                    convertColumnMajorToRowMajor((unsigned long*)in, n5_w, n5_h, n5_d);
+                    convertColumnMajorToRowMajor((uint64_t*)in, n5_w, n5_h, n5_d);
                 else
                     convertColumnMajorToRowMajor(in, n5_w, n5_h, n5_d);
             }
-            
+
             if (n5out_size != out_size)
             {
+                if (n5_w < w || n5_h < h || n5_d < d)
+                    return false;
                 char* src = in;
                 char* dst = out;
-                int src_y_pitch = n5_w * nb;
-                int dst_y_pitch = w * nb;
-                int src_z_pitch = n5_w * n5_h * nb;
-                int dst_z_pitch = w * h * nb;
+                size_t src_y_pitch = (size_t)n5_w * nb;
+                size_t dst_y_pitch = (size_t)w * nb;
+                size_t src_z_pitch = (size_t)n5_w * n5_h * nb;
+                size_t dst_z_pitch = (size_t)w * h * nb;
                 for (int zz = 0; zz < d; zz++)
                 {
                     for (int yy = 0; yy < h; yy++)
@@ -1544,7 +1554,7 @@ z
             {
                 memcpy(out, in, in_size);
             }
-            
+
             if (nb >= 2)
             {
                 char e = check_machine_endian();
@@ -1555,13 +1565,13 @@ z
                     else if (nb == 4)
                         switchEndianness((unsigned int*)out, out_size / nb);
                     else if (nb == 8)
-                        switchEndianness((unsigned long*)out, out_size / nb);
+                        switchEndianness((uint64_t*)out, out_size / nb);
                     //for (int i = 0; i < out_size - 1; i += 2)
                     //    swap(out[i], out[i + 1]);
                 }
             }
         }
-        
+
         return true;
     }
 
@@ -1635,19 +1645,20 @@ z
 
 		   if (ischunked)
 		   {
-               zInfo.avail_out = nb * n5_w * n5_h * n5_d;
-               if (zInfo.avail_out <= 0)
-               {
-                   zInfo.avail_out = nb * w * h * d;
-                   if (zInfo.avail_out <= 0)
-                       return false;
-               }
-               
-               bool use_buf = (zInfo.avail_out != out_size);
+               size_t n5out_size = (size_t)nb * n5_w * n5_h * n5_d;
+               if (n5out_size == 0)
+                   n5out_size = (size_t)nb * w * h * d;
+               if (n5out_size == 0 || n5out_size > UINT_MAX)
+                   return false;
+               zInfo.avail_out = (uInt)n5out_size;
+
+               bool use_buf = (n5out_size != out_size);
+               if (use_buf && (n5_w < w || n5_h < h || n5_d < d))
+                   return false;
                char* buf = nullptr;
                if (use_buf)
-                   buf = new char[zInfo.avail_out];
-               
+                   buf = new char[n5out_size];
+
                zInfo.next_out = use_buf ? (Bytef*)buf : (Bytef*)out;
 			   zInfo.total_out = 0;
 
@@ -1661,7 +1672,10 @@ z
 			   }
 			   inflateEnd(&zInfo);
 			   if (nErr != Z_STREAM_END)
+			   {
+				   if (buf) delete[] buf;
 				   return false;
+			   }
 
                if (!is_row_major) {
                    char* src = use_buf ? buf : out;
@@ -1673,19 +1687,19 @@ z
                    else if (nb == 4)
                        convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
                    else if (nb == 8)
-                       convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                       convertColumnMajorToRowMajor((uint64_t*)src, ww, hh, dd);
                    else
                        convertColumnMajorToRowMajor(src, ww, hh, dd);
                }
-               
+
                if (use_buf)
                {
                    char* src = buf;
                    char* dst = out;
-                   int src_y_pitch = n5_w * nb;
-                   int dst_y_pitch = w * nb;
-                   int src_z_pitch = n5_w * n5_h * nb;
-                   int dst_z_pitch = w * h * nb;
+                   size_t src_y_pitch = (size_t)n5_w * nb;
+                   size_t dst_y_pitch = (size_t)w * nb;
+                   size_t src_z_pitch = (size_t)n5_w * n5_h * nb;
+                   size_t dst_z_pitch = (size_t)w * h * nb;
                    for (int zz = 0; zz < d; zz++)
                    {
                        for (int yy = 0; yy < h; yy++)
@@ -1695,7 +1709,7 @@ z
                    }
                    delete[] buf;
                }
-               
+
                if (nb >= 2)
                {
                    char e = check_machine_endian();
@@ -1706,7 +1720,7 @@ z
                        else if (nb == 4)
                            switchEndianness((unsigned int*)out, out_size / nb);
                        else if (nb == 8)
-                           switchEndianness((unsigned long*)out, out_size / nb);
+                           switchEndianness((uint64_t*)out, out_size / nb);
                        //for (int i = 0; i < out_size - 1; i += 2)
                        //    swap(out[i], out[i + 1]);
                    }
@@ -1775,22 +1789,26 @@ z
                return false;
            }
            */
-           const int decompressed_size = LZ4_decompress_safe(in, out, in_size, out_size);
-           if (decompressed_size != out_size || decompressed_size < 0)
+           if (in_size > INT_MAX || out_size > INT_MAX)
                return false;
-           
+           const int decompressed_size = LZ4_decompress_safe(in, out, (int)in_size, (int)out_size);
+           if (decompressed_size < 0 || (size_t)decompressed_size != out_size)
+               return false;
+
        }
        else
        {
-           size_t n5out_size = nb * n5_w * n5_h * n5_d;
-           if (n5out_size <= 0)
+           size_t n5out_size = (size_t)nb * n5_w * n5_h * n5_d;
+           if (n5out_size == 0 || n5out_size > INT_MAX || in_size > INT_MAX)
                return false;
-           
+
            bool use_buf = (n5out_size != out_size);
+           if (use_buf && (n5_w < w || n5_h < h || n5_d < d))
+               return false;
            char* buf = nullptr;
            if (use_buf)
                buf = new char[n5out_size];
-           
+
            char *lz4_out = use_buf ? buf : out;
            /*
            size_t ret = LZ4F_decompress(dctx, lz4_out, &n5out_size, in, &in_size, NULL);
@@ -1799,9 +1817,12 @@ z
                return false;
            }
            */
-           const int decompressed_size = LZ4_decompress_safe(in, lz4_out, in_size, n5out_size);
-           if (decompressed_size != n5out_size || decompressed_size < 0)
+           const int decompressed_size = LZ4_decompress_safe(in, lz4_out, (int)in_size, (int)n5out_size);
+           if (decompressed_size < 0 || (size_t)decompressed_size != n5out_size)
+           {
+               if (buf) delete[] buf;
                return false;
+           }
 
            if (!is_row_major) {
                char* src = use_buf ? buf : out;
@@ -1813,19 +1834,19 @@ z
                else if (nb == 4)
                    convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
                else if (nb == 8)
-                   convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                   convertColumnMajorToRowMajor((uint64_t*)src, ww, hh, dd);
                else
                    convertColumnMajorToRowMajor(src, ww, hh, dd);
            }
-           
+
            if (use_buf)
            {
                char* src = buf;
                char* dst = out;
-               int src_y_pitch = n5_w * nb;
-               int dst_y_pitch = w * nb;
-               int src_z_pitch = n5_w * n5_h * nb;
-               int dst_z_pitch = w * h * nb;
+               size_t src_y_pitch = (size_t)n5_w * nb;
+               size_t dst_y_pitch = (size_t)w * nb;
+               size_t src_z_pitch = (size_t)n5_w * n5_h * nb;
+               size_t dst_z_pitch = (size_t)w * h * nb;
                for (int zz = 0; zz < d; zz++)
                {
                    for (int yy = 0; yy < h; yy++)
@@ -1835,7 +1856,7 @@ z
                }
                delete[] buf;
            }
-           
+
            if (nb >= 2)
            {
                char e = check_machine_endian();
@@ -1846,7 +1867,7 @@ z
                    else if (nb == 4)
                        switchEndianness((unsigned int*)out, out_size / nb);
                    else if (nb == 8)
-                       switchEndianness((unsigned long*)out, out_size / nb);
+                       switchEndianness((uint64_t*)out, out_size / nb);
                    //for (int i = 0; i < out_size - 1; i += 2)
                    //    swap(out[i], out[i + 1]);
                }
@@ -1886,11 +1907,13 @@ z
        }
        else
        {
-           size_t n5out_size = nb * n5_w * n5_h * n5_d;
-           if (n5out_size <= 0)
+           size_t n5out_size = (size_t)nb * n5_w * n5_h * n5_d;
+           if (n5out_size == 0)
                return false;
 
            bool use_buf = (n5out_size != out_size);
+           if (use_buf && (n5_w < w || n5_h < h || n5_d < d))
+               return false;
            char* buf = nullptr;
            if (use_buf)
                buf = new char[n5out_size];
@@ -1915,6 +1938,7 @@ z
            }
            catch (const std::exception & e) {
                std::cerr << "Decompression error: " << e.what() << std::endl;
+               if (buf) delete[] buf;
                return false;
            }
 
@@ -1928,7 +1952,7 @@ z
                else if (nb == 4)
                    convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
                else if (nb == 8)
-                   convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                   convertColumnMajorToRowMajor((uint64_t*)src, ww, hh, dd);
                else
                    convertColumnMajorToRowMajor(src, ww, hh, dd);
            }
@@ -1937,10 +1961,10 @@ z
            {
                char* src = buf;
                char* dst = out;
-               int src_y_pitch = n5_w * nb;
-               int dst_y_pitch = w * nb;
-               int src_z_pitch = n5_w * n5_h * nb;
-               int dst_z_pitch = w * h * nb;
+               size_t src_y_pitch = (size_t)n5_w * nb;
+               size_t dst_y_pitch = (size_t)w * nb;
+               size_t src_z_pitch = (size_t)n5_w * n5_h * nb;
+               size_t dst_z_pitch = (size_t)w * h * nb;
                for (int zz = 0; zz < d; zz++)
                {
                    for (int yy = 0; yy < h; yy++)
@@ -1961,7 +1985,7 @@ z
                    else if (nb == 4)
                        switchEndianness((unsigned int*)out, out_size / nb);
                    else if (nb == 8)
-                       switchEndianness((unsigned long*)out, out_size / nb);
+                       switchEndianness((uint64_t*)out, out_size / nb);
                    //for (int i = 0; i < out_size - 1; i += 2)
                    //    swap(out[i], out[i + 1]);
                }
@@ -1987,11 +2011,20 @@ z
         {
             int32_t nbytes, cbytes, bs;
             blosc2_cbuffer_sizes(in, &nbytes, &cbytes, &bs);
-            
+            if (nbytes <= 0 || n5_w < w || n5_h < h || n5_d < d)
+            {
+                blosc2_free_ctx(ctx);
+                return false;
+            }
+
             char* buf = new char[nbytes];
             int decompressed_size2 = blosc2_decompress_ctx(ctx, in, in_size, buf, nbytes);
-            if (decompressed_size2 < 0 || n5_w < w || n5_h < h || n5_d < d)
+            if (decompressed_size2 < 0)
+            {
+                delete[] buf;
+                blosc2_free_ctx(ctx);
                 return false;
+            }
 
             if (!is_row_major) {
                 char* src = buf;
@@ -2003,17 +2036,17 @@ z
                 else if (nb == 4)
                     convertColumnMajorToRowMajor((unsigned int*)src, ww, hh, dd);
                 else if (nb == 8)
-                    convertColumnMajorToRowMajor((unsigned long*)src, ww, hh, dd);
+                    convertColumnMajorToRowMajor((uint64_t*)src, ww, hh, dd);
                 else
                     convertColumnMajorToRowMajor(src, ww, hh, dd);
             }
-            
+
             char* src = buf;
             char* dst = out;
-            int src_y_pitch = n5_w * nb;
-            int dst_y_pitch = w * nb;
-            int src_z_pitch = n5_w * n5_h * nb;
-            int dst_z_pitch = w * h * nb;
+            size_t src_y_pitch = (size_t)n5_w * nb;
+            size_t dst_y_pitch = (size_t)w * nb;
+            size_t src_z_pitch = (size_t)n5_w * n5_h * nb;
+            size_t dst_z_pitch = (size_t)w * h * nb;
             for (int zz = 0; zz < d; zz++)
             {
                 for (int yy = 0; yy < h; yy++)
@@ -2023,7 +2056,7 @@ z
             }
             delete[] buf;
         }
-        
+
         if (ischunked && nb >= 2)
         {
             char e = check_machine_endian();
@@ -2034,7 +2067,7 @@ z
                 else if (nb == 4)
                     switchEndianness((unsigned int*)out, out_size / nb);
                 else if (nb == 8)
-                    switchEndianness((unsigned long*)out, out_size / nb);
+                    switchEndianness((uint64_t*)out, out_size / nb);
                 //for (int i = 0; i < out_size - 1; i += 2)
                 //    swap(out[i], out[i + 1]);
             }

@@ -198,7 +198,7 @@ namespace FLIVR
 
 #define VOL_HEAD_HIDE_OUTSIDE_MASK \
 	"	//VOL_HEAD_HIDE_OUTSIDE_MASK\n" \
-	"	vec4 maskt = t*mskbrkscale + brk.mskbrktrans;\n" \
+	"	vec4 maskt = t*brk.mskbrkscale + brk.mskbrktrans;\n" \
 	"	vec4 maskcheck = texture(tex2, maskt.stp); //get mask value\n" \
 	"	if (maskcheck.x <= 0.5)\n" \
 	"	{\n" \
@@ -209,7 +209,7 @@ namespace FLIVR
 
 #define VOL_HEAD_HIDE_INSIDE_MASK \
 	"	//VOL_HEAD_HIDE_INSIDE_MASK\n" \
-	"	vec4 maskt = t*mskbrkscale + brk.mskbrktrans;\n" \
+	"	vec4 maskt = t*brk.mskbrkscale + brk.mskbrktrans;\n" \
 	"	vec4 maskcheck = texture(tex2, maskt.stp); //get mask value\n" \
 	"	if (maskcheck.x > 0.5)\n" \
 	"	{\n" \

@@ -175,18 +175,22 @@ namespace FLIVR
 			VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo;
 			Ray view_ray;
 			VkFilter filter;
+			//per-volume constants hoisted out of the per-brick loop
+			Transform mv;
+			Transform tform_tr;
 		};
 
 		struct MultiVolBrick {
-			TextureBrick* b;
-			VRayShaderFactory::VRayFragShaderBrickConst frag_const;
+			TextureBrick* b = nullptr;
+			VRayShaderFactory::VRayFragShaderBrickConst frag_const = {};
 			vector<VkWriteDescriptorSet> descriptorWrites;
 		};
 
 		inline void SubmitAndRestartCommandBuf(
 			vks::VulkanDevice *device,
-			VkCommandBuffer cmdbuf,
-			const VkRenderPassBeginInfo &renderPassBeginInfo);
+			VkCommandBuffer &cmdbuf,
+			const VkRenderPassBeginInfo &renderPassBeginInfo,
+			VkPipeline* last_bound_pipeline = nullptr);
 
 		inline bool TestTexMemSwap(
 			vks::VulkanDevice* device,

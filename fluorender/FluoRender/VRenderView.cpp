@@ -1046,6 +1046,17 @@ VRenderVulkanView::~VRenderVulkanView()
 			delete m_landmarks[i];
 	}
 
+	//persist the Vulkan pipeline cache now: the VulkanDevice destructor also saves it,
+	//but the device may outlive this view through other shared_ptr owners
+	if (m_vulkan)
+	{
+		for (auto dev : m_vulkan->devices)
+		{
+			if (dev)
+				dev->savePipelineCache();
+		}
+	}
+
 	FLIVR::VolumeRenderer::finalize();
 	FLIVR::TextureRenderer::finalize_vulkan();
 	m_v2drender.reset();

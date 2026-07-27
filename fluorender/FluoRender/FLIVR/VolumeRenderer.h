@@ -331,6 +331,9 @@ public:
 		std::map<vks::VulkanDevice*, SegShaderFactory::SegUniformBufs> m_segUniformBuffers;
 		std::map<vks::VulkanDevice*, VkCommandBuffer> m_commandBuffers;
 		std::map<vks::VulkanDevice*, VkCommandBuffer> m_seg_commandBuffers;
+		//reusable fence for per-brick compute dispatches (created on demand)
+		std::map<vks::VulkanDevice*, VkFence> m_compute_fences;
+		VkFence getComputeFence(vks::VulkanDevice* dev);
 		
 		struct Vertex {
 			float pos[4];

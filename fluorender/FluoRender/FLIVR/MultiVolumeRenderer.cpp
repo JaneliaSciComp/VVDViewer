@@ -179,18 +179,32 @@ namespace FLIVR
 
 	inline void MultiVolumeRenderer::SubmitAndRestartCommandBuf(
 		vks::VulkanDevice * device,
-		VkCommandBuffer cmdbuf,
-		const VkRenderPassBeginInfo & renderPassBeginInfo)
+		VkCommandBuffer &cmdbuf,
+		const VkRenderPassBeginInfo & renderPassBeginInfo,
+		VkPipeline* last_bound_pipeline)
 	{
 		vkCmdEndRenderPass(cmdbuf);
 		VK_CHECK_RESULT(vkEndCommandBuffer(cmdbuf));
 		VkSubmitInfo submitInfo = vks::initializers::submitInfo();
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &cmdbuf;
+
+		//chain into the frame-wide semaphore sequence instead of stalling the CPU
+		//with vkQueueWaitIdle: the next submit waits on this one before it renders
+		vks::VulkanSemaphoreSettings sem = device->GetNextRenderSemaphoreSettings();
+		VkPipelineStageFlags waitStages[1] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT };
+		if (sem.waitSemaphoreCount > 0)
+		{
+			submitInfo.waitSemaphoreCount = sem.waitSemaphoreCount;
+			submitInfo.pWaitSemaphores = sem.waitSemaphores;
+			submitInfo.pWaitDstStageMask = waitStages;
+		}
+		submitInfo.signalSemaphoreCount = sem.signalSemaphoreCount;
+		submitInfo.pSignalSemaphores = sem.signalSemaphores;
 		VK_CHECK_RESULT(vkQueueSubmit(device->queue, 1, &submitInfo, VK_NULL_HANDLE));
 
-		vkQueueWaitIdle(device->queue);
-
+		//the submitted buffer may still be executing: record the rest into a fresh one
+		cmdbuf = device->GetNextCommandBuffer();
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 		cmdBufInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
@@ -204,6 +218,9 @@ namespace FLIVR
 		VkRect2D scissor = vks::initializers::rect2D(w, h, 0, 0);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
+		//the new command buffer has no pipeline bound yet
+		if (last_bound_pipeline)
+			*last_bound_pipeline = VK_NULL_HANDLE;
 	}
 
 	inline bool MultiVolumeRenderer::TestTexMemSwap(
@@ -215,8 +232,7 @@ namespace FLIVR
 		bool result = true;
 		if (VolumeRenderer::mem_swap_)
 		{
-			int c = 0;
-			int idx = device->findTexInPool(b, 0, b->nx(), b->ny(), b->nz(), b->nb(c), b->tex_format(c));
+			int idx = device->findTexInPool(b, c, b->nx(), b->ny(), b->nz(), b->nb(c), b->tex_format(c));
 			if (idx == -1) {
 				double new_mem = (VkDeviceSize)b->nx() * b->ny() * b->nz() * b->nb(c) / 1.04e6;
 				int sw_idx = device->check_swap_memory(b, c);
@@ -390,12 +406,14 @@ namespace FLIVR
 		{
 			MultiVolRenederSettings setting;
 
-			VRayShaderFactory::VRayVertShaderUBO vert_ubo;
-			VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo;
-			VRayShaderFactory::VRayFragShaderBrickConst frag_const;
+			VRayShaderFactory::VRayVertShaderUBO vert_ubo = {};
+			VRayShaderFactory::VRayFragShaderBaseUBO frag_ubo = {};
+			VRayShaderFactory::VRayFragShaderBrickConst frag_const = {};
 
 			vr->set_depth_peel(depth_peel_);
 			setting.pipeline = vr->prepareVRayPipeline(prim_dev, blendmode, vr->update_order_, vr->colormap_mode_, !orthographic_p);
+			if (setting.pipeline.vkpipeline == VK_NULL_HANDLE)
+				return; //shader compilation failed; skip this draw entirely
 			setting.pipelineLayout = VolumeRenderer::m_vulkan->vray_shader_factory_->pipeline_[prim_dev].pipelineLayout;
 
 			Ray view_ray = vr->compute_view();
@@ -479,6 +497,18 @@ namespace FLIVR
 
 			frag_ubo.proj_mat_inv = glm::inverse(vr->m_proj_mat);
 			frag_ubo.mv_mat_inv = glm::inverse(vr->m_mv_mat2);
+			frag_ubo.proj_mat = vr->m_proj_mat;
+			frag_ubo.mv_mat = vr->m_mv_mat2;
+
+			//per-volume transforms used by every brick of this volume
+			setting.mv.set_trans(glm::value_ptr(vr->m_mv_mat));
+			double tr_mvmat[16] = {
+				mvmat[0], mvmat[1], mvmat[2], mvmat[12],
+				mvmat[4], mvmat[5], mvmat[6], mvmat[13],
+				mvmat[8], mvmat[9], mvmat[10], mvmat[14],
+				mvmat[3], mvmat[7], mvmat[11], mvmat[15]
+			};
+			setting.tform_tr.set(tr_mvmat);
 
 			setting.view_ray = view_ray;
 			if (intp && vr->colormap_mode_ != 3)
@@ -561,7 +591,7 @@ namespace FLIVR
 			blend_params.clear = true;
 
 			if (blend_framebuffer_ &&
-				(blend_framebuffer_->w != w || blend_framebuffer_->h != h || blend_framebuffer_->renderPass != blend_params.pipeline.pass))
+				(blend_framebuffer_->w != w2 || blend_framebuffer_->h != h2 || blend_framebuffer_->renderPass != blend_params.pipeline.pass))
 			{
 				blend_framebuffer_.reset();
 				blend_tex_id_.reset();
@@ -629,6 +659,9 @@ namespace FLIVR
 		VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
+		//track the currently bound pipeline: bricks of the same volume share one,
+		//so most per-brick binds are redundant
+		VkPipeline last_pipeline = VK_NULL_HANDLE;
 
 		vector<MultiVolBrick> cur_brs;
 		int cur_bid;
@@ -741,7 +774,7 @@ namespace FLIVR
 						for (auto bb : locked_bricks)
 							bb->prevent_tex_deletion(false);
 						locked_bricks.clear();
-						SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo);
+						SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
 					}
 
 					shared_ptr<vks::VTexture> brktex, msktex, lbltex;
@@ -826,7 +859,7 @@ namespace FLIVR
 							{
 								restart = !TestTexMemSwap(prim_dev, b, vr->tex_->nmask(), &locked_bricks);
 								if (restart)
-									SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo);
+									SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
@@ -854,7 +887,7 @@ namespace FLIVR
 							{
 								restart = !TestTexMemSwap(prim_dev, b, vr->tex_->nmask(), &locked_bricks);
 								if (restart)
-									SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo);
+									SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
@@ -873,21 +906,10 @@ namespace FLIVR
 						cur_brs[j].descriptorWrites.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 2, &msktex->descriptor));
 					}
 
-					Transform mv;
-					mv.set_trans(glm::value_ptr(vr->m_mv_mat));
-					Transform* tform = vr->tex_->transform();
-                    
-                    double tmpmat[16];
-                    tform->get_trans(tmpmat);
-                    Transform tform_tr;
-                    double tr_mvmat[16] = {
-                        tmpmat[0], tmpmat[1], tmpmat[2], tmpmat[12],
-                        tmpmat[4], tmpmat[5], tmpmat[6], tmpmat[13],
-                        tmpmat[8], tmpmat[9], tmpmat[10], tmpmat[14],
-                        tmpmat[3], tmpmat[7], tmpmat[11], tmpmat[15]
-                    };
-                    tform_tr.set(tr_mvmat);
-                    
+					//hoisted per-volume transforms (see rsettings setup)
+					Transform& mv = rsettings[vr].mv;
+					Transform& tform_tr = rsettings[vr].tform_tr;
+
 					unsigned int slicenum = 0;
 					int timax = i, timin = i;
 					double vr_dt = b->dt();
@@ -900,7 +922,11 @@ namespace FLIVR
 					cur_brs[j].frag_const.loc_zmin_zmax_dz = { p.z(), p2.z(), dv.z() };
 					cur_brs[j].frag_const.stepnum = slicenum;
 
-					vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, rsettings[vr].pipeline.vkpipeline);
+					if (last_pipeline != rsettings[vr].pipeline.vkpipeline)
+					{
+						vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, rsettings[vr].pipeline.vkpipeline);
+						last_pipeline = rsettings[vr].pipeline.vkpipeline;
+					}
 
 					if (!cur_brs[j].descriptorWrites.empty())
 					{
@@ -957,7 +983,15 @@ namespace FLIVR
 
 				if (blend_slices_ && colormap_mode_ != 2)
 				{
-					SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo);
+					SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
+
+					//the blend pass reads slice_tex_: chain it after the slice submit,
+					//and let the next slice batch chain after the blend pass
+					vks::VulkanSemaphoreSettings bsem = prim_dev->GetNextRenderSemaphoreSettings();
+					blend_params.waitSemaphoreCount = bsem.waitSemaphoreCount;
+					blend_params.waitSemaphores = bsem.waitSemaphores;
+					blend_params.signalSemaphoreCount = bsem.signalSemaphoreCount;
+					blend_params.signalSemaphores = bsem.signalSemaphores;
 
 					VolumeRenderer::m_v2drender->render(blend_framebuffer_, blend_params);
 					blend_params.clear = false;
@@ -1021,7 +1055,21 @@ namespace FLIVR
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &cmdbuf;
 
-		VK_CHECK_RESULT(vkQueueSubmit(prim_dev->queue, 1, &submitInfo, VK_NULL_HANDLE));
+		//order this submit after the previous slice/blend submits via the semaphore chain
+		{
+			vks::VulkanSemaphoreSettings sem = prim_dev->GetNextRenderSemaphoreSettings();
+			VkPipelineStageFlags waitStages[1] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT };
+			if (sem.waitSemaphoreCount > 0)
+			{
+				submitInfo.waitSemaphoreCount = sem.waitSemaphoreCount;
+				submitInfo.pWaitSemaphores = sem.waitSemaphores;
+				submitInfo.pWaitDstStageMask = waitStages;
+			}
+			submitInfo.signalSemaphoreCount = sem.signalSemaphoreCount;
+			submitInfo.pSignalSemaphores = sem.signalSemaphores;
+
+			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->queue, 1, &submitInfo, VK_NULL_HANDLE));
+		}
 		vkQueueWaitIdle(prim_dev->queue);
 
 		for (auto bb : locked_bricks)
@@ -1069,7 +1117,7 @@ namespace FLIVR
 						VK_FORMAT_R32G32B32A32_SFLOAT,
 						1,
 						0,
-						filter_buffer_->attachments[0]->is_swapchain_images);
+						false); //offscreen R32G32B32A32 target is never a swapchain image (filter_buffer_ may be null here)
 
 				if (filter_buffer_ &&
 					(filter_buffer_->w != w2 || filter_buffer_->h != h2 || filter_buffer_->renderPass != filter_params.pipeline.pass))

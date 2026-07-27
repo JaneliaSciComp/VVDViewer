@@ -130,7 +130,13 @@ VolShader::VolShader(
 		if (emit_f(fs)) return true;
 		if (emit_v(vs)) return true;
 		program_ = new ShaderProgram(vs,fs);
-		program_->create(device_);
+		if (program_->create(device_))
+		{
+			//GLSL compile failure: do not keep a program with null modules
+			delete program_;
+			program_ = 0;
+			return true;
+		}
 		return false;
 	}
 

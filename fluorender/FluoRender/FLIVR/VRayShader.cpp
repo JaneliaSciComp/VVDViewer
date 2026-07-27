@@ -98,6 +98,8 @@ namespace FLIVR
 	"	vec4 loc15; //plane5\n" \
 	"	mat4 matrix0; //inverted projection matrix\n" \
 	"	mat4 matrix1; //inverted modelview matrix\n" \
+	"	mat4 matrix2; //projection matrix\n" \
+	"	mat4 matrix3; //modelview matrix\n" \
 	"} base;\n" \
 	"\n" \
 	"layout(binding = 2) uniform sampler3D tex0;//data volume\n" \
@@ -113,7 +115,7 @@ namespace FLIVR
 	"	vec3 loc4;//(zmin, zmax, dz)\n" \
 	"	uint stnum;\n" \
 	"} brk;\n" \
-	"\n" 
+	"\n"
 
 #define VRAY_UNIFORMS_INDEX_COLOR \
 	"//VRAY_UNIFORMS_INDEX_COLOR\n" \
@@ -199,7 +201,7 @@ namespace FLIVR
 	"	vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
 	"	const vec4 dmap_ray = vec4(vray, 0.0);\n" \
 	"	const vec4 dmap_st = vec4((brk.loc4.y / vray.z) * vray, 1.0);\n" \
-	"	const mat4 proj_mat = inverse(base.matrix0);\n" \
+	"	const mat4 proj_mat = base.matrix2;\n" \
 	"	float prevz = 1.0;\n" \
 	"\n"
 
@@ -214,7 +216,7 @@ namespace FLIVR
 	"	vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
 	"	const vec4 dmap_ray = vec4(0.0, 0.0, 1.0, 0.0);\n" \
 	"	const vec4 dmap_st = vec4((base.matrix0 * OutVertex).xy, brk.loc4.y, 1.0);\n" \
-	"	const mat4 proj_mat = inverse(base.matrix0);\n" \
+	"	const mat4 proj_mat = base.matrix2;\n" \
 	"	float prevz = 1.0;\n" \
 	"\n"
 
@@ -222,13 +224,13 @@ namespace FLIVR
 	"	//VRAY_CLIP_COORD_PERSP\n" \
 	"	const vec4 dmap_ray = vec4(vray, 0.0);\n" \
 	"	const vec4 dmap_st = vec4((brk.loc4.x / vray.z) * vray, 1.0);\n" \
-	"	const mat4 proj_mat = inverse(base.matrix0);\n" \
+	"	const mat4 proj_mat = base.matrix2;\n" \
 	"\n"
 #define VRAY_HEAD_CLIP_COORD_ORTHO \
 	"	//VRAY_CLIP_COORD_PERSP\n" \
 	"	const vec4 dmap_ray = vec4(0.0, 0.0, 1.0, 0.0);\n" \
 	"	const vec4 dmap_st = vec4((base.matrix0 * OutVertex).xy, brk.loc4.x, 1.0);\n" \
-	"	const mat4 proj_mat = inverse(base.matrix0);\n" \
+	"	const mat4 proj_mat = base.matrix2;\n" \
 	"\n"
 
 #define VRAY_MASK_RAY_PERSP \
@@ -239,7 +241,7 @@ namespace FLIVR
 
 #define VRAY_MASK_RAY_ORTHO \
 	"//VRAY_MASK_RAY_ORTHO\n" \
-	"	const vec4 msk_ray = base.matrix1 * vec4(0.0, 0.0, 1.0, 0.0) / vec4(brk.brkscale.xyz, 1.);\n" \
+	"	const vec4 msk_ray = base.matrix1 * vec4(0.0, 0.0, 1.0, 0.0) / vec4(brk.mskbrkscale.xyz, 1.);\n" \
 	"	const vec4 msk_st = base.matrix1 * vec4((base.matrix0 * OutVertex).xy, brk.loc4.x, 1.0) / vec4(brk.mskbrkscale.xyz, 1.) - vec4(brk.mskbrktrans.xyz / brk.mskbrkscale.xyz, 0.0);\n" \
 	"\n"
 
@@ -258,7 +260,7 @@ namespace FLIVR
 	"	fp.x = base.loc8.x;\n" \
 	"	fp.y = base.loc8.y;\n" \
 	"	fp.z = base.loc8.z;\n" \
-	"	const mat4 mv_mat = inverse(base.matrix1);\n" \
+	"	const mat4 mv_mat = base.matrix3;\n" \
 	"\n"
 
 #define VRAY_HEAD_ID_INITIALIZE \
@@ -1124,6 +1126,14 @@ namespace FLIVR
     "    }\n" \
     "\n"
 
+//for front-to-back OVER blending only: outcol.w is monotonically non-decreasing and
+//the loop body is already guarded by (outcol.w <= 0.99995), so breaking here is exact
+#define VRAY_LOOP_TAIL_BREAK \
+    "        }\n" \
+    "        if (outcol.w > 0.99995) break;\n" \
+    "    }\n" \
+    "\n"
+
 #define VRAY_HIGHLIGHT_ADD \
     "    outcol.rgb = highlight ? clamp(outcol.rgb + hcol.rgb*hcol.w, 0.0, 1.0) : outcol.rgb;\n" \
     "\n"
@@ -1674,7 +1684,7 @@ VRayShader::VRayShader(
 	persp_(persp),
 	blend_mode_(blend_mode),
 	program_(0),
-	multi_mode_(0),
+	multi_mode_(multi_mode),
     na_mode_(na_mode),
     highlight_(highlight)
 	{
@@ -1691,7 +1701,13 @@ VRayShader::VRayShader(
 		if (emit_f(fs)) return true;
 		if (emit_v(vs)) return true;
 		program_ = new ShaderProgram(vs,fs);
-		program_->create(device_);
+		if (program_->create(device_))
+		{
+			//GLSL compile failure: do not keep a program with null modules
+			delete program_;
+			program_ = 0;
+			return true;
+		}
 		return false;
 	}
 
@@ -2067,7 +2083,11 @@ VRayShader::VRayShader(
         if (na_mode_)
             z << VRAY_DATA_LABEL_SEG_ENDIF;
 
-        z << VRAY_LOOP_TAIL;
+		//early ray termination: valid only for OVER blending (not MIP, not depth map)
+		if (color_mode_ != 2 && blend_mode_ != 2)
+			z << VRAY_LOOP_TAIL_BREAK;
+		else
+			z << VRAY_LOOP_TAIL;
         
         if (highlight_)
             z << VRAY_HIGHLIGHT_ADD;

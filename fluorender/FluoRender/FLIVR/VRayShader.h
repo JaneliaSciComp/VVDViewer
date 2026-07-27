@@ -186,6 +186,8 @@ namespace FLIVR
 			glm::vec4 plane5;			//loc15
 			glm::mat4 proj_mat_inv;
 			glm::mat4 mv_mat_inv;
+			glm::mat4 proj_mat;
+			glm::mat4 mv_mat;
 		};
 
 		struct VRayFragShaderBrickConst {

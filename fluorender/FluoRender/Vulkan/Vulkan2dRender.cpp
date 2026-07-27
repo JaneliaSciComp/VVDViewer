@@ -29,10 +29,11 @@ Vulkan2dRender::~Vulkan2dRender()
 	{
 		VkDevice dev = m_vulkan->vulkanDevice->logicalDevice;
 		for (auto& p : m_pipelines)
-		{
 			vkDestroyPipeline(dev, p.vkpipeline, nullptr);
-			vkDestroyRenderPass(dev, p.pass, nullptr);
-		}
+		//render passes are shared between pipelines via the cache: destroy each exactly once
+		for (auto& rp : m_renderpass_cache)
+			vkDestroyRenderPass(dev, rp.second, nullptr);
+		m_renderpass_cache.clear();
 
 		m_vertexBuffer.destroy();
 		m_indexBuffer.destroy();
@@ -142,6 +143,11 @@ void Vulkan2dRender::setupVertexDescriptions()
 
 VkRenderPass Vulkan2dRender::prepareRenderPass(VkFormat framebuf_format, int attachment_num, bool isSwapChainImage)
 {
+	auto key = std::make_tuple(framebuf_format, attachment_num, isSwapChainImage);
+	auto cached = m_renderpass_cache.find(key);
+	if (cached != m_renderpass_cache.end())
+		return cached->second;
+
 	VkRenderPass pass = VK_NULL_HANDLE;
 
 	VkPhysicalDevice physicalDevice = m_vulkan->getPhysicalDevice();
@@ -203,6 +209,8 @@ VkRenderPass Vulkan2dRender::prepareRenderPass(VkFormat framebuf_format, int att
 	renderPassInfo.pDependencies = dependencies.data();
 
 	VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &pass));
+
+	m_renderpass_cache[key] = pass;
 
 	return pass;
 }

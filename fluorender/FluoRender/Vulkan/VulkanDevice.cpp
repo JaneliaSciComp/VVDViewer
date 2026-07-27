@@ -1,6 +1,10 @@
 #include "VulkanDevice.hpp"
 #include "vk_format_utils.h"
 #include <thread>
+#include <filesystem>
+#include <fstream>
+#include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #include <omp.h>
@@ -85,10 +89,18 @@ namespace vks
 		mem_limit = new_mem_limit;
 	}
 
-	void VulkanDevice::clear_tex_pool() 
+	void VulkanDevice::clear_tex_pool()
 	{
 		for (int j = int(tex_pool.size() - 1); j >= 0; j--)
-			available_mem += tex_pool[j].tex->memsize / 1.04e6;
+		{
+			if (tex_pool[j].tex)
+			{
+				available_mem += tex_pool[j].tex->memsize / 1.04e6;
+				//keep the texture alive until the next frame boundary:
+				//in-flight command buffers may still reference it
+				retired_texs.push_back(tex_pool[j].tex);
+			}
+		}
 		tex_pool.clear();
 
 		//available_mem = mem_limit;
@@ -122,6 +134,26 @@ namespace vks
 
 	void VulkanDevice::update_texpool()
 	{
+		//dirty bricks are read back before eviction; that transitions the image layout,
+		//which must not race with in-flight reads of the same image
+		bool need_sync = false;
+		for (size_t j = 0; j < tex_pool.size(); j++)
+		{
+			if (tex_pool[j].delayed_del && tex_pool[j].tex && tex_pool[j].brick &&
+				tex_pool[j].comp >= 0 && tex_pool[j].comp < TEXTURE_MAX_COMPONENTS &&
+				tex_pool[j].brick->dirty(tex_pool[j].comp))
+			{
+				need_sync = true;
+				break;
+			}
+		}
+		if (need_sync)
+		{
+			VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+			if (transfer_queue != queue)
+				VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+		}
+
 		for (int j=int(tex_pool.size()-1); j>=0; j--)
 		{
 			if (tex_pool[j].delayed_del && tex_pool[j].tex)
@@ -130,6 +162,9 @@ namespace vks
 				return_brick(tex_pool[j]);
 				if (tex_pool[j].comp >= 0 && tex_pool[j].comp < TEXTURE_MAX_COMPONENTS && tex_pool[j].tex->bytes > 0)
 					available_mem += tex_pool[j].tex->memsize / 1.04e6;
+				//defer the actual destruction to the next frame boundary:
+				//in-flight command buffers may still sample this texture
+				retired_texs.push_back(tex_pool[j].tex);
 				tex_pool.erase(tex_pool.begin()+j);
 			}
 		}
@@ -169,10 +204,6 @@ namespace vks
 			return overwrite;
 		}
 
-		VK_CHECK_RESULT(vkQueueWaitIdle(queue));
-		if (transfer_queue != queue)
-			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
-
 		if (swapped)
 			*swapped = true;
 
@@ -181,6 +212,8 @@ namespace vks
 		//generate a list of bricks and their distances to the new brick
 		for (i=0; i<tex_pool.size(); i++)
 		{
+			if (!tex_pool[i].brick || !tex_pool[i].tex)
+				continue;
 			bd.index = i;
 			bd.brick = tex_pool[i].brick;
 			//calculate the distance
@@ -231,6 +264,11 @@ namespace vks
 			}
 			if (overwrite >= 0)
 			{
+				//the texture is reused in place (a new upload overwrites it), so any
+				//in-flight reads of it must complete first
+				VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+				if (transfer_queue != queue)
+					VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
 				//save before deletion
 				return_brick(tex_pool[overwrite]);
 				return overwrite;
@@ -272,6 +310,10 @@ namespace vks
 				}
 				if (overwrite >= 0)
 				{
+					//the texture is reused in place: wait for in-flight reads first
+					VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+					if (transfer_queue != queue)
+						VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
 					//save before deletion
 					return_brick(tex_pool[overwrite]);
 				}
@@ -343,11 +385,98 @@ namespace vks
 			return -1;
 	}
 
+	//per-user cache file used to persist the Vulkan pipeline cache across runs
+	//(all shader variants are compiled at runtime, so a cold cache causes first-use hitches)
+	static std::string getPipelineCachePath(const VkPhysicalDeviceProperties& props)
+	{
+		std::string base;
+#ifdef _WIN32
+		const char* dir = std::getenv("LOCALAPPDATA");
+		if (!dir) dir = std::getenv("APPDATA");
+		if (!dir) return "";
+		base = std::string(dir) + "\\VVDViewer";
+#else
+		const char* xdg = std::getenv("XDG_CACHE_HOME");
+		if (xdg && *xdg)
+			base = std::string(xdg) + "/VVDViewer";
+		else
+		{
+			const char* home = std::getenv("HOME");
+			if (!home) return "";
+			base = std::string(home) + "/.cache/VVDViewer";
+		}
+#endif
+		std::error_code ec;
+		std::filesystem::create_directories(base, ec);
+		if (ec) return "";
+#ifdef _WIN32
+		base += "\\";
+#else
+		base += "/";
+#endif
+		return base + "pipeline_cache_" + std::to_string(props.vendorID) + "_" + std::to_string(props.deviceID) + ".bin";
+	}
+
 	void VulkanDevice::createPipelineCache()
 	{
+		std::vector<char> initial;
+		pipeline_cache_path = getPipelineCachePath(properties);
+		if (!pipeline_cache_path.empty())
+		{
+			std::ifstream ifs(pipeline_cache_path, std::ios::binary | std::ios::ate);
+			if (ifs)
+			{
+				std::streamsize sz = ifs.tellg();
+				if (sz >= 32) //VkPipelineCacheHeaderVersionOne is 32 bytes
+				{
+					initial.resize((size_t)sz);
+					ifs.seekg(0);
+					if (ifs.read(initial.data(), sz))
+					{
+						uint32_t headerLen = 0, headerVer = 0, vendorID = 0, deviceID = 0;
+						std::memcpy(&headerLen, initial.data(), 4);
+						std::memcpy(&headerVer, initial.data() + 4, 4);
+						std::memcpy(&vendorID, initial.data() + 8, 4);
+						std::memcpy(&deviceID, initial.data() + 12, 4);
+						if (headerLen < 32 ||
+							headerVer != VK_PIPELINE_CACHE_HEADER_VERSION_ONE ||
+							vendorID != properties.vendorID ||
+							deviceID != properties.deviceID ||
+							std::memcmp(initial.data() + 16, properties.pipelineCacheUUID, VK_UUID_SIZE) != 0)
+							initial.clear();
+					}
+					else
+						initial.clear();
+				}
+			}
+		}
+
 		VkPipelineCacheCreateInfo pipelineCacheCreateInfo = {};
 		pipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-		VK_CHECK_RESULT(vkCreatePipelineCache(logicalDevice, &pipelineCacheCreateInfo, nullptr, &pipelineCache));
+		pipelineCacheCreateInfo.initialDataSize = initial.size();
+		pipelineCacheCreateInfo.pInitialData = initial.empty() ? nullptr : initial.data();
+		if (vkCreatePipelineCache(logicalDevice, &pipelineCacheCreateInfo, nullptr, &pipelineCache) != VK_SUCCESS)
+		{
+			//stale or corrupt cache data: retry with an empty cache
+			pipelineCacheCreateInfo.initialDataSize = 0;
+			pipelineCacheCreateInfo.pInitialData = nullptr;
+			VK_CHECK_RESULT(vkCreatePipelineCache(logicalDevice, &pipelineCacheCreateInfo, nullptr, &pipelineCache));
+		}
+	}
+
+	void VulkanDevice::savePipelineCache()
+	{
+		if (!pipelineCache || !logicalDevice || pipeline_cache_path.empty())
+			return;
+		size_t size = 0;
+		if (vkGetPipelineCacheData(logicalDevice, pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0)
+			return;
+		std::vector<char> data(size);
+		if (vkGetPipelineCacheData(logicalDevice, pipelineCache, &size, data.data()) != VK_SUCCESS)
+			return;
+		std::ofstream ofs(pipeline_cache_path, std::ios::binary | std::ios::trunc);
+		if (ofs)
+			ofs.write(data.data(), size);
 	}
 
 	void VulkanDevice::setupDescriptorPool()
@@ -407,6 +536,10 @@ namespace vks
 	}
 	void VulkanDevice::ResetMainRenderBuffers()
 	{
+		//frame boundary: the previous frame's work has completed (submitFrame drains the
+		//queues), so textures evicted during that frame can now really be destroyed
+		retired_texs.clear();
+
 		m_cur_cmdbuf_id = 0;
 		m_cur_trans_cmdbuf_id = 0;
 		m_ubo_offset = 0;
@@ -477,10 +610,9 @@ namespace vks
 	void VulkanDevice::GetNextUniformBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
 	{
 		offset = m_ubo_offset;
-		
+
 		if (m_ubo.alignment > 0)
 			req_size = (req_size + m_ubo.alignment - 1) & ~(m_ubo.alignment - 1);
-		m_ubo_offset += req_size;
 
 		if (m_ubo.size >= m_ubo_offset + req_size)
 			m_ubo_offset += req_size;
@@ -696,6 +828,7 @@ namespace vks
 		memAllocInfo.memoryTypeIndex = ret->device->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		VK_CHECK_RESULT(vkAllocateMemory(ret->device->logicalDevice, &memAllocInfo, nullptr, &ret->deviceMemory));
 		VK_CHECK_RESULT(vkBindImageMemory(ret->device->logicalDevice, ret->image, ret->deviceMemory, 0));
+		ret->memsize = memReqs.size;
 
 		// Create sampler
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
@@ -898,6 +1031,40 @@ namespace vks
 		}
 	}
 
+	//get the next upload staging slot, waiting only for that slot's own transfer
+	//(if still in flight) instead of draining the whole transfer queue
+	VulkanDevice::StagingRingSlot* VulkanDevice::acquireUploadStagingSlot(VkDeviceSize size)
+	{
+		StagingRingSlot& slot = m_staging_ring[m_staging_ring_idx];
+		m_staging_ring_idx = (m_staging_ring_idx + 1) % STAGING_RING_SIZE;
+
+		if (slot.fence == VK_NULL_HANDLE)
+		{
+			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
+			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceInfo, nullptr, &slot.fence));
+		}
+		if (slot.pending)
+		{
+			VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+			slot.pending = false;
+		}
+		VK_CHECK_RESULT(vkResetFences(logicalDevice, 1, &slot.fence));
+
+		if (size > slot.buf.size)
+		{
+			slot.buf.unmap();
+			slot.buf.destroy();
+		}
+		if (slot.buf.buffer == VK_NULL_HANDLE)
+		{
+			createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+				&slot.buf, size);
+			VK_CHECK_RESULT(slot.buf.map());
+		}
+		return &slot;
+	}
+
     //long long milliseconds_now() {
     //    static LARGE_INTEGER s_frequency;
     //    static BOOL s_use_qpc = QueryPerformanceFrequency(&s_frequency);
@@ -913,17 +1080,14 @@ namespace vks
 
 	bool VulkanDevice::UploadTexture3D(
 		const std::shared_ptr<VTexture> &tex, void *data, VkOffset3D offset, uint32_t ypitch, uint32_t zpitch,
-		bool flush, vks::VulkanSemaphoreSettings* semaphore, bool sync 
+		bool flush, vks::VulkanSemaphoreSettings* semaphore, bool sync
 	)
 	{
-		static int bufsize = 4096;
+		(void)sync; //slot fences now guard staging reuse; no queue-wide drain needed
 
 		VkDeviceSize texMemSize = tex->memsize;
 
-		if (sync)
-			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
-
-		checkStagingBuffer(texMemSize);
+		StagingRingSlot* slot = acquireUploadStagingSlot(texMemSize);
 
 		//uint64_t st_time, ed_time;
 		//char dbgstr[50];
@@ -935,33 +1099,29 @@ namespace vks
 			uint64_t poffset = (VkDeviceSize)offset.z * zpitch + (VkDeviceSize)offset.y * ypitch + offset.x * (VkDeviceSize)tex->bytes;
 			uint64_t dst_ypitch = (VkDeviceSize)tex->w * (VkDeviceSize)tex->bytes;
 			uint64_t dst_zpitch = (VkDeviceSize)tex->w * (VkDeviceSize)tex->h * (VkDeviceSize)tex->bytes;
-			unsigned char* dst = (unsigned char*)staging_buf.mapped;
+			unsigned char* dst = (unsigned char*)slot->buf.mapped;
 			unsigned char* src = (unsigned char*)data + poffset;
 
 			size_t nthreads = std::thread::hardware_concurrency();
+			if (nthreads == 0) nthreads = 1;
 			if (nthreads > 8) nthreads = 8;
+			if (tex->d > 0 && nthreads > tex->d) nthreads = tex->d;
 			std::vector<std::thread> threads(nthreads);
 			int grain_size = tex->d / nthreads;
 			auto worker = [&zpitch, &dst_zpitch, &ypitch, &dst_ypitch](unsigned char* dst, unsigned char* src, int d, int texh) {
-				int xite = dst_ypitch / bufsize;
-				unsigned char* src_p, * dst_p, * tmp_xsrc_p, * tmp_xdst_p;
-				for (uint32_t z = 0; z < d; z++)
+				if (ypitch == dst_ypitch && zpitch == dst_zpitch)
+				{
+					//source and destination layouts match: one contiguous copy
+					memcpy(dst, src, (uint64_t)d * dst_zpitch);
+					return;
+				}
+				unsigned char* src_p, * dst_p;
+				for (int z = 0; z < d; z++)
 				{
 					src_p = src + (VkDeviceSize)z * zpitch;
 					dst_p = dst + (VkDeviceSize)z * dst_zpitch;
-
-					for (uint32_t y = 0; y < texh; y++)
-					{
-						tmp_xsrc_p = src_p + (VkDeviceSize)y * ypitch;
-						tmp_xdst_p = dst_p + (VkDeviceSize)y * dst_ypitch;
-						for (int x = 0; x < xite - 1; x++)
-						{
-							memcpy(tmp_xdst_p, tmp_xsrc_p, bufsize);
-							tmp_xdst_p += bufsize;
-							tmp_xsrc_p += bufsize;
-						}
-						memcpy(tmp_xdst_p, tmp_xsrc_p, dst_ypitch - bufsize * (xite >= 1 ? xite - 1 : 0));
-					}
+					for (uint32_t y = 0; y < (uint32_t)texh; y++)
+						memcpy(dst_p + (VkDeviceSize)y * dst_ypitch, src_p + (VkDeviceSize)y * ypitch, dst_ypitch);
 				}
 			};
 			for (uint32_t i = 0; i < nthreads - 1; i++)
@@ -985,14 +1145,16 @@ namespace vks
 			uint64_t dst_zpitch = bnum_y * dst_ypitch;
 			uint64_t w = tex->w;
 			uint64_t h = tex->h;
-			unsigned char* dst = (unsigned char*)staging_buf.mapped;
+			unsigned char* dst = (unsigned char*)slot->buf.mapped;
 			unsigned char* src = (unsigned char*)data + poffset;
 
 			size_t nthreads = std::thread::hardware_concurrency();
+			if (nthreads == 0) nthreads = 1;
 			if (nthreads > 8) nthreads = 8;
+			if (tex->d > 0 && nthreads > tex->d) nthreads = tex->d;
 			std::vector<std::thread> threads(nthreads);
 			int grain_size = tex->d / nthreads;
-			
+
 			auto worker = [&zpitch, &dst_zpitch, &ypitch, &dst_ypitch, &w, &h](unsigned char* dst, unsigned char* src, int d, int bnum_y, int bnum_x) {
 				uint64_t buf[512];
 				unsigned char block[16];
@@ -1086,14 +1248,14 @@ namespace vks
 		VkDeviceSize atom = properties.limits.nonCoherentAtomSize;
 		if (atom > 0)
 			texMemSize = (texMemSize + atom - 1) & ~(atom - 1);
-		if (texMemSize > staging_buf.size)
-			staging_buf.flush();
+		if (texMemSize > slot->buf.size)
+			slot->buf.flush();
 		else
-			staging_buf.flush(texMemSize);
+			slot->buf.flush(texMemSize);
 
 		//st_time = milliseconds_now();
 
-		CopyDataStagingBuf2Tex(tex, flush, semaphore);
+		CopyDataStagingBuf2Tex(tex, flush, semaphore, slot);
 
 		//VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
 		//ed_time = milliseconds_now();
@@ -1130,14 +1292,11 @@ namespace vks
 
 	bool VulkanDevice::UploadTexture(const std::shared_ptr<VTexture> &tex, void *data, bool flush, vks::VulkanSemaphoreSettings* semaphore, bool sync)
 	{
-		static int bufsize = 4096;
+		(void)sync; //slot fences now guard staging reuse; no queue-wide drain needed
 
 		VkDeviceSize texMemSize = (VkDeviceSize)tex->w * (VkDeviceSize)tex->h * (VkDeviceSize)tex->d * (VkDeviceSize)tex->bytes;
 
-		if (sync)
-			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
-
-		checkStagingBuffer(texMemSize);
+		StagingRingSlot* slot = acquireUploadStagingSlot(texMemSize);
 
 		//uint64_t st_time, ed_time;
 		//char dbgstr[50];
@@ -1146,53 +1305,8 @@ namespace vks
 		// Copy texture data into staging buffer
 		if (tex->format != VK_FORMAT_BC4_UNORM_BLOCK)
 		{
-			//std::stringstream debugMessage;
-			//debugMessage << "uploadTex: " << data;
-			//OutputDebugStringA(debugMessage.str().c_str()); OutputDebugString(L"\n");
-			
-			size_t nthreads = std::thread::hardware_concurrency();
-			if (nthreads > 8) nthreads = 8;
-			nthreads = 1;
-			std::vector<std::thread> threads(nthreads);
-			size_t grain_size = texMemSize / nthreads;
-			auto worker = [](unsigned char* dst, unsigned char* src, size_t size) {
-				int ite = size / bufsize;
-				for (int i = 0; i < ite - 1; i++)
-				{
-					memcpy(dst, src, bufsize);
-					dst += bufsize;
-					src += bufsize;
-				}
-				memcpy(dst, src, size - bufsize * (ite >= 1 ? ite - 1 : 0));
-			};
-			unsigned char* dstp = (unsigned char*)staging_buf.mapped;
-			unsigned char* stp = (unsigned char*)data;
-			for (uint32_t i = 0; i < nthreads - 1; i++)
-			{
-				threads[i] = std::thread(worker, dstp, stp, grain_size);
-				dstp += grain_size;
-				stp += grain_size;
-			}
-			threads.back() = std::thread(worker, dstp, stp, texMemSize - grain_size * (nthreads - 1));
-			for (auto&& i : threads) {
-				i.join();
-			}
-			
-			/*
-			unsigned char* dstp = (unsigned char*)staging_buf.mapped;
-			unsigned char* stp = (unsigned char*)data;
-			int ite = texMemSize / bufsize;
-			for (int i = 0; i < ite; i++)
-			{
-				memcpy(dstp, stp, bufsize);
-				dstp += bufsize;
-				stp += bufsize;
-			}
-			if (texMemSize % bufsize > 0)
-				memcpy(dstp, stp, texMemSize % bufsize);
-			*/
-			//OutputDebugStringA("uploadtex finished\n");
-			
+			//source and destination are both contiguous
+			memcpy(slot->buf.mapped, data, texMemSize);
 		}
 		else
 		{
@@ -1206,11 +1320,13 @@ namespace vks
 			uint64_t dst_zpitch = bnum_y * dst_ypitch;
 			uint64_t w = tex->w;
 			uint64_t h = tex->h;
-			unsigned char* dst = (unsigned char*)staging_buf.mapped;
+			unsigned char* dst = (unsigned char*)slot->buf.mapped;
 			unsigned char* src = (unsigned char*)data;
 
 			size_t nthreads = std::thread::hardware_concurrency();
+			if (nthreads == 0) nthreads = 1;
 			if (nthreads > 8) nthreads = 8;
+			if (tex->d > 0 && nthreads > tex->d) nthreads = tex->d;
 			std::vector<std::thread> threads(nthreads);
 			int grain_size = tex->d / nthreads;
 
@@ -1307,17 +1423,17 @@ namespace vks
 		VkDeviceSize atom = properties.limits.nonCoherentAtomSize;
 		if (atom > 0)
 			texMemSize = (texMemSize + atom - 1) & ~(atom - 1);
-		if (texMemSize > staging_buf.size)
-			staging_buf.flush();
+		if (texMemSize > slot->buf.size)
+			slot->buf.flush();
 		else
-			staging_buf.flush(texMemSize);
-		
-		CopyDataStagingBuf2Tex(tex, flush, semaphore);
+			slot->buf.flush(texMemSize);
+
+		CopyDataStagingBuf2Tex(tex, flush, semaphore, slot);
 
 		return true;
 	}
 
-	void VulkanDevice::CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore)
+	void VulkanDevice::CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore, StagingRingSlot* slot)
 	{
 		VkCommandBuffer copyCmd = VK_NULL_HANDLE;
 		if (flush)
@@ -1337,12 +1453,15 @@ namespace vks
 		subresourceRange.levelCount = 1;
 		subresourceRange.layerCount = 1;
 
-		// Optimal image will be used as destination for the copy, so we must transfer from our
-		// initial undefined image layout to the transfer destination layout
+		// Optimal image will be used as destination for the copy.
+		// A freshly created image is still in VK_IMAGE_LAYOUT_UNDEFINED (the descriptor
+		// holds the intended sampling layout, not the actual one): passing the true
+		// current layout keeps the barrier spec-valid, and the contents may be discarded
+		// because the copy overwrites the whole image.
 		vks::tools::setImageLayout(
 			copyCmd,
 			tex->image,
-			tex->descriptor.imageLayout,
+			tex->uploaded ? tex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			subresourceRange);
 
@@ -1358,7 +1477,7 @@ namespace vks
 
 		vkCmdCopyBufferToImage(
 			copyCmd,
-			staging_buf.buffer,
+			slot ? slot->buf.buffer : staging_buf.buffer,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			1,
@@ -1370,6 +1489,8 @@ namespace vks
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			tex->descriptor.imageLayout,
 			subresourceRange);
+
+		tex->uploaded = true;
 
 		if (flush)
 			flushTransferCommandBuffer(copyCmd, true);
@@ -1394,8 +1515,23 @@ namespace vks
 					submitInfo.pWaitDstStageMask = waitStages.data();
 				}
 			}
-			// Submit to the queue
-			VK_CHECK_RESULT(vkQueueSubmit(transfer_queue, 1, &submitInfo, VK_NULL_HANDLE));
+			// Submit to the queue; the slot fence marks when its staging buffer can be reused
+			VK_CHECK_RESULT(vkQueueSubmit(transfer_queue, 1, &submitInfo, slot ? slot->fence : VK_NULL_HANDLE));
+			if (slot)
+			{
+				if (semaphore)
+				{
+					//the render submit waits on the semaphore; only the staging slot
+					//needs the fence, which is waited when the slot is reused
+					slot->pending = true;
+				}
+				else
+				{
+					//no downstream synchronization requested: complete the upload here
+					VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot->fence, VK_TRUE, UINT64_MAX));
+					slot->pending = false;
+				}
+			}
 		}
 	}
 
