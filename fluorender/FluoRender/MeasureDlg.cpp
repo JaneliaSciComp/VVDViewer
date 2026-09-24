@@ -1289,6 +1289,8 @@ wxPanel(parent, id, pos, size, style, name),
 		wxDefaultPosition, wxSize(60, -1), wxALIGN_CENTER);
 	m_warp_stiffness_sldr = new wxSlider(this, ID_WarpStiffnessSldr, 0, 0, 300,
 		wxDefaultPosition, wxSize(100, 20));
+	m_warp_stiffness_sldr->SetToolTip("Thin Plate Spline stiffness (dimensionless, same as the ImageJ "
+		"\"Apply BigWarp with Stiffness\" plugin). 0 = exact interpolation, as BigWarp.");
 	m_warp_stiffness_text = new wxStaticText(this, 0, "0.000",
 		wxDefaultPosition, wxSize(40, -1), wxALIGN_CENTER);
 	sizer_2->Add(10, 10);

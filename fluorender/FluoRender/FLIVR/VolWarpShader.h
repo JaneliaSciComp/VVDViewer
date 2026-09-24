@@ -27,15 +27,16 @@
 //
 
 // VolWarpShader: a Vulkan compute shader that resamples a (moving) source
-// volume into a fixed-space output volume using a Thin Plate Spline transform.
-// For each output voxel (in fixed space) the forward TPS F: moving->fixed is
-// numerically inverted on the GPU (Gauss-Newton + backtracking line search,
-// matching jitk-tps / BigWarp) to find the moving-space sample location.
+// volume into a fixed-space output volume. For each output voxel the resampling
+// map of a ThinPlateSpline (fixed -> moving: BigWarp's TPS, or an inverted
+// linear model) is evaluated directly, and the source is sampled like
+// BigWarp/imglib2: nearest neighbor or N-linear, zero outside the volume.
 
 #ifndef VolWarpShader_h
 #define VolWarpShader_h
 
 #include <glm/glm.hpp>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -91,25 +92,28 @@ namespace FLIVR
 		};
 
 		// Invariant transform parameters (std140 uniform buffer, binding 3).
+		// The map is evaluated in the units of ThinPlateSpline's u space with
+		// the result in source voxel coords (voxel centers at integers).
 		struct WarpCompShaderUBO {
-			glm::mat4 A;      // forward affine: linear part in upper-left 3x3, b in column 3
-			glm::mat4 Ainv;   // inverse affine mapping f -> m (initial guess)
-			glm::ivec4 cfg;   // (num_landmarks, max_iter, line_search_tries, 0)
-			glm::vec4 prm;    // (eps, beta, c_armijo, 0)
+			glm::mat4 G;         // affine part: p = G * (u, 1)
+			glm::vec4 gscale;    // u = o * gscale + goff (o = output voxel index)
+			glm::vec4 goff;
+			glm::ivec4 srcDim;   // (svx, svy, svz, 0) source volume dims (voxels)
+			glm::ivec4 cfg;      // (num_landmarks, interp (0 nearest, 1 linear), 0, 0)
 		};
 
 		// Per-dispatch parameters (push constants, <= 128 bytes). One dispatch
 		// covers an output sub-region: normally a whole brick, but bricks whose
-		// inverse-mapped source AABB exceeds the GPU 3D-texture limit are
-		// subdivided, each sub-region getting its own source tile.
+		// source AABB exceeds the GPU 3D-texture limit are subdivided, each
+		// sub-region getting its own source tile, and sub-regions are cut into
+		// z slabs to bound the work of one dispatch.
 		struct WarpCompShaderBrickConst {
-			glm::vec4 volDimInv;     // (1/volNx, 1/volNy, 1/volNz, 0) full volume
 			glm::ivec4 brickOrigin;  // (ox, oy, oz, 0) sub-region offset in volume
 			glm::ivec4 validDims;    // (mx, my, mz, 0) sub-region valid data dims
-			glm::vec4 tileOrigin;    // source tile origin in source-normalized coords
-			glm::vec4 tileSizeInv;   // 1 / tile size in source-normalized coords
 			glm::ivec4 outOffset;    // (ox, oy, oz, 0) sub-region offset within the
 			                         // output brick image (0 when not subdivided)
+			glm::ivec4 tileOrigin;   // source tile origin (source voxels)
+			glm::ivec4 tileSize;     // source tile size (source voxels)
 		};
 
 		static inline VkWriteDescriptorSet writeDescriptorSetStrageImage(
@@ -195,6 +199,19 @@ namespace FLIVR
 		std::vector<VolWarpShader*> shader_;
 		int prev_shader_;
 	};
+
+	// must match the std140 "Warp" block and the push_constant block in VolWarpShader.cpp
+	static_assert(sizeof(VolWarpShaderFactory::WarpCompShaderUBO) == 128 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderUBO, gscale) == 64 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderUBO, goff) == 80 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderUBO, srcDim) == 96 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderUBO, cfg) == 112,
+		"WarpCompShaderUBO layout");
+	static_assert(sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst) == 80 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderBrickConst, outOffset) == 32 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderBrickConst, tileOrigin) == 48 &&
+		offsetof(VolWarpShaderFactory::WarpCompShaderBrickConst, tileSize) == 64,
+		"WarpCompShaderBrickConst layout");
 
 } // end namespace FLIVR
 

@@ -35,6 +35,8 @@
 //#include <FLIVR/VolKernel.h>
 #include "utility.h"
 #include "../compatibility.h"
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
@@ -3679,9 +3681,11 @@ namespace FLIVR
 
 	VolumeRenderer::VWarpPipeline VolumeRenderer::prepareWarpPipeline(vks::VulkanDevice* device, int out_bytes)
 	{
-		VWarpPipeline ret_pipeline;
+		VWarpPipeline ret_pipeline = { VK_NULL_HANDLE, nullptr, device };
 
 		ShaderProgram* warp_shader = m_vulkan->warp_shader_factory_->shader(device->logicalDevice, out_bytes);
+		if (!warp_shader)
+			return ret_pipeline; //shader failed to compile
 
 		if (m_prev_warp_pipeline >= 0) {
 			if (m_warp_pipelines[m_prev_warp_pipeline].device == device &&
@@ -3727,32 +3731,16 @@ namespace FLIVR
 		if (!vr_in || !tex_ || !vr_in->tex_ || !m_vulkan || !tps.valid())
 			return;
 
-		//this writes textures the in-flight frame may sample: wait it out first
-		for (auto dev : m_vulkan->devices)
-			dev->WaitIdleAllFrameSlots();
-
-		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
-		tex_->set_sort_bricks();
-		vector<TextureBrick*>* bricks = tex_->get_sorted_bricks(view_ray);
-		if (!bricks || bricks->size() == 0)
-			return;
-
-		bool compression_this = compression_;
-		if (compression_)
-		{
-			m_vulkan->eraseBricksFromTexpools(bricks, 0);
-			compression_ = false;
-		}
-
 		const int out_bytes = tex_->nb(0);
 		const int src_nb = vr_in->tex_->nb(0);
-		const VkFilter ifilter = (interp == 0) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
 		const VkFormat tile_format =
 			(out_bytes == 2) ? VK_FORMAT_R16_UNORM :
 			(out_bytes == 4) ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R8_UNORM;
 
 		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
 		VWarpPipeline pipeline = prepareWarpPipeline(prim_dev, out_bytes);
+		if (pipeline.vkpipeline == VK_NULL_HANDLE)
+			return; //warp shader failed to compile
 		VkPipelineLayout pipelineLayout = m_vulkan->warp_shader_factory_->pipeline_[prim_dev].pipelineLayout;
 
 		//source (moving) dimensions and pyramid level
@@ -3777,19 +3765,19 @@ namespace FLIVR
 		const int ovy = tex_->ny();
 		const int ovz = tex_->nz();
 
-		const int max3d = (int)prim_dev->properties.limits.maxImageDimension3D;
-		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d);
-
-		//landmark storage buffer (src_i, W_i) in source-normalized coords
+		//pack the resampling map (computed in double). The shader evaluates it
+		//in ThinPlateSpline's u space and returns source voxel coords p (voxel
+		//centers at integers): for output voxel o, f = (o+0.5)/ovdim and
+		//u = (f*aspect - c)/R = o*gscale + goff; p = G(f)*svdim - 0.5, so every
+		//row of the affine part and of the weights is scaled by svdim.
 		const int N = tps.num_landmarks();
+		const glm::dvec3 ovdim(ovx, ovy, ovz), svdim(svx, svy, svz);
 		std::vector<glm::vec4> packed;
-		packed.reserve((size_t)2 * N);
-		const std::vector<glm::dvec3>& srcL = tps.sources();
-		const std::vector<glm::dvec3>& wL = tps.weights();
+		packed.reserve((size_t)2 * std::max(N, 1));
 		for (int i = 0; i < N; ++i)
 		{
-			packed.push_back(glm::vec4((float)srcL[i].x, (float)srcL[i].y, (float)srcL[i].z, 0.0f));
-			packed.push_back(glm::vec4((float)wL[i].x, (float)wL[i].y, (float)wL[i].z, 0.0f));
+			packed.push_back(glm::vec4(glm::vec3(tps.knots()[i]), 0.0f));
+			packed.push_back(glm::vec4(glm::vec3(tps.weights()[i] * svdim), 0.0f));
 		}
 		//linear transforms (Affine/Similarity/Rigid/Translation) carry no landmarks
 		//(N==0). Keep the storage buffer non-empty (VkBuffer size must be > 0); the
@@ -3799,32 +3787,60 @@ namespace FLIVR
 			packed.push_back(glm::vec4(0.0f));
 			packed.push_back(glm::vec4(0.0f));
 		}
+
+		VolWarpShaderFactory::WarpCompShaderUBO ubo = {};
+		{
+			const glm::dmat3& A = tps.affine();
+			const double R = tps.radius();
+			//glm is column major: A[c] is column c, so the component-wise
+			//product with svdim scales its rows
+			ubo.G[0] = glm::vec4(glm::vec3(A[0] * svdim), 0.0f);
+			ubo.G[1] = glm::vec4(glm::vec3(A[1] * svdim), 0.0f);
+			ubo.G[2] = glm::vec4(glm::vec3(A[2] * svdim), 0.0f);
+			ubo.G[3] = glm::vec4(glm::vec3(tps.translation() * svdim - 0.5), 1.0f);
+			ubo.gscale = glm::vec4(glm::vec3(tps.aspect() / (ovdim * R)), 0.0f);
+			ubo.goff = glm::vec4(glm::vec3((0.5 * tps.aspect() / ovdim - tps.center()) / R), 0.0f);
+			ubo.srcDim = glm::ivec4(svx, svy, svz, 0);
+			ubo.cfg = glm::ivec4(N, interp == 0 ? 0 : 1, 0, 0);
+		}
+		//a transform beyond float range would silently corrupt the result
+		auto finite4 = [](const glm::vec4& v)
+		{
+			return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) && std::isfinite(v.w);
+		};
+		bool finite = finite4(ubo.G[0]) && finite4(ubo.G[1]) && finite4(ubo.G[2]) &&
+			finite4(ubo.G[3]) && finite4(ubo.gscale) && finite4(ubo.goff);
+		for (size_t i = 0; finite && i < packed.size(); ++i)
+			finite = finite4(packed[i]);
+		if (!finite)
+			return;
+
+		//this writes textures the in-flight frame may sample: wait it out first
+		for (auto dev : m_vulkan->devices)
+			dev->WaitIdleAllFrameSlots();
+
+		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
+		tex_->set_sort_bricks();
+		vector<TextureBrick*>* bricks = tex_->get_sorted_bricks(view_ray);
+		if (!bricks || bricks->size() == 0)
+			return;
+
+		bool compression_this = compression_;
+		if (compression_)
+		{
+			m_vulkan->eraseBricksFromTexpools(bricks, 0);
+			compression_ = false;
+		}
+
+		const int max3d = (int)prim_dev->properties.limits.maxImageDimension3D;
+		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d);
+
 		vks::Buffer lm_buf;
 		prim_dev->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			&lm_buf, packed.size() * sizeof(glm::vec4), packed.data());
 
-		//transform uniform buffer
-		VolWarpShaderFactory::WarpCompShaderUBO ubo = {};
-		{
-			glm::dmat3 A = tps.affine();
-			glm::dvec3 b = tps.translation();
-			glm::dmat3 Ai = tps.affineInv();
-			glm::dvec3 bi = -(Ai * b);
-			ubo.A = glm::mat4(1.0f);
-			ubo.A[0] = glm::vec4((float)A[0].x, (float)A[0].y, (float)A[0].z, 0.0f);
-			ubo.A[1] = glm::vec4((float)A[1].x, (float)A[1].y, (float)A[1].z, 0.0f);
-			ubo.A[2] = glm::vec4((float)A[2].x, (float)A[2].y, (float)A[2].z, 0.0f);
-			ubo.A[3] = glm::vec4((float)b.x, (float)b.y, (float)b.z, 1.0f);
-			ubo.Ainv = glm::mat4(1.0f);
-			ubo.Ainv[0] = glm::vec4((float)Ai[0].x, (float)Ai[0].y, (float)Ai[0].z, 0.0f);
-			ubo.Ainv[1] = glm::vec4((float)Ai[1].x, (float)Ai[1].y, (float)Ai[1].z, 0.0f);
-			ubo.Ainv[2] = glm::vec4((float)Ai[2].x, (float)Ai[2].y, (float)Ai[2].z, 0.0f);
-			ubo.Ainv[3] = glm::vec4((float)bi.x, (float)bi.y, (float)bi.z, 1.0f);
-			ubo.cfg = glm::ivec4(N, 20, 15, 0);
-			ubo.prm = glm::vec4(1e-6f, 0.5f, 1e-4f, 0.0f);
-		}
 		vks::Buffer ubo_buf;
 		prim_dev->createBuffer(
 			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -3836,7 +3852,7 @@ namespace FLIVR
 			-> std::shared_ptr<vks::VTexture>
 		{
 			std::shared_ptr<vks::VTexture> t =
-				prim_dev->GenTexture3D(tile_format, ifilter, (uint32_t)w, (uint32_t)h, (uint32_t)d);
+				prim_dev->GenTexture3D(tile_format, VK_FILTER_NEAREST, (uint32_t)w, (uint32_t)h, (uint32_t)d); //read with texelFetch
 			if (!t)
 				return nullptr;
 			if (src_brxml)
@@ -3863,13 +3879,13 @@ namespace FLIVR
 		};
 
 		//estimate the moving-source voxel range [st, st+whd) for an output
-		//sub-region [go, go+n) given in global output voxels: numeric inverse at
-		//a (SS+1)^3 sample grid, a 10% + 3 voxel margin, clamped to the volume
+		//sub-region [go, go+n) given in global output voxels: the resampling map
+		//at a (SS+1)^3 sample grid, a 10% + 3 voxel margin, clamped to the volume
 		auto estimateTile = [&](int gox, int goy, int goz, int nx, int ny, int nz,
 			long& stx, long& sty, long& stz, size_t& w, size_t& h, size_t& d)
 		{
 			double mnx = 1e30, mny = 1e30, mnz = 1e30, mxx = -1e30, mxy = -1e30, mxz = -1e30;
-			const int SS = 3;
+			const int SS = 8;
 			for (int kz = 0; kz <= SS; ++kz)
 			for (int ky = 0; ky <= SS; ++ky)
 			for (int kx = 0; kx <= SS; ++kx)
@@ -3877,8 +3893,7 @@ namespace FLIVR
 				double fx = (gox + (double)kx / SS * nx) / ovx;
 				double fy = (goy + (double)ky / SS * ny) / ovy;
 				double fz = (goz + (double)kz / SS * nz) / ovz;
-				glm::dvec3 mm;
-				tps.evaluateInverse(glm::dvec3(fx, fy, fz), mm);
+				glm::dvec3 mm = tps.evaluate(glm::dvec3(fx, fy, fz));
 				if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
 				if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
 				if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;
@@ -4000,83 +4015,92 @@ namespace FLIVR
 			{
 				const OutRegion& r = regions[ri];
 
-				VolWarpShaderFactory::WarpCompShaderBrickConst pc = {};
-				pc.volDimInv = glm::vec4(1.0f / ovx, 1.0f / ovy, 1.0f / ovz, 0.0f);
-				pc.brickOrigin = glm::ivec4(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz, 0);
-				pc.validDims = glm::ivec4(r.nx, r.ny, r.nz, 0);
-				pc.outOffset = glm::ivec4(r.ox, r.oy, r.oz, 0);
-
 				std::shared_ptr<vks::VTexture> srctex;
+				glm::ivec4 tileOrigin(0), tileSize(svx, svy, svz, 0);
 				if (wholeFits)
-				{
 					srctex = wholeTex;
-					pc.tileOrigin = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-					pc.tileSizeInv = glm::vec4(1.0f, 1.0f, 1.0f, 0.0f);
-				}
 				else
 				{
 					srctex = buildTile((size_t)r.stx, (size_t)r.sty, (size_t)r.stz, r.w, r.h, r.d);
-					pc.tileOrigin = glm::vec4((float)r.stx / svx, (float)r.sty / svy, (float)r.stz / svz, 0.0f);
-					pc.tileSizeInv = glm::vec4((float)svx / r.w, (float)svy / r.h, (float)svz / r.d, 0.0f);
+					tileOrigin = glm::ivec4((int)r.stx, (int)r.sty, (int)r.stz, 0);
+					tileSize = glm::ivec4((int)r.w, (int)r.h, (int)r.d, 0);
 				}
 				if (!srctex)
 					continue;
 
-				std::vector<VkWriteDescriptorSet> descriptorWrites;
-				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
-				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetSrc(VK_NULL_HANDLE, &srctex->descriptor));
-				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, &lm_buf.descriptor));
-				descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetUBO(VK_NULL_HANDLE, &ubo_buf.descriptor));
+				//a whole volume can be a single brick: bound the work of one
+				//dispatch (voxels x landmarks) by cutting the sub-region into z
+				//slabs, so a long warp cannot trip the OS GPU watchdog (TDR)
+				const size_t max_work = (size_t)1 << 30;
+				const size_t slice_work = (size_t)r.nx * r.ny * (size_t)std::max(N, 1);
+				const int slab = (int)std::max<size_t>(1, std::min<size_t>((size_t)r.nz, max_work / slice_work));
+				for (int z0 = 0; z0 < r.nz; z0 += slab)
+				{
+					const int dz = std::min(slab, r.nz - z0);
 
-				VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-				VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
+					VolWarpShaderFactory::WarpCompShaderBrickConst pc = {};
+					pc.brickOrigin = glm::ivec4(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz + z0, 0);
+					pc.validDims = glm::ivec4(r.nx, r.ny, dz, 0);
+					pc.outOffset = glm::ivec4(r.ox, r.oy, r.oz + z0, 0);
+					pc.tileOrigin = tileOrigin;
+					pc.tileSize = tileSize;
 
-				vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
+					std::vector<VkWriteDescriptorSet> descriptorWrites;
+					descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetOutput(VK_NULL_HANDLE, &dsttex->descriptor));
+					descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetSrc(VK_NULL_HANDLE, &srctex->descriptor));
+					descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, &lm_buf.descriptor));
+					descriptorWrites.push_back(VolWarpShaderFactory::writeDescriptorSetUBO(VK_NULL_HANDLE, &ubo_buf.descriptor));
 
-				vks::tools::setImageLayout(
-					cmdbuf,
-					dsttex->image,
-					dst_layout,
-					VK_IMAGE_LAYOUT_GENERAL,
-					dsttex->subresourceRange);
-				dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-				dst_layout = VK_IMAGE_LAYOUT_GENERAL;
+					VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+					VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
 
-				prim_dev->vkCmdPushDescriptorSetKHR(
-					cmdbuf,
-					VK_PIPELINE_BIND_POINT_COMPUTE,
-					pipelineLayout,
-					0,
-					(uint32_t)descriptorWrites.size(),
-					descriptorWrites.data());
+					vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
 
-				vkCmdPushConstants(
-					cmdbuf,
-					pipelineLayout,
-					VK_SHADER_STAGE_COMPUTE_BIT,
-					0,
-					sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst),
-					&pc);
+					vks::tools::setImageLayout(
+						cmdbuf,
+						dsttex->image,
+						dst_layout,
+						VK_IMAGE_LAYOUT_GENERAL,
+						dsttex->subresourceRange);
+					dsttex->descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+					dst_layout = VK_IMAGE_LAYOUT_GENERAL;
 
-				uint32_t gx = r.nx / 4 + ((r.nx % 4) > 0 ? 1 : 0);
-				uint32_t gy = r.ny / 4 + ((r.ny % 4) > 0 ? 1 : 0);
-				uint32_t gz = r.nz / 4 + ((r.nz % 4) > 0 ? 1 : 0);
-				vkCmdDispatch(cmdbuf, gx, gy, gz);
+					prim_dev->vkCmdPushDescriptorSetKHR(
+						cmdbuf,
+						VK_PIPELINE_BIND_POINT_COMPUTE,
+						pipelineLayout,
+						0,
+						(uint32_t)descriptorWrites.size(),
+						descriptorWrites.data());
 
-				vkEndCommandBuffer(cmdbuf);
+					vkCmdPushConstants(
+						cmdbuf,
+						pipelineLayout,
+						VK_SHADER_STAGE_COMPUTE_BIT,
+						0,
+						sizeof(VolWarpShaderFactory::WarpCompShaderBrickConst),
+						&pc);
 
-				VkSubmitInfo submitInfo = vks::initializers::submitInfo();
-				submitInfo.commandBufferCount = 1;
-				submitInfo.pCommandBuffers = &cmdbuf;
+					uint32_t gx = r.nx / 4 + ((r.nx % 4) > 0 ? 1 : 0);
+					uint32_t gy = r.ny / 4 + ((r.ny % 4) > 0 ? 1 : 0);
+					uint32_t gz = dz / 4 + ((dz % 4) > 0 ? 1 : 0);
+					vkCmdDispatch(cmdbuf, gx, gy, gz);
 
-				//reuse a cached fence: create/destroy per dispatch costs three driver round-trips
-				VkFence fence = getComputeFence(prim_dev);
-				VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
-				VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
-				VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+					vkEndCommandBuffer(cmdbuf);
 
-				written = true;
-				//per-sub-region temp source texture (srctex) is released here (after the fence)
+					VkSubmitInfo submitInfo = vks::initializers::submitInfo();
+					submitInfo.commandBufferCount = 1;
+					submitInfo.pCommandBuffers = &cmdbuf;
+
+					//reuse a cached fence: create/destroy per dispatch costs three driver round-trips
+					VkFence fence = getComputeFence(prim_dev);
+					VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
+					VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
+					VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+
+					written = true;
+				}
+				//per-sub-region temp source texture (srctex) is released here (after the fences)
 			}
 
 			if (written)

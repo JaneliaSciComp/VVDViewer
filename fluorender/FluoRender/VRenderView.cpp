@@ -20586,8 +20586,9 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
     }
 
     //landmarks are in grid-normalized [0,1] coords whose axes are physically
-    //anisotropic (each axis length = res*spacing). Rigid/Similarity must be fit
-    //in isotropic space, so pass the per-axis physical length as the aspect.
+    //anisotropic (each axis length = res*spacing). TPS (radial kernel) and
+    //Rigid/Similarity must be fit in isotropic physical space, like BigWarp,
+    //so pass the per-axis physical length as the aspect.
     int arx = 0, ary = 0, arz = 0;
     double aspx = 1.0, aspy = 1.0, aspz = 1.0;
     m_cur_vol->GetResolution(arx, ary, arz);
@@ -20597,6 +20598,9 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
         (ary > 0 ? ary : 1) * (aspy > 0.0 ? aspy : 1.0),
         (arz > 0 ? arz : 1) * (aspz > 0.0 ? aspz : 1.0));
 
+    //the TPS is fit fixed -> moving and evaluated directly per output voxel
+    //(BigWarp); lambda is the dimensionless stiffness of the ImageJ "Apply
+    //BigWarp with Stiffness" plugin (0 = exact interpolation, as BigWarp)
     FLIVR::ThinPlateSpline tps;
     bool ok = false;
     wxString suffix;
@@ -20606,11 +20610,12 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
     case 2: ok = tps.solveSimilarity(srcPts, tgtPts, aspect);  suffix = "_SIM";    break;
     case 3: ok = tps.solveRigid(srcPts, tgtPts, aspect);       suffix = "_RIGID";  break;
     case 4: ok = tps.solveTranslation(srcPts, tgtPts);         suffix = "_TRANS";  break;
-    default: ok = tps.solve(srcPts, tgtPts, lambda);           suffix = "_WARPED"; break;
+    default: ok = tps.solve(srcPts, tgtPts, lambda, aspect);   suffix = "_WARPED"; break;
     }
     if (!ok)
     {
-        wxMessageBox("Transform solve failed (degenerate, collinear or coplanar landmarks).", "Warp");
+        wxMessageBox("Transform solve failed (duplicate fixed-point landmarks, or "
+            "degenerate, collinear or coplanar landmarks).", "Warp");
         return;
     }
 

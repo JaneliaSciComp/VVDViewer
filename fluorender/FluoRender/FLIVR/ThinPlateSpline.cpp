@@ -36,11 +36,23 @@
 namespace FLIVR
 {
 	ThinPlateSpline::ThinPlateSpline()
-		: A_(1.0), Ainv_(1.0), b_(0.0), valid_(false)
+		: A_(1.0), b_(0.0), aspect_(1.0), c_(0.0), R_(1.0), valid_(false)
 	{}
 
 	ThinPlateSpline::~ThinPlateSpline()
 	{}
+
+	void ThinPlateSpline::reset()
+	{
+		valid_ = false;
+		knots_.clear();
+		W_.clear();
+		A_ = glm::dmat3(1.0);
+		b_ = glm::dvec3(0.0);
+		aspect_ = glm::dvec3(1.0);
+		c_ = glm::dvec3(0.0);
+		R_ = 1.0;
+	}
 
 	double ThinPlateSpline::kernel(double r2)
 	{
@@ -98,157 +110,146 @@ namespace FLIVR
 		return true;
 	}
 
-	bool ThinPlateSpline::solve(const std::vector<glm::dvec3>& src,
-		const std::vector<glm::dvec3>& tgt, double lambda)
+	static bool finite3(const glm::dvec3& v)
 	{
-		valid_ = false;
-		src_.clear();
-		W_.clear();
-		A_ = glm::dmat3(1.0);
-		Ainv_ = glm::dmat3(1.0);
-		b_ = glm::dvec3(0.0);
+		return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+	}
+
+	bool ThinPlateSpline::solve(const std::vector<glm::dvec3>& src,
+		const std::vector<glm::dvec3>& tgt, double stiffness, const glm::dvec3& aspect)
+	{
+		reset();
 
 		if (src.size() != tgt.size() || src.size() < 4)
 			return false;
+		if (!std::isfinite(stiffness) || stiffness < 0.0 || !finite3(aspect) ||
+			aspect.x <= 0.0 || aspect.y <= 0.0 || aspect.z <= 0.0)
+			return false;
 
 		const int N = static_cast<int>(src.size());
+
+		// knots: fixed landmarks in isotropic physical space, centered on their
+		// centroid and scaled by their RMS radius
+		glm::dvec3 c(0.0);
+		for (int i = 0; i < N; ++i)
+		{
+			if (!finite3(src[i]) || !finite3(tgt[i]))
+				return false;
+			c += tgt[i] * aspect;
+		}
+		c /= (double)N;
+		double r2sum = 0.0;
+		for (int i = 0; i < N; ++i)
+		{
+			glm::dvec3 d = tgt[i] * aspect - c;
+			r2sum += glm::dot(d, d);
+		}
+		const double R = std::sqrt(r2sum / N);
+		if (!std::isfinite(R) || R <= 0.0)
+			return false;
+		std::vector<glm::dvec3> k(N);
+		for (int i = 0; i < N; ++i)
+			k[i] = (tgt[i] * aspect - c) / R;
+		// duplicate fixed points (rejected by the ImageJ plugin with the same
+		// tolerance; singular without stiffness)
+		for (int i = 0; i < N; ++i)
+			for (int j = 0; j < i; ++j)
+			{
+				glm::dvec3 d = k[i] - k[j];
+				if (glm::dot(d, d) < 1e-20)
+					return false;
+			}
+
 		const int n = N + 4;
 		std::vector<double> A((size_t)n * n, 0.0);
 		std::vector<double> B((size_t)n * 3, 0.0);
 
-		// K block: K[i][j] = U(|src_i - src_j|)
+		// K block: K[i][j] = U(|k_i - k_j|)
 		for (int i = 0; i < N; ++i)
 		{
 			for (int j = 0; j < N; ++j)
 			{
-				glm::dvec3 d = src[i] - src[j];
+				glm::dvec3 d = k[i] - k[j];
 				A[(size_t)i * n + j] = kernel(glm::dot(d, d));
 			}
 		}
 		// regularization on the diagonal (stiffness)
 		for (int i = 0; i < N; ++i)
-			A[(size_t)i * n + i] += lambda;
+			A[(size_t)i * n + i] += stiffness;
 
 		// P block (row [1 x y z]) and its transpose
 		for (int i = 0; i < N; ++i)
 		{
-			A[(size_t)i * n + (N + 0)] = 1.0;        A[(size_t)(N + 0) * n + i] = 1.0;
-			A[(size_t)i * n + (N + 1)] = src[i].x;   A[(size_t)(N + 1) * n + i] = src[i].x;
-			A[(size_t)i * n + (N + 2)] = src[i].y;   A[(size_t)(N + 2) * n + i] = src[i].y;
-			A[(size_t)i * n + (N + 3)] = src[i].z;   A[(size_t)(N + 3) * n + i] = src[i].z;
+			A[(size_t)i * n + (N + 0)] = 1.0;      A[(size_t)(N + 0) * n + i] = 1.0;
+			A[(size_t)i * n + (N + 1)] = k[i].x;   A[(size_t)(N + 1) * n + i] = k[i].x;
+			A[(size_t)i * n + (N + 2)] = k[i].y;   A[(size_t)(N + 2) * n + i] = k[i].y;
+			A[(size_t)i * n + (N + 3)] = k[i].z;   A[(size_t)(N + 3) * n + i] = k[i].z;
 		}
 
-		// RHS = target coordinates (3 columns); bottom 4 rows are zero
+		// RHS = moving coordinates (3 columns); bottom 4 rows are zero
 		for (int i = 0; i < N; ++i)
 		{
-			B[(size_t)i * 3 + 0] = tgt[i].x;
-			B[(size_t)i * 3 + 1] = tgt[i].y;
-			B[(size_t)i * 3 + 2] = tgt[i].z;
+			B[(size_t)i * 3 + 0] = src[i].x;
+			B[(size_t)i * 3 + 1] = src[i].y;
+			B[(size_t)i * 3 + 2] = src[i].z;
 		}
 
 		if (!solveDense(A, n, B, 3))
 			return false;
 
-		src_ = src;
+		for (size_t i = 0; i < B.size(); ++i)
+			if (!std::isfinite(B[i]))
+				return false;
+
+		knots_ = k;
 		W_.resize(N);
 		for (int i = 0; i < N; ++i)
 			W_[i] = glm::dvec3(B[(size_t)i * 3 + 0], B[(size_t)i * 3 + 1], B[(size_t)i * 3 + 2]);
 
 		// affine: translation (constant row) and the 3 linear coefficient rows.
 		b_ = glm::dvec3(B[(size_t)(N + 0) * 3 + 0], B[(size_t)(N + 0) * 3 + 1], B[(size_t)(N + 0) * 3 + 2]);
-		// glm is column major: A_[col][row]. Column c holds the coefficients of m[c].
+		// glm is column major: A_[col][row]. Column c holds the coefficients of u[c].
 		A_[0] = glm::dvec3(B[(size_t)(N + 1) * 3 + 0], B[(size_t)(N + 1) * 3 + 1], B[(size_t)(N + 1) * 3 + 2]);
 		A_[1] = glm::dvec3(B[(size_t)(N + 2) * 3 + 0], B[(size_t)(N + 2) * 3 + 1], B[(size_t)(N + 2) * 3 + 2]);
 		A_[2] = glm::dvec3(B[(size_t)(N + 3) * 3 + 0], B[(size_t)(N + 3) * 3 + 1], B[(size_t)(N + 3) * 3 + 2]);
 
-		if (std::fabs(glm::determinant(A_)) < 1e-12)
-			Ainv_ = glm::dmat3(1.0);
-		else
-			Ainv_ = glm::inverse(A_);
-
+		aspect_ = aspect;
+		c_ = c;
+		R_ = R;
 		valid_ = true;
 		return true;
 	}
 
-	glm::dvec3 ThinPlateSpline::evaluate(const glm::dvec3& m) const
+	glm::dvec3 ThinPlateSpline::evaluate(const glm::dvec3& f) const
 	{
-		glm::dvec3 r = A_ * m + b_;
-		const size_t N = src_.size();
+		const glm::dvec3 u = (f * aspect_ - c_) / R_;
+		glm::dvec3 r = A_ * u + b_;
+		const size_t N = knots_.size();
 		for (size_t i = 0; i < N; ++i)
 		{
-			glm::dvec3 d = m - src_[i];
+			glm::dvec3 d = u - knots_[i];
 			r += W_[i] * kernel(glm::dot(d, d));
 		}
 		return r;
 	}
 
-	glm::dmat3 ThinPlateSpline::jacobian(const glm::dvec3& m) const
-	{
-		glm::dmat3 J = A_;
-		const size_t N = src_.size();
-		for (size_t i = 0; i < N; ++i)
-		{
-			glm::dvec3 d = m - src_[i];
-			double r2 = glm::dot(d, d);
-			if (r2 > 1e-12)
-			{
-				// dU/dm = d * (log(r2) + 1); contribution to J is outer(W_i, dU/dm).
-				// glm::outerProduct(c, r)[col][row] = c[row]*r[col]
-				J += glm::outerProduct(W_[i], d) * (std::log(r2) + 1.0);
-			}
-		}
-		return J;
-	}
-
-	bool ThinPlateSpline::evaluateInverse(const glm::dvec3& f, glm::dvec3& m_out,
-		int maxIters, double eps) const
-	{
-		const double beta = 0.5;       // line-search step reduction
-		const double cArmijo = 1e-4;   // sufficient-decrease constant
-		const int lsTries = 15;
-
-		glm::dvec3 m = Ainv_ * (f - b_);   // affine-inverse initial guess
-		for (int it = 0; it < maxIters; ++it)
-		{
-			glm::dvec3 err = f - evaluate(m);
-			if (glm::length(err) < eps)
-			{
-				m_out = m;
-				return true;
-			}
-			glm::dmat3 J = jacobian(m);
-			if (std::fabs(glm::determinant(J)) < 1e-12)
-				break;
-			glm::dvec3 dir = glm::inverse(J) * err;   // Gauss-Newton step
-
-			double c0 = 0.5 * glm::dot(err, err);
-			glm::dvec3 gC = -glm::transpose(J) * err; // gradient of 0.5|f-F(m)|^2
-			double md = glm::dot(gC, dir);
-			double t = 1.0;
-			for (int ls = 0; ls < lsTries; ++ls)
-			{
-				glm::dvec3 e2 = f - evaluate(m + t * dir);
-				if (0.5 * glm::dot(e2, e2) <= c0 + cArmijo * t * md)
-					break;
-				t *= beta;
-			}
-			m += t * dir;
-		}
-		m_out = m;
-		return glm::length(f - evaluate(m)) < eps * 100.0;
-	}
-
 	bool ThinPlateSpline::finalizeLinear()
 	{
-		// pure linear transform: no radial-basis terms
-		src_.clear();
+		// pure linear transform: no radial-basis terms, u == f
+		knots_.clear();
 		W_.clear();
+		aspect_ = glm::dvec3(1.0);
+		c_ = glm::dvec3(0.0);
+		R_ = 1.0;
 		if (std::fabs(glm::determinant(A_)) < 1e-12)
 		{
 			valid_ = false;
 			return false;
 		}
-		Ainv_ = glm::inverse(A_);
+		// the fit maps moving -> fixed; resampling needs fixed -> moving
+		const glm::dmat3 Ainv = glm::inverse(A_);
+		b_ = -(Ainv * b_);
+		A_ = Ainv;
 		valid_ = true;
 		return true;
 	}
@@ -359,9 +360,7 @@ namespace FLIVR
 	bool ThinPlateSpline::solveTranslation(const std::vector<glm::dvec3>& src,
 		const std::vector<glm::dvec3>& tgt)
 	{
-		valid_ = false;
-		src_.clear(); W_.clear();
-		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
+		reset();
 		if (src.size() != tgt.size() || src.empty())
 			return false;
 		glm::dvec3 sc(0.0), tc(0.0);
@@ -387,9 +386,7 @@ namespace FLIVR
 	bool ThinPlateSpline::solveRigid(const std::vector<glm::dvec3>& src,
 		const std::vector<glm::dvec3>& tgt, const glm::dvec3& aspect)
 	{
-		valid_ = false;
-		src_.clear(); W_.clear();
-		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
+		reset();
 		if (src.size() != tgt.size() || src.size() < 3)
 			return false;
 		// fit the rotation in isotropic (aspect-scaled) space
@@ -408,9 +405,7 @@ namespace FLIVR
 	bool ThinPlateSpline::solveSimilarity(const std::vector<glm::dvec3>& src,
 		const std::vector<glm::dvec3>& tgt, const glm::dvec3& aspect)
 	{
-		valid_ = false;
-		src_.clear(); W_.clear();
-		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
+		reset();
 		if (src.size() != tgt.size() || src.size() < 3)
 			return false;
 		// fit rotation + uniform scale in isotropic (aspect-scaled) space so the
@@ -423,16 +418,18 @@ namespace FLIVR
 		double inv = 1.0 / (double)s2.size();
 		sc *= inv; tc *= inv;
 		glm::dmat3 R = fitRotation(s2, t2, sc, tc);
-		// least-squares uniform scale for the fixed optimal rotation
+		// uniform scale as in mpicbg's SimilarityModel3D (BigWarp): the ratio of
+		// the point spreads, s = sqrt(sum|q'|^2 / sum|p'|^2); the optimal
+		// rotation does not depend on it
 		double num = 0.0, den = 0.0;
 		for (size_t i = 0; i < s2.size(); ++i)
 		{
 			glm::dvec3 p = s2[i] - sc;
 			glm::dvec3 q = t2[i] - tc;
-			num += glm::dot(q, R * p);
+			num += glm::dot(q, q);
 			den += glm::dot(p, p);
 		}
-		double s = (den > 1e-12) ? num / den : 1.0;
+		double s = (den > 1e-12) ? std::sqrt(num / den) : 1.0;
 		glm::dmat3 Aiso = R; Aiso[0] *= s; Aiso[1] *= s; Aiso[2] *= s;   // s * R
 		glm::dvec3 biso = tc - Aiso * sc;
 		mapFromIsotropic(Aiso, biso, aspect);
@@ -442,9 +439,7 @@ namespace FLIVR
 	bool ThinPlateSpline::solveAffine(const std::vector<glm::dvec3>& src,
 		const std::vector<glm::dvec3>& tgt)
 	{
-		valid_ = false;
-		src_.clear(); W_.clear();
-		A_ = glm::dmat3(1.0); Ainv_ = glm::dmat3(1.0); b_ = glm::dvec3(0.0);
+		reset();
 		if (src.size() != tgt.size() || src.size() < 4)
 			return false;
 

@@ -26,23 +26,33 @@
 //  DEALINGS IN THE SOFTWARE.
 //
 
-// ThinPlateSpline: a 3D Thin Plate Spline transform equivalent to the one used
-// by Fiji's BigWarp (jitk-tps). The radial basis kernel is U(r) = r^2*log(r)
-// in all dimensions. The forward transform F maps source landmarks onto target
-// landmarks: F(src_i) ~= tgt_i, where
-//     F(m) = A*m + b + sum_i W_i * U(|m - src_i|).
-// The coefficients (A, b, W) are obtained by solving a dense (N+4)x(N+4) linear
-// system on the CPU (N is the number of landmarks, typically small). The inverse
-// transform (needed for image resampling) is computed numerically with a
-// Gauss-Newton iteration plus backtracking line search, matching jitk-tps.
+// ThinPlateSpline: the resampling transform of the GPU volume warp, equivalent
+// to Fiji's BigWarp (jitk-tps TPS and mpicbg linear models).
 //
-// The same class also provides BigWarp's *linear* transform models
-// (Translation, Rigid, Similarity, Affine) through the solveLinear* methods.
-// These produce a pure linear transform F(m) = A*m + b with NO radial-basis
-// terms (num_landmarks() == 0), which the GPU warp shader resamples exactly via
-// the analytic affine inverse. Only the way A and b are fit to the landmark
-// pairs differs between models; the forward/inverse evaluation and the GPU path
-// are shared with the TPS case.
+// The class stores the *backward* map G the resampler needs: it takes a point
+// of the output (fixed/target) volume and returns where to sample the moving
+// (source) volume, both in grid-normalized [0,1] coords. Like BigWarp
+// (TpsTransformSolver: ThinPlateR2LogRSplineKernelTransform(tgtPts, mvgPts))
+// the TPS is fit directly in that direction and evaluated directly; it is never
+// inverted numerically. (The inverse of a moving->fixed TPS is a different map
+// whose local stretch diverges as that map folds under large displacements,
+// undersampling thin structures.)
+//
+// TPS:  G(f) = A*u + b + sum_i W_i * U(|u - k_i|),  U(r) = r^2*log(r),
+//       u = (f*aspect - c) / R
+// The fit is done in isotropic physical space (aspect = per-axis physical
+// length of the normalized box), centered on the fixed landmarks' centroid c
+// and scaled by their RMS radius R, like the ImageJ "Apply BigWarp with
+// Stiffness" plugin. The r^2*log(r) TPS is invariant to that similarity, so
+// this is the same TPS BigWarp fits in physical units; the plugin's
+// dimensionless stiffness s (lambda = s*R^2 in physical units) becomes plain s
+// on the kernel diagonal. s = 0 is BigWarp's unregularized TPS. The
+// coefficients come from a dense (N+4)x(N+4) solve on the CPU.
+//
+// Linear models (Translation, Rigid, Similarity, Affine) are fit moving->fixed
+// in a least-squares sense like BigWarp's ModelTransformSolver and stored
+// inverted with no radial-basis terms (num_landmarks() == 0, aspect = (1,1,1),
+// c = 0, R = 1), so G(f) = A*f + b.
 
 #ifndef ThinPlateSpline_h
 #define ThinPlateSpline_h
@@ -60,17 +70,20 @@ namespace FLIVR
 		ThinPlateSpline();
 		~ThinPlateSpline();
 
-		// Build the forward transform F with F(src_i) ~= tgt_i.
-		// src and tgt must have the same size (>= 4 for a 3D spline).
-		// lambda is the stiffness/regularization (0 == exact interpolation).
-		// Returns false if the system is degenerate (e.g. coplanar landmarks).
+		// Fit the TPS resampling map with G(tgt_i) ~= src_i (src = moving, tgt =
+		// fixed landmarks, grid-normalized; same size, >= 4). aspect is the
+		// per-axis physical length of the normalized box (res*spacing); the
+		// kernel is evaluated in that isotropic space. stiffness is the
+		// dimensionless regularization of the ImageJ plugin (0 == exact
+		// interpolation, BigWarp). Returns false if the system is degenerate
+		// (duplicate fixed points, collinear/coplanar landmarks, zero extent).
 		bool solve(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt,
-			double lambda = 0.0);
+			double stiffness, const glm::dvec3& aspect);
 
-		// BigWarp linear transform models. Each fits A,b so that F(src_i) ~= tgt_i
-		// (moving -> fixed) in a least-squares sense and leaves num_landmarks()==0
-		// (no radial-basis terms). Return false on degenerate/insufficient input.
+		// BigWarp linear transform models. Each fits A,b so that A*src_i+b ~= tgt_i
+		// (moving -> fixed) in a least-squares sense, then stores the inverse as
+		// G with num_landmarks()==0. Return false on degenerate/insufficient input.
 		//   Translation: A = I, b = mean(tgt) - mean(src)            (>= 1 pair)
 		//   Rigid:       A = R   (proper rotation, Horn quaternion)  (>= 3 pairs, non-collinear)
 		//   Similarity:  A = s*R (uniform scale + rotation)          (>= 3 pairs, non-collinear)
@@ -90,27 +103,25 @@ namespace FLIVR
 		bool solveSimilarity(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt,
 			const glm::dvec3& aspect = glm::dvec3(1.0));
-		// Affine/TPS absorb axis anisotropy in their own degrees of freedom, so
-		// they need no aspect and are fit directly in grid-normalized coords.
+		// Affine absorbs axis anisotropy in its own degrees of freedom, so it
+		// needs no aspect and is fit directly in grid-normalized coords.
 		bool solveAffine(const std::vector<glm::dvec3>& src,
 			const std::vector<glm::dvec3>& tgt);
 
 		bool valid() const { return valid_; }
-		int num_landmarks() const { return static_cast<int>(src_.size()); }
+		int num_landmarks() const { return static_cast<int>(knots_.size()); }
 
-		// Forward transform F(m).
-		glm::dvec3 evaluate(const glm::dvec3& m) const;
-		// Jacobian of F at m.
-		glm::dmat3 jacobian(const glm::dvec3& m) const;
-		// Numeric inverse: find m such that F(m) ~= f (Gauss-Newton + backtracking).
-		// Uses the same algorithm as the GPU shader so behavior matches.
-		bool evaluateInverse(const glm::dvec3& f, glm::dvec3& m_out,
-			int maxIters = 20, double eps = 1e-6) const;
+		// Resampling map G: output (fixed) normalized coords f -> source
+		// (moving) normalized coords.
+		glm::dvec3 evaluate(const glm::dvec3& f) const;
 
+		// Parameters of G (see the formula at the top of this file).
 		const glm::dmat3& affine() const { return A_; }
-		const glm::dmat3& affineInv() const { return Ainv_; }
 		const glm::dvec3& translation() const { return b_; }
-		const std::vector<glm::dvec3>& sources() const { return src_; }
+		const glm::dvec3& aspect() const { return aspect_; }
+		const glm::dvec3& center() const { return c_; }
+		double radius() const { return R_; }
+		const std::vector<glm::dvec3>& knots() const { return knots_; }
 		const std::vector<glm::dvec3>& weights() const { return W_; }
 
 	private:
@@ -121,8 +132,11 @@ namespace FLIVR
 		static bool solveDense(std::vector<double>& A, int n,
 			std::vector<double>& B, int rhs);
 
-		// Finish a pure-linear fit: clear the radial-basis terms (N==0), compute
-		// Ainv_, set valid_. Returns false if A_ is singular (non-invertible).
+		// Reset to an invalid identity map before a fit.
+		void reset();
+		// Finish a pure-linear fit: A_, b_ hold the forward (moving -> fixed)
+		// fit; replace them by its inverse, clear the radial-basis terms
+		// (N==0), set valid_. Returns false if A_ is singular.
 		bool finalizeLinear();
 
 		// Map a linear transform fitted in isotropic (aspect-scaled) space into the
@@ -141,11 +155,13 @@ namespace FLIVR
 			const std::vector<glm::dvec3>& tgt,
 			const glm::dvec3& sc, const glm::dvec3& tc);
 
-		std::vector<glm::dvec3> src_;   // source landmarks
+		std::vector<glm::dvec3> knots_; // fixed landmarks in u space (k_i)
 		std::vector<glm::dvec3> W_;     // per-landmark weight vectors
-		glm::dmat3 A_;                  // affine linear part (applied as A_*m)
-		glm::dmat3 Ainv_;               // inverse of A_ (initial guess for inverse)
+		glm::dmat3 A_;                  // affine linear part (applied as A_*u)
 		glm::dvec3 b_;                  // translation
+		glm::dvec3 aspect_;             // u = (f*aspect_ - c_) / R_
+		glm::dvec3 c_;
+		double R_;
 		bool valid_;
 	};
 
