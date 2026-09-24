@@ -51,7 +51,7 @@ namespace FLIVR
 				int peel, bool clip,
 				bool hiqual, int mask,
 				int color_mode, int colormap, int colormap_proj,
-				bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight);
+				bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight, bool use_gm);
 		~VRayShader();
 
 		bool create();
@@ -80,13 +80,13 @@ namespace FLIVR
 						int peel, bool clip,
 						bool hiqual, int mask,
 						int color_mode, int colormap, int colormap_proj,
-						bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight)
-		{ 
+						bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight, bool use_gm)
+		{
 			return (device_ == device &&
 				poly_ == poly &&
 				channels_ == channels &&
-				shading_ == shading && 
-				fog_ == fog && 
+				shading_ == shading &&
+				fog_ == fog &&
 				peel_ == peel &&
 				clip_ == clip &&
 				hiqual_ == hiqual &&
@@ -101,7 +101,8 @@ namespace FLIVR
 				blend_mode_ == blend_mode &&
 				multi_mode_ == multi_mode &&
                 na_mode_ == na_mode &&
-                highlight_ == highlight);
+                highlight_ == highlight &&
+                use_gm_ == use_gm);
 		}
 
 		inline ShaderProgram* program() { return program_; }
@@ -132,6 +133,9 @@ namespace FLIVR
 		int multi_mode_;
         bool na_mode_;
         bool highlight_;
+		//false: the gradient magnitude never affects the output (gm_thresh == 0 and
+		//not inverted), so the per-sample gradient computation can be skipped
+		bool use_gm_;
 
 		VkDevice device_;
 
@@ -152,7 +156,7 @@ namespace FLIVR
 								int peel, bool clip,
 								bool hiqual, int mask,
 								int color_mode, int colormap, int colormap_proj,
-								bool solid, int vertex_type, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight);
+								bool solid, int vertex_type, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight, bool use_gm);
 		//mask: 0-no mask, 1-segmentation mask, 2-labeling mask
 		//color_mode: 0-normal; 1-rainbow; 2-depth; 3-index; 255-index(depth mode)
 
@@ -201,18 +205,10 @@ namespace FLIVR
 			uint32_t stepnum;
 		};
 
-		struct VRayUniformBufs {
-			vks::Buffer vert;
-			vks::Buffer frag_base;
-		};
-
 		void setupDescriptorSetLayout();
-		void getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, VRayUniformBufs& uniformBuffers, std::vector<VkWriteDescriptorSet>& writeDescriptorSets);
 		void getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, vks::Buffer& vert, vks::Buffer& frag, std::vector<VkWriteDescriptorSet>& writeDescriptorSets);
-		void prepareUniformBuffers(std::map<vks::VulkanDevice*, VRayUniformBufs> &uniformBuffers);
-		static void updateUniformBuffers(VRayUniformBufs& uniformBuffers, VRayVertShaderUBO vubo, VRayFragShaderBaseUBO fubo);
 
-		
+
 		static inline VkWriteDescriptorSet writeDescriptorSetTex(
 			VkDescriptorSet dstSet,
 			uint32_t texid,

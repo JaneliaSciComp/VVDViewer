@@ -276,11 +276,6 @@ namespace FLIVR
 	"	float maxval = 0.0;\n" \
 	"\n"
 
-#define VRAY_HEAD_MULTI \
-	"	//VRAY_HEAD_MULTI\n" \
-	"	int mode = uint(tbmin.w);\n" \
-	"\n"
-
 #define VRAY_HEAD_LABEL_SEG \
 	"	//VRAY_HEAD_LABEL_SEG\n" \
 	"	float highlight = 0.0;\n" \
@@ -349,217 +344,6 @@ namespace FLIVR
     "           //VRAY_HIGHLIGHT_THRESHOLD\n" \
     "           highlight = texture(tex0, t.stp).r >= base.loc7.w || highlight ? true : false;\n" \
     "\n"
-
-#define VRAY_MULTI_DEFAULT_COLORMAP_INDEX_BODY \
-	"			//VRAY_MULTI_DEFAULT_COLORMAP_INDEX_BODY\n" \
-	"			if (mode & 8 != 0) \n" \
-	"			{\n" \
-	"				//VRAY_INDEX_COLOR_BODY_SHADE\n" \
-	"				vec4 v;\n" \
-	"				uint id = uint(texture(tex0, t.stp).x*base.loc5.w+0.5);\n" \
-	"				vec4 c = vec4(0.0);\n" \
-	"				if (!inside) \n" \
-	"				{\n" \
-	"					prev_pos = vec4((t - ray*step).xyz, 1.0);\n" \
-	"					prev_id = uint(texture(tex0, prev_pos.xyz).x * base.loc5.w + 0.5);\n" \
-	"				}\n" \
-	"				vec4 post_pos = vec4((t + ray*step).xyz, 1.0);\n" \
-	"				uint post_id = uint(texture(tex0, post_pos.xyz).x * base.loc5.w + 0.5);\n" \
-	"				if ( (inside && (id != prev_id || id != post_id || vol_clip_func(post_pos))) || (!inside && (vol_clip_func(prev_pos) || id != prev_id || id != post_id)) )" \
-	"				{\n" \
-	"					c = texture(tex7, vec2((float(id%uint(256))+0.5)/256.0, (float(id/256)+0.5)/256.0));\n" \
-	"\n" \
-	"					if (mode & 1 != 0) \n" \
-	"					{\n" \
-	"						vec4 p; \n" \
-	"						uint r; \n" \
-	"						v = vec4(0.0); \n" \
-	"						n = vec4(0.0); \n" \
-	"						w = vec4(0.0);\n" \
-	"						w.x = dir.x; \n" \
-	"						p = clamp(TexCoord + w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.x = v.x + n.x; \n" \
-	"						p = clamp(TexCoord - w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.x = v.x - n.x; \n" \
-	"						w = vec4(0.0); \n" \
-	"						w.y = dir.y; \n" \
-	"						p = clamp(TexCoord + w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.y = v.x + n.y; \n" \
-	"						p = clamp(TexCoord - w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.y = v.x - n.y; \n" \
-	"						w = vec4(0.0); \n" \
-	"						w.z = dir.z; \n" \
-	"						p = clamp(TexCoord + w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.z = v.x + n.z; \n" \
-	"						p = clamp(TexCoord - w, 0.0, 1.0); \n" \
-	"						r = !vol_clip_func(p) ? uint(texture(tex0, p.stp).x*base.loc5.w+0.5) : 0; \n" \
-	"						v.x = (id==r?0.5:0.0) ; \n" \
-	"						n.z = v.x - n.z; \n" \
-	"						p.y = length(n.xyz); \n" \
-	"						p.y = 0.5 * (base.loc2.x<0.0?(1.0+p.y*base.loc2.x):p.y*base.loc2.x); \n" \
-	"\n" \
-	"						//VOL_BODY_SHADING\n" \
-	"						n.xyz = normalize(n.xyz);\n" \
-	"						n.w = dot(l.xyz, n.xyz); // calculate angle between light and normal. \n" \
-	"						n.w = clamp(abs(n.w), 0.0, 1.0); // two-sided lighting, n.w = abs(cos(angle))  \n" \
-	"						w = k; // w.x = weight*ka, w.y = weight*kd, w.z = weight*ks \n" \
-	"						w.x = k.x - w.y; // w.x = ka - kd*weight \n" \
-	"						w.x = w.x + k.y; // w.x = ka + kd - kd*weight \n" \
-	"						n.z = pow(n.w, k.w); // n.z = abs(cos(angle))^ns \n" \
-	"						n.w = (n.w * w.y) + w.x; // n.w = abs(cos(angle))*kd+ka\n" \
-	"						n.z = w.z * n.z; // n.z = weight*ks*abs(cos(angle))^ns \n" \
-	"\n" \
-	"						//VOL_COMPUTED_GM_LOOKUP\n" \
-	"						v.y = p.y;\n" \
-	"\n" \
-	"						//VOL_COLOR_OUTPUT\n" \
-	"						c.xyz = c.xyz*clamp(1.0-base.loc1.x, 0.0, 1.0) + base.loc1.x*c.xyz*(base.loc1.y > 0.0?(n.w + n.z):1.0);\n" \
-	"						c.xyz *= pow(1.0 - base.loc1.x/2.0, 2.0) + 1.0;\n" \
-	"\n" \
-	"					}\n" \
-	"\n" \
-	"					c.rgb = c.rgb*base.loc6.z;\n" \
-	"					c = c * l.w;\n" \
-	"				}\n" \
-	"				prev_id = id;\n" \
-	"				inside = true;\n" \
-	"\n" \
-	"				c = (mode & 2 == 0) ? c*l.w : c;\n" \
-	"\n" \
-	"				//VRAY_BLEND_OVER\n" \
-	"				outcol = outcol + (1.0 - outcol.w) * c;\n" \
-	"\n" \
-	"			}\n" \
-	"			else \n" \
-	"			{\n" \
-	"				//VRAY_DATA_VOLUME_LOOKUP\n" \
-	"				vec4 v = texture(tex0, t.stp);\n" \
-	"\n"\
-	"				// VOL_GRAD_COMPUTE_HI\n" \
-	"				vec4 r, p;\n" \
-	"				v = vec4(v.x);\n" \
-	"				n = vec4(0.0);\n" \
-	"				w = vec4(0.0);\n" \
-	"				w.x = dir.x;\n" \
-	"				p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.x = r.x + n.x;\n" \
-	"				p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.x = r.x - n.x;\n" \
-	"				w = vec4(0.0);\n" \
-	"				w.y = dir.y;\n" \
-	"				p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.y = r.x + n.y;\n" \
-	"				p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.y = r.x - n.y;\n" \
-	"				w = vec4(0.0);\n" \
-	"				w.z = dir.z;\n" \
-	"				p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.z = r.x + n.z;\n" \
-	"				p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"				r = texture(tex0, p.stp);\n" \
-	"				n.z = r.x - n.z;\n" \
-	"				p.y = length(n.xyz);\n" \
-	"				p.y = 0.5 * (base.loc2.x < 0.0 ? (1.0 + p.y * base.loc2.x) : p.y * base.loc2.x);\n" \
-	"\n" \
-	"				if (mode & 1 != 0) \n" \
-	"				{\n" \
-	"					//VRAY_BODY_SHADING\n" \
-	"					n.xyz = normalize(n.xyz);\n" \
-	"					n.w = dot(l.xyz, n.xyz); // calculate angle between light and normal. \n" \
-	"					n.w = clamp(abs(n.w), 0.0, 1.0); // two-sided lighting, n.w = abs(cos(angle))  \n" \
-	"					w = k; // w.x = weight*ka, w.y = weight*kd, w.z = weight*ks \n" \
-	"					w.x = k.x - w.y; // w.x = ka - kd*weight \n" \
-	"					w.x = w.x + k.y; // w.x = ka + kd - kd*weight \n" \
-	"					n.z = pow(n.w, k.w); // n.z = abs(cos(angle))^ns \n" \
-	"					n.w = (n.w * w.y) + w.x; // n.w = abs(cos(angle))*kd+ka\n" \
-	"					n.z = w.z * n.z; // n.z = weight*ks*abs(cos(angle))^ns \n" \
-	"				}\n" \
-	"\n" \
-	"				//VRAY_COMPUTED_GM_LOOKUP\n" \
-	"				v.y = p.y;\n" \
-	"\n" \
-	"				if (mode & 4 != 0) \n" \
-	"				{\n" \
-	"					//VRAY_TRANSFER_FUNCTION_COLORMAP\n" \
-	"					vec4 c;\n" \
-	"					float tf_alp = 0.0;\n" \
-	"					float alpha = 0.0;\n" \
-	"					v.x = base.loc2.x<0.0?(1.0+v.x*base.loc2.x):v.x*base.loc2.x;\n" \
-	"					if (v.x<base.loc2.z-base.loc3.w || v.x>base.loc2.w+base.loc3.w || v.y<base.loc3.y)\n" \
-	"						c = vec4(0.0);\n" \
-	"					else\n" \
-	"					{\n" \
-	"						v.x = (v.x<base.loc2.z?(base.loc3.w-base.loc2.z+v.x)/base.loc3.w:(v.x>base.loc2.w?(base.loc3.w-v.x+base.loc2.w)/base.loc3.w:1.0))*v.x;\n" \
-	"						vec4 rb = vec4(0.0);\n" \
-	"						//VRAY_TRANSFER_FUNCTION_COLORMAP_VALU \n" \
-	"						float valu = (v.x - base.loc6.x) / base.loc6.z;\n" \
-	"						//VRAY_COLORMAP_CALC0 \n" \
-	"						rb.r = clamp(4.0 * valu - 2.0, 0.0, 1.0);\n" \
-	"						rb.g = clamp(valu < 0.5 ? 4.0 * valu : -4.0 * valu + 4.0, 0.0, 1.0);\n" \
-	"						rb.b = clamp(-4.0 * valu + 2.0, 0.0, 1.0);\n" \
-	"						//VRAY_COMMON_TRANSFER_FUNCTION_CALC \n" \
-	"						tf_alp = pow(clamp(v.x / base.loc3.z, \n" \
-	"							base.loc3.x < 1.0 ? -(base.loc3.x - 1.0) * 0.00001 : 0.0, \n" \
-	"							base.loc3.x>1.0 ? 0.9999 : 1.0), base.loc3.x); \n" \
-	"						//VRAY_TRANSFER_FUNCTION_COLORMAP_RESULT \n" \
-	"						float alpha = (1.0 - pow(clamp(1.0 - tf_alp * l.w, 0.0, 1.0), base.loc7.z)) / l.w; \n" \
-	"						c = vec4(rb.rgb * tf_alp, 1.0); \n" \
-	"						c = (mode & 2 != 0) ? c : c*alpha;\n" \
-	"					}\n" \
-	"					c.w = (mode & 2 != 0) ? 1.0 : c.w;\n" \
-	"				}\n" \
-	"				else \n" \
-	"				{\n" \
-	"					//VRAY_TRANSFER_FUNCTION_SIN_COLOR\n" \
-	"					vec4 c;\n" \
-	"					float tf_alp = 0.0;\n" \
-	"					float alpha = 0.0;\n" \
-	"					v.x = base.loc2.x < 0.0 ? (1.0 + v.x * base.loc2.x) : v.x * base.loc2.x;\n" \
-	"					if (v.x < base.loc2.z - base.loc3.w || v.x > base.loc2.w + base.loc3.w || v.y < base.loc3.y - base.loc3.w)\n" \
-	"						c = vec4(0.0);\n" \
-	"					else\n" \
-	"					{\n" \
-	"						v.x = (v.x < base.loc2.z ? (base.loc3.w - base.loc2.z + v.x) / base.loc3.w : (v.x > base.loc2.w ? (base.loc3.w - v.x + base.loc2.w) / base.loc3.w : 1.0)) * v.x;\n" \
-	"						v.x = (v.y < base.loc3.y ? (base.loc3.w - base.loc3.y + v.y) / base.loc3.w : 1.0) * v.x;\n" \
-	"						tf_alp = pow(clamp(v.x / base.loc3.z,\n" \
-	"							base.loc3.x < 1.0 ? -(base.loc3.x - 1.0) * 0.00001 : 0.0,\n" \
-	"							base.loc3.x > 1.0 ? 0.9999 : 1.0), base.loc3.x);\n" \
-	"						alpha = (1.0 - pow(clamp(1.0 - tf_alp * l.w, 0.0, 1.0), base.loc7.z)) / l.w;\n" \
-	"						c = vec4(base.loc6.rgb * tf_alp, 1.0);\n" \
-	"						c = (mode & 2 != 0) ? c : c*alpha;\n" \
-	"					}\n" \
-	"					c.w = (mode & 2 != 0) ? 1.0 : c.w;\n" \
-	"				}\n" \
-	"\n" \
-	"				if (mode & 1 != 0) \n" \
-	"				{\n" \
-	"					//VRAY_COLOR_OUTPUT\n" \
-	"					c.xyz = c.xyz * clamp(1.0 - base.loc1.x, 0.0, 1.0) + base.loc1.x * c.xyz * (base.loc1.y > 0.0 ? (n.w + n.z) : 1.0);\n" \
-	"					c.xyz *= pow(1.0 - base.loc1.x / 2.0, 2.0) + 1.0;\n" \
-	"				}\n" \
-	"\n" \
-	"				c = (mode & 2 == 0) ? c*l.w : c;\n" \
-	"\n" \
-	"				//VRAY_BLEND_OVER\n" \
-	"				outcol = outcol + (1.0 - outcol.w) * c;\n" \
-	"\n" \
-	"			}\n" \
-	"\n"
 
 #define VRAY_INDEX_COLOR_BODY \
 	"			//VRAY_INDEX_COLOR_BODY\n" \
@@ -1165,507 +949,13 @@ namespace FLIVR
 	"	//VRAY_TAIL\n" \
 	"}\n" 
 
-#define VRAY_FRG_SHADER_CODE_TEST_PERSP \
-	"#version 450\n" \
-	"#pragma optionNV(inline all)\n" \
-	"#pragma optionNV(fastmath on)\n" \
-	"#pragma optionNV(ifcvt none)\n" \
-	"#pragma optionNV(strict on)\n" \
-	"#pragma optionNV(unroll all)\n" \
-	"layout(location = 0) in vec4 OutVertex;\n" \
-	"layout(location = 1) in vec3 OutTexture;\n" \
-	"layout(location = 0) out vec4 FragColor;\n" \
-	"// VOL_UNIFORMS_BASE\n" \
-	"layout(binding = 1) uniform VolFragShaderBaseUBO {\n" \
-	"	vec4 loc0;//(lx, ly, lz, alpha)\n" \
-	"	vec4 loc1;//(ka, kd, ks, ns)\n" \
-	"	vec4 loc2;//(scalar_scale, gm_scale, left_thresh, right_thresh)\n" \
-	"	vec4 loc3;//(gamma, gm_thresh, offset, sw)\n" \
-	"	vec4 loc5;//(spcx, spcy, spcz, max_id)\n" \
-	"	vec4 loc6;//(r, g, b, 0.0) or (1/vx, 1/vy, luminance, depth_mode)\n" \
-	"	vec4 loc7;//(1/vx, 1/vy, 1/sample_rate, 0.0)\n" \
-	"	vec4 loc8;//(int, start, end, 0.0)\n" \
-	"	vec4 loc10; //plane0\n" \
-	"	vec4 loc11; //plane1\n" \
-	"	vec4 loc12; //plane2\n" \
-	"	vec4 loc13; //plane3\n" \
-	"	vec4 loc14; //plane4\n" \
-	"	vec4 loc15; //plane5\n" \
-	"	mat4 matrix0; //inverted projection matrix\n" \
-	"	mat4 matrix1; //inverted modelview matrix\n" \
-	"} base;\n" \
-	"\n" \
-	"layout(binding = 2) uniform sampler3D tex0;//data volume\n" \
-	"layout(binding = 3) uniform sampler3D tex1;//gm volume\n" \
-	"\n" \
-	"// VOL_UNIFORMS_BRICK\n" \
-	"layout(push_constant) uniform VolFragShaderBrickConst {\n" \
-	"	vec4 brkscale;//tex transform for bricking and 1/nx\n" \
-	"	vec4 brktrans;//tex transform for bricking and 1/ny\n" \
-	"	vec4 mskbrkscale;//tex transform for mask bricks and 1/nz\n" \
-	"	vec4 mskbrktrans;//tex transform for mask bricks\n" \
-	"	vec4 tbmin;//tex bbox min\n" \
-	"	vec4 tbmax;//tex bbox max\n" \
-	"	vec3 loc4;//(zmin, zmax, dz)\n" \
-	"	uint stnum;\n" \
-	"} brk;\n" \
-	"\n" \
-	"//VOL_CLIP_FUNC\n" \
-	"bool vol_clip_func(vec4 t)\n" \
-	"{\n" \
-	"	vec3 brickt = (t.xyz * brk.brkscale.xyz + brk.brktrans.xyz);\n" \
-	"	if (dot(brickt.xyz, base.loc10.xyz) + base.loc10.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc11.xyz) + base.loc11.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc12.xyz) + base.loc12.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc13.xyz) + base.loc13.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc14.xyz) + base.loc14.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc15.xyz) + base.loc15.w < 0.0)\n" \
-	"		return true;\n" \
-	"	else\n" \
-	"		return false;\n" \
-	"}\n" \
-	"\n" \
-	"//VOL_HEAD\n" \
-	"void main()\n" \
-	"{\n" \
-	"	const vec3 vray = normalize(base.matrix0 * OutVertex).xyz;\n" \
-	"	const vec4 ray = base.matrix1 * vec4(vray, 0.0) / vec4(brk.brkscale.xyz, 1.);\n" \
-	"	const vec4 st = base.matrix1 * vec4((brk.loc4.x / vray.z) * vray, 1.0) / vec4(brk.brkscale.xyz, 1.) - vec4(brk.brktrans.xyz / brk.brkscale.xyz, 0.0);\n" \
-	"	const float step = brk.loc4.z / vray.z;\n" \
-	"	vec4 outcol = vec4(0.0);\n" \
-	"	vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
-	"\n" \
-	"	//VOL_HEAD_LIT\n" \
-	"	vec4 l = base.loc0; // {lx, ly, lz, alpha}\n" \
-	"	vec4 k = base.loc1; // {ka, kd, ks, ns}\n" \
-	"	k.x = k.x > 1.0 ? log2(3.0 - k.x) : k.x;\n" \
-	"	vec4 n, w;\n" \
-	"	if (l.w == 0.0) { discard; return; }\n" \
-	"\n" \
-	"	for (uint i = 0; i < brk.stnum; i++)\n" \
-	"	{\n" \
-	"		vec4 TexCoord = st + ray*step*float(i);\n" \
-	"		vec4 t = vec4(TexCoord.xyz, 1.0);\n" \
-	"\n" \
-	"		uint cond = vol_clip_func(t) ? 1 : 0;\n" \
-	"		cond += t.x < brk.tbmin.x ? 1 : 0;\n" \
-	"		cond += t.x > brk.tbmax.x ? 1 : 0;\n" \
-	"		cond += t.y < brk.tbmin.y ? 1 : 0;\n" \
-	"		cond += t.y > brk.tbmax.y ? 1 : 0;\n" \
-	"		cond += t.z < brk.tbmin.z ? 1 : 0;\n" \
-	"		cond += t.z > brk.tbmax.z ? 1 : 0;\n" \
-	"		cond += outcol.w > 0.99995 ? 1 : 0;\n" \
-	"		if (cond == 0)\n" \
-	"		{\n" \
-	"			//VOL_DATA_VOLUME_LOOKUP\n" \
-	"			vec4 v = texture(tex0, t.stp);\n" \
-	"\n" \
-	"			// VOL_GRAD_COMPUTE_HI\n" \
-	"			vec4 r, p;\n" \
-	"			v = vec4(v.x);\n" \
-	"			n = vec4(0.0);\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.x = dir.x;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.x = r.x + n.x;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.x = r.x - n.x;\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.y = dir.y;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.y = r.x + n.y;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.y = r.x - n.y;\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.z = dir.z;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.z = r.x + n.z;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.z = r.x - n.z;\n" \
-	"			p.y = length(n.xyz);\n" \
-	"			p.y = 0.5 * (base.loc2.x < 0.0 ? (1.0 + p.y * base.loc2.x) : p.y * base.loc2.x);\n" \
-	"\n" \
-	"			//VOL_BODY_SHADING\n" \
-	"			n.xyz = normalize(n.xyz);\n" \
-	"			n.w = dot(l.xyz, n.xyz); // calculate angle between light and normal. \n" \
-	"			n.w = clamp(abs(n.w), 0.0, 1.0); // two-sided lighting, n.w = abs(cos(angle))  \n" \
-	"			w = k; // w.x = weight*ka, w.y = weight*kd, w.z = weight*ks \n" \
-	"			w.x = k.x - w.y; // w.x = ka - kd*weight \n" \
-	"			w.x = w.x + k.y; // w.x = ka + kd - kd*weight \n" \
-	"			n.z = pow(n.w, k.w); // n.z = abs(cos(angle))^ns \n" \
-	"			n.w = (n.w * w.y) + w.x; // n.w = abs(cos(angle))*kd+ka\n" \
-	"			n.z = w.z * n.z; // n.z = weight*ks*abs(cos(angle))^ns \n" \
-	"\n" \
-	"			//VOL_COMPUTED_GM_LOOKUP\n" \
-	"			v.y = p.y;\n" \
-	"\n" \
-	"			//VOL_TRANSFER_FUNCTION_SIN_COLOR\n" \
-	"			vec4 c;\n" \
-	"			float tf_alp = 0.0;\n" \
-	"			float alpha = 0.0;\n" \
-	"			v.x = base.loc2.x < 0.0 ? (1.0 + v.x * base.loc2.x) : v.x * base.loc2.x;\n" \
-	"			if (v.x<base.loc2.z - base.loc3.w || v.x>base.loc2.w + base.loc3.w || v.y < base.loc3.y - base.loc3.w)\n" \
-	"				c = vec4(0.0);\n" \
-	"			else\n" \
-	"			{\n" \
-	"				v.x = (v.x < base.loc2.z ? (base.loc3.w - base.loc2.z + v.x) / base.loc3.w : (v.x > base.loc2.w ? (base.loc3.w - v.x + base.loc2.w) / base.loc3.w : 1.0)) * v.x;\n" \
-	"				v.x = (v.y < base.loc3.y ? (base.loc3.w - base.loc3.y + v.y) / base.loc3.w : 1.0) * v.x;\n" \
-	"				tf_alp = pow(clamp(v.x / base.loc3.z,\n" \
-	"					base.loc3.x < 1.0 ? -(base.loc3.x - 1.0) * 0.00001 : 0.0,\n" \
-	"					base.loc3.x>1.0 ? 0.9999 : 1.0), base.loc3.x);\n" \
-	"				alpha = (1.0 - pow(clamp(1.0 - tf_alp * l.w, 0.0, 1.0), base.loc7.z)) / l.w;\n" \
-	"				c = vec4(base.loc6.rgb * alpha * tf_alp, alpha);\n" \
-	"			}\n" \
-	"\n" \
-	"			//VOL_COLOR_OUTPUT\n" \
-	"			c.xyz = c.xyz * clamp(1.0 - base.loc1.x, 0.0, 1.0) + base.loc1.x * c.xyz * (base.loc1.y > 0.0 ? (n.w + n.z) : 1.0);\n" \
-	"			c.xyz *= pow(1.0 - base.loc1.x / 2.0, 2.0) + 1.0;\n" \
-	"\n" \
-	"			//VOL_RASTER_BLEND\n" \
-	"			c = c * l.w;\n" \
-	"			outcol = outcol + (1.0 - outcol.w) * c; // VOL_RASTER_BLEND\n" \
-	"		}\n" \
-	"	}\n" \
-	"\n" \
-	"	FragColor = outcol;\n" \
-	"\n" \
-	"	//VOL_TAIL\n" \
-	"}\n" 
-
-
-#define VRAY_FRG_SHADER_CODE_TEST_ORTHO \
-	"#version 450\n" \
-	"#pragma optionNV(inline all)\n" \
-	"#pragma optionNV(fastmath on)\n" \
-	"#pragma optionNV(ifcvt none)\n" \
-	"#pragma optionNV(strict on)\n" \
-	"#pragma optionNV(unroll all)\n" \
-	"layout(location = 0) in vec4 OutVertex;\n" \
-	"layout(location = 1) in vec3 OutTexture;\n" \
-	"layout(location = 0) out vec4 FragColor;\n" \
-	"// VOL_UNIFORMS_BASE\n" \
-	"layout(binding = 1) uniform VolFragShaderBaseUBO {\n" \
-	"	vec4 loc0;//(lx, ly, lz, alpha)\n" \
-	"	vec4 loc1;//(ka, kd, ks, ns)\n" \
-	"	vec4 loc2;//(scalar_scale, gm_scale, left_thresh, right_thresh)\n" \
-	"	vec4 loc3;//(gamma, gm_thresh, offset, sw)\n" \
-	"	vec4 loc5;//(spcx, spcy, spcz, max_id)\n" \
-	"	vec4 loc6;//(r, g, b, 0.0) or (1/vx, 1/vy, luminance, depth_mode)\n" \
-	"	vec4 loc7;//(1/vx, 1/vy, 1/sample_rate, 0.0)\n" \
-	"	vec4 loc8;//(int, start, end, 0.0)\n" \
-	"	vec4 loc10; //plane0\n" \
-	"	vec4 loc11; //plane1\n" \
-	"	vec4 loc12; //plane2\n" \
-	"	vec4 loc13; //plane3\n" \
-	"	vec4 loc14; //plane4\n" \
-	"	vec4 loc15; //plane5\n" \
-	"	mat4 matrix0; //inverted projection matrix\n" \
-	"	mat4 matrix1; //inverted modelview matrix\n" \
-	"} base;\n" \
-	"\n" \
-	"layout(binding = 2) uniform sampler3D tex0;//data volume\n" \
-	"layout(binding = 3) uniform sampler3D tex1;//gm volume\n" \
-	"\n" \
-	"// VOL_UNIFORMS_BRICK\n" \
-	"layout(push_constant) uniform VolFragShaderBrickConst {\n" \
-	"	vec4 brkscale;//tex transform for bricking and 1/nx\n" \
-	"	vec4 brktrans;//tex transform for bricking and 1/ny\n" \
-	"	vec4 mskbrkscale;//tex transform for mask bricks and 1/nz\n" \
-	"	vec4 mskbrktrans;//tex transform for mask bricks\n" \
-	"	vec4 tbmin;//tex bbox min\n" \
-	"	vec4 tbmax;//tex bbox max\n" \
-	"	vec3 loc4;//(zmin, zmax, dz)\n" \
-	"	uint stnum;\n" \
-	"} brk;\n" \
-	"\n" \
-	"//VOL_CLIP_FUNC\n" \
-	"bool vol_clip_func(vec4 t)\n" \
-	"{\n" \
-	"	vec3 brickt = (t.xyz * brk.brkscale.xyz + brk.brktrans.xyz);\n" \
-	"	if (dot(brickt.xyz, base.loc10.xyz) + base.loc10.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc11.xyz) + base.loc11.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc12.xyz) + base.loc12.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc13.xyz) + base.loc13.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc14.xyz) + base.loc14.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc15.xyz) + base.loc15.w < 0.0)\n" \
-	"		return true;\n" \
-	"	else\n" \
-	"		return false;\n" \
-	"}\n" \
-	"\n" \
-	"//VOL_HEAD\n" \
-	"void main()\n" \
-	"{\n" \
-	"	vec4 view = vec4(0.0, 0.0, brk.loc4.x, 0.0);\n" \
-	"	const vec4 ray = base.matrix1 * vec4(0.0, 0.0, 1.0, 0.0) / vec4(brk.brkscale.xyz, 1.);\n" \
-	"	const vec4 st = base.matrix1 * vec4((base.matrix0 * OutVertex).xy, brk.loc4.x, 1.0) / vec4(brk.brkscale.xyz, 1.) - vec4(brk.brktrans.xyz / brk.brkscale.xyz, 0.0);\n" \
-	"	const float step = brk.loc4.z;\n" \
-	"	vec4 outcol = vec4(0.0);\n" \
-	"	vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
-	"\n" \
-	"	//VOL_HEAD_LIT\n" \
-	"	vec4 l = base.loc0; // {lx, ly, lz, alpha}\n" \
-	"	vec4 k = base.loc1; // {ka, kd, ks, ns}\n" \
-	"	k.x = k.x > 1.0 ? log2(3.0 - k.x) : k.x;\n" \
-	"	vec4 n, w;\n" \
-	"	if (l.w == 0.0) { discard; return; }\n" \
-	"\n" \
-	"	for (uint i = 0; i < brk.stnum; i++)\n" \
-	"	{\n" \
-	"		vec4 TexCoord = st + ray*step*float(i);\n" \
-	"		vec4 t = vec4(TexCoord.xyz, 1.0);\n" \
-	"\n" \
-	"		if (!vol_clip_func(t) && t.x >= brk.tbmin.x && t.x <= brk.tbmax.x && t.y >= brk.tbmin.y && t.y <= brk.tbmax.y && t.z >= brk.tbmin.z && t.z <= brk.tbmax.z && outcol.w <= 0.99995)\n" \
-	"		{\n" \
-	"			//VOL_DATA_VOLUME_LOOKUP\n" \
-	"			vec4 v = texture(tex0, t.stp);\n" \
-	"\n" \
-	"			// VOL_GRAD_COMPUTE_HI\n" \
-	"			vec4 r, p;\n" \
-	"			v = vec4(v.x);\n" \
-	"			n = vec4(0.0);\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.x = dir.x;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.x = r.x + n.x;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.x = r.x - n.x;\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.y = dir.y;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.y = r.x + n.y;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.y = r.x - n.y;\n" \
-	"			w = vec4(0.0);\n" \
-	"			w.z = dir.z;\n" \
-	"			p = clamp(TexCoord + w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.z = r.x + n.z;\n" \
-	"			p = clamp(TexCoord - w, 0.0, 1.0);\n" \
-	"			r = texture(tex0, p.stp);\n" \
-	"			n.z = r.x - n.z;\n" \
-	"			p.y = length(n.xyz);\n" \
-	"			p.y = 0.5 * (base.loc2.x < 0.0 ? (1.0 + p.y * base.loc2.x) : p.y * base.loc2.x);\n" \
-	"\n" \
-	"			//VOL_BODY_SHADING\n" \
-	"			n.xyz = normalize(n.xyz);\n" \
-	"			n.w = dot(l.xyz, n.xyz); // calculate angle between light and normal. \n" \
-	"			n.w = clamp(abs(n.w), 0.0, 1.0); // two-sided lighting, n.w = abs(cos(angle))  \n" \
-	"			w = k; // w.x = weight*ka, w.y = weight*kd, w.z = weight*ks \n" \
-	"			w.x = k.x - w.y; // w.x = ka - kd*weight \n" \
-	"			w.x = w.x + k.y; // w.x = ka + kd - kd*weight \n" \
-	"			n.z = pow(n.w, k.w); // n.z = abs(cos(angle))^ns \n" \
-	"			n.w = (n.w * w.y) + w.x; // n.w = abs(cos(angle))*kd+ka\n" \
-	"			n.z = w.z * n.z; // n.z = weight*ks*abs(cos(angle))^ns \n" \
-	"\n" \
-	"			//VOL_COMPUTED_GM_LOOKUP\n" \
-	"			v.y = p.y;\n" \
-	"\n" \
-	"			//VOL_TRANSFER_FUNCTION_SIN_COLOR\n" \
-	"			vec4 c;\n" \
-	"			float tf_alp = 0.0;\n" \
-	"			float alpha = 0.0;\n" \
-	"			v.x = base.loc2.x < 0.0 ? (1.0 + v.x * base.loc2.x) : v.x * base.loc2.x;\n" \
-	"			if (v.x<base.loc2.z - base.loc3.w || v.x>base.loc2.w + base.loc3.w || v.y < base.loc3.y - base.loc3.w)\n" \
-	"				c = vec4(0.0);\n" \
-	"			else\n" \
-	"			{\n" \
-	"				v.x = (v.x < base.loc2.z ? (base.loc3.w - base.loc2.z + v.x) / base.loc3.w : (v.x > base.loc2.w ? (base.loc3.w - v.x + base.loc2.w) / base.loc3.w : 1.0)) * v.x;\n" \
-	"				v.x = (v.y < base.loc3.y ? (base.loc3.w - base.loc3.y + v.y) / base.loc3.w : 1.0) * v.x;\n" \
-	"				tf_alp = pow(clamp(v.x / base.loc3.z,\n" \
-	"					base.loc3.x < 1.0 ? -(base.loc3.x - 1.0) * 0.00001 : 0.0,\n" \
-	"					base.loc3.x>1.0 ? 0.9999 : 1.0), base.loc3.x);\n" \
-	"				alpha = (1.0 - pow(clamp(1.0 - tf_alp * l.w, 0.0, 1.0), base.loc7.z)) / l.w;\n" \
-	"				c = vec4(base.loc6.rgb * alpha * tf_alp, alpha);\n" \
-	"			}\n" \
-	"\n" \
-	"			//VOL_COLOR_OUTPUT\n" \
-	"			c.xyz = c.xyz * clamp(1.0 - base.loc1.x, 0.0, 1.0) + base.loc1.x * c.xyz * (base.loc1.y > 0.0 ? (n.w + n.z) : 1.0);\n" \
-	"			c.xyz *= pow(1.0 - base.loc1.x / 2.0, 2.0) + 1.0;\n" \
-	"\n" \
-	"			//VOL_RASTER_BLEND\n" \
-	"			c = c * l.w;\n" \
-	"			outcol = outcol + (1.0 - outcol.w) * c; // VOL_RASTER_BLEND\n" \
-	"		}\n" \
-	"	}\n" \
-	"\n" \
-	"	FragColor = outcol;\n" \
-	"\n" \
-	"	//VOL_TAIL\n" \
-	"}\n" 
-
-#define VRAY_FRG_SHADER_CODE_TEST_PERSP_UV \
-	"#version 450\n" \
-	"#pragma optionNV(inline all)\n" \
-	"#pragma optionNV(fastmath on)\n" \
-	"#pragma optionNV(ifcvt none)\n" \
-	"#pragma optionNV(strict on)\n" \
-	"#pragma optionNV(unroll all)\n" \
-	"layout(location = 0) in vec4 OutVertex;\n" \
-	"layout(location = 1) in vec3 OutTexture;\n" \
-	"layout(location = 0) out vec4 FragColor;\n" \
-	"// VOL_UNIFORMS_BASE\n" \
-	"layout(binding = 1) uniform VolFragShaderBaseUBO {\n" \
-	"	vec4 loc0;//(lx, ly, lz, alpha)\n" \
-	"	vec4 loc1;//(ka, kd, ks, ns)\n" \
-	"	vec4 loc2;//(scalar_scale, gm_scale, left_thresh, right_thresh)\n" \
-	"	vec4 loc3;//(gamma, gm_thresh, offset, sw)\n" \
-	"	vec4 loc5;//(spcx, spcy, spcz, max_id)\n" \
-	"	vec4 loc6;//(r, g, b, 0.0) or (1/vx, 1/vy, luminance, depth_mode)\n" \
-	"	vec4 loc7;//(1/vx, 1/vy, 0.0, 0.0)\n" \
-	"	vec4 loc8;//(int, start, end, 0.0)\n" \
-	"	vec4 loc10; //plane0\n" \
-	"	vec4 loc11; //plane1\n" \
-	"	vec4 loc12; //plane2\n" \
-	"	vec4 loc13; //plane3\n" \
-	"	vec4 loc14; //plane4\n" \
-	"	vec4 loc15; //plane5\n" \
-	"	mat4 matrix0; //inverted projection matrix\n" \
-	"	mat4 matrix1; //inverted modelview matrix\n" \
-	"} base;\n" \
-	"\n" \
-	"layout(binding = 2) uniform sampler3D tex0;//data volume\n" \
-	"layout(binding = 3) uniform sampler3D tex1;//gm volume\n" \
-	"\n" \
-	"// VOL_UNIFORMS_BRICK\n" \
-	"layout(push_constant) uniform VolFragShaderBrickConst {\n" \
-	"	vec4 brkscale;//tex transform for bricking and 1/nx\n" \
-	"	vec4 brktrans;//tex transform for bricking and 1/ny\n" \
-	"	vec4 mskbrkscale;//tex transform for mask bricks and 1/nz\n" \
-	"	vec4 mskbrktrans;//tex transform for mask bricks\n" \
-	"	vec4 tbmin;//tex bbox min\n" \
-	"	vec4 tbmax;//tex bbox max\n" \
-	"	vec3 loc4;//(zmin, zmax, dz)\n" \
-	"	uint stnum;\n" \
-	"} brk;\n" \
-	"\n" \
-	"//VOL_CLIP_FUNC\n" \
-	"bool vol_clip_func(vec4 t)\n" \
-	"{\n" \
-	"	vec3 brickt = (t.xyz * brk.brkscale.xyz + brk.brktrans.xyz);\n" \
-	"	if (dot(brickt.xyz, base.loc10.xyz) + base.loc10.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc11.xyz) + base.loc11.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc12.xyz) + base.loc12.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc13.xyz) + base.loc13.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc14.xyz) + base.loc14.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc15.xyz) + base.loc15.w < 0.0)\n" \
-	"		return true;\n" \
-	"	else\n" \
-	"		return false;\n" \
-	"}\n" \
-	"\n" \
-	"//VOL_HEAD\n" \
-	"void main()\n" \
-	"{\n" \
-	"	const vec3 vray = normalize(base.matrix0 * OutVertex).xyz;\n" \
-	"	const vec4 ray = normalize(base.matrix1 * vec4(vray, 0.0) / vec4(brk.brkscale.xyz, 1.));\n" \
-	"	const vec4 st = base.matrix1 * vec4((brk.loc4.x / vray.z) * vray, 1.0) / vec4(brk.brkscale.xyz, 1.) - vec4(brk.brktrans.xyz / brk.brkscale.xyz, 0.0);\n" \
-	"	const float step = brk.loc4.z / vray.z;\n" \
-	"	vec4 outcol = vec4(0.0);\n" \
-	"	const vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
-	"\n" \
-	"	vec4 TexCoord = st + ray*step*float(0);\n" \
-	"	vec4 t = vec4(TexCoord.xyz, 1.0);\n" \
-	"	FragColor = t;\n" \
-	"\n" \
-	"	//VOL_TAIL\n" \
-	"}\n" 
-
-#define VRAY_FRG_SHADER_CODE_TEST_ORTHO_UV \
-	"#version 450\n" \
-	"#pragma optionNV(inline all)\n" \
-	"#pragma optionNV(fastmath on)\n" \
-	"#pragma optionNV(ifcvt none)\n" \
-	"#pragma optionNV(strict on)\n" \
-	"#pragma optionNV(unroll all)\n" \
-	"layout(location = 0) in vec4 OutVertex;\n" \
-	"layout(location = 1) in vec3 OutTexture;\n" \
-	"layout(location = 0) out vec4 FragColor;\n" \
-	"// VOL_UNIFORMS_BASE\n" \
-	"layout(binding = 1) uniform VolFragShaderBaseUBO {\n" \
-	"	vec4 loc0;//(lx, ly, lz, alpha)\n" \
-	"	vec4 loc1;//(ka, kd, ks, ns)\n" \
-	"	vec4 loc2;//(scalar_scale, gm_scale, left_thresh, right_thresh)\n" \
-	"	vec4 loc3;//(gamma, gm_thresh, offset, sw)\n" \
-	"	vec4 loc5;//(spcx, spcy, spcz, max_id)\n" \
-	"	vec4 loc6;//(r, g, b, 0.0) or (1/vx, 1/vy, luminance, depth_mode)\n" \
-	"	vec4 loc7;//(1/vx, 1/vy, 0.0, 0.0)\n" \
-	"	vec4 loc8;//(int, start, end, 0.0)\n" \
-	"	vec4 loc10; //plane0\n" \
-	"	vec4 loc11; //plane1\n" \
-	"	vec4 loc12; //plane2\n" \
-	"	vec4 loc13; //plane3\n" \
-	"	vec4 loc14; //plane4\n" \
-	"	vec4 loc15; //plane5\n" \
-	"	mat4 matrix0; //inverted projection matrix\n" \
-	"	mat4 matrix1; //inverted modelview matrix\n" \
-	"} base;\n" \
-	"\n" \
-	"layout(binding = 2) uniform sampler3D tex0;//data volume\n" \
-	"layout(binding = 3) uniform sampler3D tex1;//gm volume\n" \
-	"\n" \
-	"// VOL_UNIFORMS_BRICK\n" \
-	"layout(push_constant) uniform VolFragShaderBrickConst {\n" \
-	"	vec4 brkscale;//tex transform for bricking and 1/nx\n" \
-	"	vec4 brktrans;//tex transform for bricking and 1/ny\n" \
-	"	vec4 mskbrkscale;//tex transform for mask bricks and 1/nz\n" \
-	"	vec4 mskbrktrans;//tex transform for mask bricks\n" \
-	"	vec4 tbmin;//tex bbox min\n" \
-	"	vec4 tbmax;//tex bbox max\n" \
-	"	vec3 loc4;//(zmin, zmax, dz)\n" \
-	"	uint stnum;\n" \
-	"} brk;\n" \
-	"\n" \
-	"//VOL_CLIP_FUNC\n" \
-	"bool vol_clip_func(vec4 t)\n" \
-	"{\n" \
-	"	vec3 brickt = (t.xyz * brk.brkscale.xyz + brk.brktrans.xyz);\n" \
-	"	if (dot(brickt.xyz, base.loc10.xyz) + base.loc10.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc11.xyz) + base.loc11.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc12.xyz) + base.loc12.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc13.xyz) + base.loc13.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc14.xyz) + base.loc14.w < 0.0 ||\n" \
-	"		dot(brickt.xyz, base.loc15.xyz) + base.loc15.w < 0.0)\n" \
-	"		return true;\n" \
-	"	else\n" \
-	"		return false;\n" \
-	"}\n" \
-	"\n" \
-	"//VOL_HEAD\n" \
-	"void main()\n" \
-	"{\n" \
-	"	vec4 view = vec4(0.0, 0.0, brk.loc4.x, 0.0);\n" \
-	"	const vec4 ray = normalize(base.matrix1 * vec4(0.0, 0.0, 1.0, 0.0) / vec4(brk.brkscale.xyz, 1.));\n" \
-	"	const vec4 st = base.matrix1 * vec4((base.matrix0 * OutVertex).xy, brk.loc4.x, 1.0) / vec4(brk.brkscale.xyz, 1.) - vec4(brk.brktrans.xyz / brk.brkscale.xyz, 0.0);\n" \
-	"	const float step = brk.loc4.z;\n" \
-	"	const float invstnum = 1.0 / float(brk.stnum);\n" \
-	"	vec4 outcol = vec4(0.0);\n" \
-	"	vec4 dir = vec4(brk.brkscale.w, brk.brktrans.w, brk.mskbrkscale.w, 0.0);\n" \
-	"\n" \
-	"	vec4 TexCoord = st + ray*step*float(0);\n" \
-	"	vec4 t = vec4(TexCoord.xyz, 1.0);\n" \
-	"	FragColor = t;\n" \
-	"\n" \
-	"	//VOL_TAIL\n" \
-	"}\n" 
-
 VRayShader::VRayShader(
 	VkDevice device, bool poly, int channels,
 	bool shading, bool fog,
 	int peel, bool clip,
 	bool hiqual, int mask,
 	int color_mode, int colormap, int colormap_proj,
-	bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight)
+	bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight, bool use_gm)
 	: device_(device),
 	poly_(poly),
 	channels_(channels),
@@ -1686,7 +976,8 @@ VRayShader::VRayShader(
 	program_(0),
 	multi_mode_(multi_mode),
     na_mode_(na_mode),
-    highlight_(highlight)
+    highlight_(highlight),
+	use_gm_(use_gm)
 	{
 	}
 
@@ -1760,9 +1051,6 @@ VRayShader::VRayShader(
 	{
 		ostringstream z;
 
-		/*z << VRAY_FRG_SHADER_CODE_TEST_PERSP;
-		s = z.str();
-		return false;*/
 
 		//version info
 		z << ShaderProgram::glsl_version_;
@@ -1966,19 +1254,31 @@ VRayShader::VRayShader(
 		else // No shading
 		{
 			z << VRAY_DATA_VOLUME_LOOKUP;
-            
+
             if (na_mode_)
                 z << VRAY_DATA_LABEL_SEG_IF;
 
 			if (channels_ == 1)
 			{
-				// Compute Gradient magnitude and use it.
-				if (hiqual_)
-					z << VRAY_GRAD_COMPUTE_HI;
-				else
-					z << VRAY_GRAD_COMPUTE_LO;
+				//mask_ >= 3 (label blending) reads the gradient vector n, so it still
+				//needs the full computation even when the magnitude is unused
+				if (use_gm_ || mask_ >= 3)
+				{
+					// Compute Gradient magnitude and use it.
+					if (hiqual_)
+						z << VRAY_GRAD_COMPUTE_HI;
+					else
+						z << VRAY_GRAD_COMPUTE_LO;
 
-				z << VRAY_COMPUTED_GM_LOOKUP;
+					z << VRAY_COMPUTED_GM_LOOKUP;
+				}
+				else
+				{
+					//gm_thresh == 0 and not inverted: the gradient magnitude cannot
+					//affect the transfer function, so substitute the neutral value
+					//and save 6 (hi) / 3 (lo) texture fetches per sample
+					z << VRAY_COMPUTED_GM_INVALIDATE;
+				}
 			}
 			else
 			{
@@ -2147,7 +1447,7 @@ VRayShader::VRayShader(
 		int peel, bool clip,
 		bool hiqual, int mask,
 		int color_mode, int colormap, int colormap_proj,
-		bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight)
+		bool solid, int vertex_shader, int mask_hide_mode, bool persp, int blend_mode, int multi_mode, bool na_mode, bool highlight, bool use_gm)
 	{
 		VRayShader*ret = nullptr;
 		if(prev_shader_ >= 0)
@@ -2158,7 +1458,7 @@ VRayShader::VRayShader(
 				peel, clip,
 				hiqual, mask,
 				color_mode, colormap, colormap_proj,
-				solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight))
+				solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight, use_gm))
 			{
 				ret = shader_[prev_shader_];
 			}
@@ -2173,7 +1473,7 @@ VRayShader::VRayShader(
 					peel, clip,
 					hiqual, mask,
 					color_mode, colormap, colormap_proj,
-					solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight))
+					solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight, use_gm))
 				{
 					prev_shader_ = i;
 					ret = shader_[i];
@@ -2189,7 +1489,7 @@ VRayShader::VRayShader(
 				peel, clip,
 				hiqual, mask,
 				color_mode, colormap, colormap_proj,
-				solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight);
+				solid, vertex_shader, mask_hide_mode, persp, blend_mode, multi_mode, na_mode, highlight, use_gm);
 			if(s->create())
 				delete s;
 			else
@@ -2265,26 +1565,6 @@ VRayShader::VRayShader(
 		}
 	}
 	
-	void VRayShaderFactory::getDescriptorSetWriteUniforms(vks::VulkanDevice *vdev, VRayUniformBufs& uniformBuffers, std::vector<VkWriteDescriptorSet>& writeDescriptorSets)
-	{
-		VkDevice device = vdev->logicalDevice;
-		
-		writeDescriptorSets.push_back(
-			vks::initializers::writeDescriptorSet(
-				VK_NULL_HANDLE,
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,
-				&uniformBuffers.vert.descriptor)
-		);
-		writeDescriptorSets.push_back(
-			vks::initializers::writeDescriptorSet(
-				VK_NULL_HANDLE,
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				1,
-				&uniformBuffers.frag_base.descriptor)
-		);
-	}
-
 	void VRayShaderFactory::getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, vks::Buffer& vert, vks::Buffer& frag, std::vector<VkWriteDescriptorSet>& writeDescriptorSets)
 	{
 		VkDevice device = vdev->logicalDevice;
@@ -2305,38 +1585,4 @@ VRayShader::VRayShader(
 		);
 	}
 
-	// Prepare and initialize uniform buffer containing shader uniforms
-	void VRayShaderFactory::prepareUniformBuffers(std::map<vks::VulkanDevice*, VRayUniformBufs>& uniformBuffers)
-	{
-		for (auto vulkanDev : vdevices_)
-		{
-			VRayUniformBufs uniformbufs;
-
-			VK_CHECK_RESULT(vulkanDev->createBuffer(
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&uniformbufs.vert,
-				sizeof(VRayVertShaderUBO)));
-
-			VK_CHECK_RESULT(vulkanDev->createBuffer(
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&uniformbufs.frag_base,
-				sizeof(VRayFragShaderBaseUBO)));
-
-			// Map persistent
-			VK_CHECK_RESULT(uniformbufs.vert.map());
-			VK_CHECK_RESULT(uniformbufs.frag_base.map());
-
-			uniformBuffers[vulkanDev] = uniformbufs;
-		}
-	}
-
-	void VRayShaderFactory::updateUniformBuffers(VRayUniformBufs& uniformBuffers, VRayVertShaderUBO vubo, VRayFragShaderBaseUBO fubo)
-	{
-		memcpy(uniformBuffers.vert.mapped, &vubo, sizeof(vubo));
-		memcpy(uniformBuffers.frag_base.mapped, &fubo, sizeof(fubo));
-	}
-
-	
 } // end namespace FLIVR

@@ -50,8 +50,6 @@
 #include "VulkanInitializers.hpp"
 #include "VulkanDevice.hpp"
 #include "VulkanSwapChain.hpp"
-#include "camera.hpp"
-#include "benchmark.hpp"
 
 class VulkanExampleBase
 {
@@ -90,12 +88,6 @@ protected:
 	VkQueue queue;
 	// Command buffer pool
 	VkCommandPool cmdPool;
-	/** @brief Pipeline stages used to wait at for graphics queue submissions */
-	VkPipelineStageFlags submitPipelineStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	// Contains command buffers and semaphores to be presented to the queue
-	VkSubmitInfo submitInfo;
-	// Command buffers used for rendering
-	std::vector<VkCommandBuffer> drawCmdBuffers;
 	// Global render pass for frame buffer writes
 	VkRenderPass renderPass;
 
@@ -125,8 +117,6 @@ public:
 	/** @brief Last frame time measured using a high performance timer (if available) */
 	float frameTimer = 1.0f;
 
-	vks::Benchmark benchmark;
-
 	/** @brief Encapsulated physical and logical vulkan device */
 	vks::VulkanDevice *vulkanDevice;
 
@@ -134,14 +124,12 @@ public:
 	std::vector<std::unique_ptr<vks::VFrameBuffer>> frameBuffers;
 	// Active frame buffer index
 	uint32_t currentBuffer = 0;
-	// Synchronization semaphores
-	struct {
-		// Swap chain image presentation
-		VkSemaphore presentComplete;
-		// Command buffer submission and execution
-		VkSemaphore renderComplete;
-	} semaphores;
-	std::vector<VkFence> waitFences;
+	// One present-wait semaphore per swapchain image: the frame-end submit signals
+	// presentSemaphores[imageIndex] and the present waits it. Indexing by image
+	// avoids re-signaling a binary semaphore that still has a pending present wait.
+	std::vector<VkSemaphore> presentSemaphores;
+	void createPresentSemaphores();
+	void destroyPresentSemaphores();
 
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
@@ -173,8 +161,6 @@ public:
 	float rotationSpeed = 1.0f;
 	// Use to adjust mouse zoom speed
 	float zoomSpeed = 1.0f;
-
-	Camera camera;
 
 	glm::vec3 rotation = glm::vec3();
 	glm::vec3 cameraPos = glm::vec3();
@@ -251,14 +237,8 @@ public:
 	// Called when the window has been resized
 	// Can be overriden in derived class to recreate or rebuild resources attached to the frame buffer / swapchain
 	virtual void windowResized();
-	// Pure virtual function to be overriden by the dervice class
-	// Called in case of an event where e.g. the framebuffer has to be rebuild and thus
-	// all command buffers that may reference this
-	virtual void buildCommandBuffers();
 
 	void windowResize();
-
-	void createSynchronizationPrimitives();
 
 	// Creates a new (graphics) command pool object storing command buffers
 	void createCommandPool();
@@ -278,14 +258,6 @@ public:
 	void initSwapchain();
 	// Create swap chain images
 	void setupSwapChain();
-
-	// Check if command buffers are valid (!= VK_NULL_HANDLE)
-	bool checkCommandBuffers();
-	// Create command buffers for drawing commands
-	void createCommandBuffers();
-	// Destroy all command buffers and set their handles to VK_NULL_HANDLE
-	// May be necessary during runtime if options are toggled 
-	void destroyCommandBuffers();
 
 	// Command buffer creation
 	// Creates and returns a new command buffer

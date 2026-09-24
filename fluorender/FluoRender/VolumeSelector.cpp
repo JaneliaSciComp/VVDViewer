@@ -1562,10 +1562,14 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
         {
             if (r * xzratio < 1.0f) xzratio = 1.0f/r;
             int zr = (int)(r*xzratio) > 0 ? (int)(r*xzratio) : 1;
-            size_t nthreads = std::thread::hardware_concurrency() - 1;
+            //hardware_concurrency() may return 0; keep >= 2 so (nthreads - 1) never divides by zero
+            //(must match the clamp used by the worker loops below)
+            unsigned int hc = std::thread::hardware_concurrency();
+            size_t nthreads = (hc > 1) ? (size_t)hc - 1 : 1;
+            if (nthreads <= 1) nthreads = 2;
             int grain_size = ((nz - zr * 2) % nthreads == 0) ? (nz - zr * 2) / nthreads : (nz - zr * 2) / (nthreads - 1);
             totalsteps += grain_size;
-            
+
             grain_size = ((nz - 2) % nthreads == 0) ? (nz - 2) / nthreads : (nz - 2) / (nthreads - 1) ;
             totalsteps += grain_size;
         }
@@ -1613,7 +1617,10 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
                     filter[i] /= sum;
             }
              
-            size_t nthreads = std::thread::hardware_concurrency() - 1;
+            //hardware_concurrency() may return 0: 0 - 1 underflows to SIZE_MAX and
+            //passes the "<= 1" test, so clamp before subtracting
+            unsigned int hc = std::thread::hardware_concurrency();
+            size_t nthreads = (hc > 1) ? (size_t)hc - 1 : 1;
             if (nthreads <= 1) nthreads = 2;
             std::vector<std::thread> threads(nthreads - 1);
             bool is_divisible = ((nz - zr * 2) % nthreads == 0);

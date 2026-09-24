@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <memory>
 #include <array>
+#include <functional>
+#include <cstdlib>
 #include "vulkan/vulkan.h"
 #include "VulkanTools.h"
 #include "VulkanBuffer.hpp"
@@ -26,6 +28,9 @@ namespace vks
 	class VFrameBuffer;
 	class VSemaphore;
 	struct VulkanSemaphoreSettings;
+
+	//divisor for the MiB-based memory accounting (mem_limit / available_mem)
+	constexpr double MEM_MB = 1048576.0;
 
 	// Full TexParam definition must precede VulkanDevice. libc++'s std::vector<T>
 	// requires T to be complete at the point its destructor is instantiated, which
@@ -117,10 +122,6 @@ namespace vks
 		double available_mem = 0.0;
 		std::vector<TexParam> tex_pool;
 
-		//textures evicted from tex_pool this frame; kept alive until the next frame
-		//boundary so in-flight command buffers can still reference them
-		std::vector<std::shared_ptr<VTexture>> retired_texs;
-
 		void setMemoryLimit(double limit=0);
 		void clear_tex_pool();
 		static bool return_brick(const TexParam &texp);
@@ -129,32 +130,90 @@ namespace vks
 		int findTexInPool(FLIVR::TextureBrick* b, int c, int w, int h, int d, int bytes, VkFormat format);
 		int GenTexture3D_pool(VkFormat format, VkFilter filter, FLIVR::TextureBrick *b, int comp);
 
-		//semaphores
-		std::vector<std::unique_ptr<vks::VSemaphore>> m_render_semaphore;
-		int m_cur_semaphore_id;
+		//per-frame-slot resources: command buffers, transient buffer rings, the render
+		//semaphore chain, deferred destruction lists and a frame fence. With more than
+		//one slot the CPU can record frame N+1 while the GPU still executes frame N;
+		//a slot is only reused after its fence has signaled.
+		struct FrameSlot {
+			std::vector<VkCommandBuffer> cmdbufs, trans_cmdbufs;
+			size_t cur_cmdbuf_id = 0;
+			size_t cur_trans_cmdbuf_id = 0;
+			//transient rings (ubo: host-visible; vbuf/ibuf: device-local, filled by compute;
+			//hvbuf/hibuf: host-visible vertex/index for CPU-generated overlay geometry)
+			vks::Buffer ubo, vbuf, ibuf, hvbuf, hibuf;
+			std::vector<vks::Buffer> ubos, vbufs, ibufs, hvbufs, hibufs;
+			VkDeviceSize ubo_offset = 0;
+			VkDeviceSize vbuf_offset = 0;
+			VkDeviceSize ibuf_offset = 0;
+			VkDeviceSize hvbuf_offset = 0;
+			VkDeviceSize hibuf_offset = 0;
+			//per-slot render semaphore chain
+			std::vector<std::unique_ptr<vks::VSemaphore>> render_semaphore;
+			int cur_semaphore_id = -1;
+			//signaled by the frame-end submit; guards reuse of everything in this slot
+			VkFence fence = VK_NULL_HANDLE;
+			bool fence_pending = false;
+			//links the first submit of the next frame after this frame's last submit
+			std::unique_ptr<vks::VSemaphore> frame_link_sem;
+			//true while frame_link_sem carries a signal no submit has waited on yet
+			bool frame_link_signaled = false;
+			//deferred destruction: objects released while this slot's frame may still
+			//be executing on the GPU; run when the slot is reused
+			std::vector<std::shared_ptr<VTexture>> retired_texs;
+			std::vector<std::function<void()>> deferred_destroys;
+		};
+		static const uint32_t FRAME_SLOTS_MAX = 2;
+		FrameSlot m_frames[FRAME_SLOTS_MAX];
+		uint32_t m_frame_slots = 1;   //number of slots in use (1 = fully serialized frames)
+		uint32_t m_cur_frame = 0;
+		bool m_in_shutdown = false;
+		FrameSlot& frame() { return m_frames[m_cur_frame]; }
+
+		//defer a destruction until the current slot's frame has provably finished
+		void retire(std::function<void()> fn);
+		//retire a vks::Buffer's handles and null it out
+		void retireBuffer(vks::Buffer& buf);
+		//wait until every slot's in-flight frame has completed
+		void WaitIdleAllFrameSlots();
+		//reset every slot after a vkDeviceWaitIdle (e.g. on window resize): clears
+		//fences, runs deferred destructions and recreates the semaphore chains
+		//(binary semaphores can be left signaled with no waiter after an
+		//OUT_OF_DATE acquire/present sequence)
+		void ResetAllFrameSlots();
+
+		//semaphores (operate on the current frame slot)
 		void ResetRenderSemaphores();
 		VulkanSemaphoreSettings GetNextRenderSemaphoreSettings();
 		VkSemaphore* GetNextRenderSemaphore();
 		VkSemaphore* GetCurrentRenderSemaphore();
+		//undo the most recent GetNextRenderSemaphore (failed brick load rollback)
+		void RollbackRenderSemaphore();
 
-		std::vector<VkCommandBuffer> m_cmdbufs, m_trans_cmdbufs;
-		vks::Buffer m_ubo, m_vbuf, m_ibuf;
-		std::vector<vks::Buffer> m_ubos, m_vbufs, m_ibufs;
-		VkDeviceSize m_cur_cmdbuf_id = 0;
-		VkDeviceSize m_cur_trans_cmdbuf_id = 0;
-		VkDeviceSize m_ubo_offset = 0;
-		VkDeviceSize m_vbuf_offset = 0;
-		VkDeviceSize m_ibuf_offset = 0;
 		void PrepareMainRenderBuffers();
 		void ResetMainRenderBuffers();
+		//frame-start link submit: orders this frame's GPU work after both the
+		//swapchain acquire and the previous frame's frame-end submit (cross-frame
+		//resources such as brick textures and masks are mutable, so successive
+		//frames must not overlap on the GPU even with multiple slots in flight)
+		void SubmitFrameLink();
+		//frame-end submit: waits the tail of the semaphore chain, signals the
+		//cross-frame link and the per-image present semaphore, and arms the slot
+		//fence that guards reuse of this slot's resources
+		void SubmitFrameEnd(VkSemaphore present_sem);
+		void prepareFrameSlot(FrameSlot& slot);
+		void consolidateRing(vks::Buffer& cur, std::vector<vks::Buffer>& spill,
+			VkBufferUsageFlags usage, VkMemoryPropertyFlags mem, bool map_buf);
+		void ringNext(vks::Buffer& cur, std::vector<vks::Buffer>& spill, VkDeviceSize& cursor,
+			VkDeviceSize req_size, VkBufferUsageFlags usage, VkMemoryPropertyFlags mem, bool map_buf,
+			vks::Buffer& buf, VkDeviceSize& offset);
 		VkCommandBuffer GetNextCommandBuffer();
 		VkCommandBuffer GetNextTransferCommandBuffer();
 		void GetNextUniformBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize &offset);
 		void GetNextVertexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset);
 		void GetNextIndexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset);
+		void GetNextHostVertexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset);
+		void GetNextHostIndexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset);
 		VkDeviceSize GetCurrentUniformBufferOffset();
-		VkDeviceSize GetCurrentVertexBufferOffset();
-		VkDeviceSize GetCurrentIndexBufferOffset();
 
 		VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
 		void setupDescriptorPool();
@@ -238,11 +297,14 @@ namespace vks
 		*/
 		~VulkanDevice()
 		{
+			//from here on, destructions must happen immediately (the deferred lists
+			//are drained below and never processed again)
+			m_in_shutdown = true;
+			WaitIdleAllFrameSlots();
+
 			//textures in the pool must release their Vulkan objects while the device is still alive
 			//(members are destroyed after this body runs, i.e. after vkDestroyDevice)
 			tex_pool.clear();
-			retired_texs.clear();
-			m_render_semaphore.clear();
 			staging_buf.destroy();
 			for (uint32_t i = 0; i < STAGING_RING_SIZE; i++)
 			{
@@ -255,31 +317,42 @@ namespace vks
 				}
 				m_staging_ring[i].buf.destroy();
 			}
-			m_ubo.destroy();
-			if (!m_ubos.empty())
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
 			{
-				for (auto& b : m_ubos)
-					b.destroy();
-				m_ubos.clear();
+				FrameSlot& slot = m_frames[s];
+				for (auto& fn : slot.deferred_destroys)
+					fn();
+				slot.deferred_destroys.clear();
+				slot.retired_texs.clear();
+				slot.render_semaphore.clear();
+				slot.frame_link_sem.reset();
+				if (slot.fence != VK_NULL_HANDLE)
+				{
+					vkDestroyFence(logicalDevice, slot.fence, nullptr);
+					slot.fence = VK_NULL_HANDLE;
+				}
+				slot.ubo.destroy();
+				for (auto& b : slot.ubos) b.destroy();
+				slot.ubos.clear();
+				slot.vbuf.destroy();
+				for (auto& b : slot.vbufs) b.destroy();
+				slot.vbufs.clear();
+				slot.ibuf.destroy();
+				for (auto& b : slot.ibufs) b.destroy();
+				slot.ibufs.clear();
+				slot.hvbuf.destroy();
+				for (auto& b : slot.hvbufs) b.destroy();
+				slot.hvbufs.clear();
+				slot.hibuf.destroy();
+				for (auto& b : slot.hibufs) b.destroy();
+				slot.hibufs.clear();
+				if (!slot.cmdbufs.empty())
+					vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(slot.cmdbufs.size()), slot.cmdbufs.data());
+				slot.cmdbufs.clear();
+				if (!slot.trans_cmdbufs.empty())
+					vkFreeCommandBuffers(logicalDevice, transfer_commandPool, static_cast<uint32_t>(slot.trans_cmdbufs.size()), slot.trans_cmdbufs.data());
+				slot.trans_cmdbufs.clear();
 			}
-			m_vbuf.destroy();
-			if (!m_vbufs.empty())
-			{
-				for (auto& b : m_vbufs)
-					b.destroy();
-				m_vbufs.clear();
-			}
-			m_ibuf.destroy();
-			if (!m_ibufs.empty())
-			{
-				for (auto& b : m_ibufs)
-					b.destroy();
-				m_ibufs.clear();
-			}
-			if (!m_cmdbufs.empty())
-				vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(m_cmdbufs.size()), m_cmdbufs.data());
-			if (!m_trans_cmdbufs.empty())
-				vkFreeCommandBuffers(logicalDevice, transfer_commandPool, static_cast<uint32_t>(m_trans_cmdbufs.size()), m_trans_cmdbufs.data());
 			if (linear_sampler)
 				vkDestroySampler(logicalDevice, linear_sampler, nullptr);
 			if (nearest_sampler)
@@ -544,10 +617,27 @@ namespace vks
 				transfer_queue = queue;
 
 			vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(logicalDevice, "vkCmdPushDescriptorSetKHR");
+			if (!vkCmdPushDescriptorSetKHR)
+			{
+				//the whole renderer is built on push descriptors; without the extension
+				//the first draw would call a null function pointer
+				vks::tools::exitFatal("This GPU/driver does not support VK_KHR_push_descriptor, which VVDViewer requires.", VK_ERROR_EXTENSION_NOT_PRESENT);
+			}
 
 			createPipelineCache();
 			setupDescriptorPool();
 			setMemoryLimit();
+
+			//frames in flight: with 2 slots the CPU records frame N+1 while the GPU
+			//still executes frame N; VVD_FRAMES_IN_FLIGHT=1 restores the old fully
+			//serialized behavior (frame-end queue drains)
+			m_frame_slots = 2;
+			if (const char* fif = std::getenv("VVD_FRAMES_IN_FLIGHT"))
+			{
+				int n = std::atoi(fif);
+				if (n >= 1 && n <= (int)FRAME_SLOTS_MAX)
+					m_frame_slots = (uint32_t)n;
+			}
 
 			PrepareMainRenderBuffers();
 
@@ -666,7 +756,7 @@ namespace vks
 		{
 			VkResult result = createBuffer(usageFlags, memoryPropertyFlags, buffer, size, data);
 			buffer->in_pool = true;
-			available_mem -= buffer->size / 1.04e6;
+			available_mem -= buffer->size / MEM_MB;
 
 			return result;
 		}
@@ -678,7 +768,7 @@ namespace vks
 			
 			buffer->destroy();
 			if (buffer->in_pool)
-				available_mem += buffer->size / 1.04e6;
+				available_mem += buffer->size / MEM_MB;
 		}
 
 		/**
@@ -958,33 +1048,25 @@ namespace vks
 			destroy();
 		}
 
-		void destroy()
+		//destroy or (while frames may be in flight) defer destruction of the raw
+		//handles to the device's per-frame-slot deletion queue. Members are nulled
+		//immediately either way. Definition follows VulkanDevice (needs retire()).
+		void destroy();
+
+		//immediate destruction of the raw handles (used by the deferred lambda and
+		//during device shutdown)
+		void destroy_handles_now(VkImageView v, VkImageView sv, VkImage img, VkSampler smp, VkDeviceMemory mem)
 		{
-			if (view != VK_NULL_HANDLE && !is_swapchain_images)
-			{
-				vkDestroyImageView(device->logicalDevice, view, nullptr);
-				view = VK_NULL_HANDLE;
-			}
-			if (stencil_view != VK_NULL_HANDLE && !is_swapchain_images)
-			{
-				vkDestroyImageView(device->logicalDevice, stencil_view, nullptr);
-				stencil_view = VK_NULL_HANDLE;
-			}
-			if (image != VK_NULL_HANDLE && !is_swapchain_images)
-			{
-				vkDestroyImage(device->logicalDevice, image, nullptr);
-				image = VK_NULL_HANDLE;
-			}
-			if (sampler != VK_NULL_HANDLE && free_sampler)
-			{
-				vkDestroySampler(device->logicalDevice, sampler, nullptr);
-				sampler = VK_NULL_HANDLE;
-			}
-			if (deviceMemory != VK_NULL_HANDLE && !is_swapchain_images)
-			{
-				vkFreeMemory(device->logicalDevice, deviceMemory, nullptr);
-				deviceMemory = VK_NULL_HANDLE;
-			}
+			if (v != VK_NULL_HANDLE)
+				vkDestroyImageView(device->logicalDevice, v, nullptr);
+			if (sv != VK_NULL_HANDLE)
+				vkDestroyImageView(device->logicalDevice, sv, nullptr);
+			if (img != VK_NULL_HANDLE)
+				vkDestroyImage(device->logicalDevice, img, nullptr);
+			if (smp != VK_NULL_HANDLE)
+				vkDestroySampler(device->logicalDevice, smp, nullptr);
+			if (mem != VK_NULL_HANDLE)
+				vkFreeMemory(device->logicalDevice, mem, nullptr);
 		}
 
 	};
@@ -1013,19 +1095,9 @@ namespace vks
 			destroy();
 		}
 
-		void destroy()
-		{
-			if (delete_renderpass && renderPass != VK_NULL_HANDLE)
-			{
-				vkDestroyRenderPass(device->logicalDevice, renderPass, nullptr);
-				renderPass = VK_NULL_HANDLE;
-			}
-			if (framebuffer != VK_NULL_HANDLE)
-			{
-				vkDestroyFramebuffer(device->logicalDevice, framebuffer, nullptr);
-				framebuffer = VK_NULL_HANDLE;
-			}
-		}
+		//destroy or (while frames may be in flight) defer destruction of the raw
+		//handles to the device's deletion queue. Definition follows VulkanDevice.
+		void destroy();
 
 		uint32_t addAttachment(std::shared_ptr<VTexture> &attachment)
 		{
@@ -1274,5 +1346,83 @@ namespace vks
 		VkSemaphore* waitSemaphores = nullptr;
 		VkSemaphore* signalSemaphores = nullptr;
 	};
+
+	//deferred destruction: while frames may be in flight, releasing a texture or
+	//framebuffer must not free the underlying Vulkan handles immediately (a previous
+	//frame's command buffers may still reference them). The handles are captured and
+	//queued on the device's current frame slot; the queue runs once that slot's
+	//frame fence has signaled. During shutdown the handles are freed immediately.
+	inline void VTexture::destroy()
+	{
+		VkImageView v = is_swapchain_images ? VK_NULL_HANDLE : view;
+		VkImageView sv = is_swapchain_images ? VK_NULL_HANDLE : stencil_view;
+		VkImage img = is_swapchain_images ? VK_NULL_HANDLE : image;
+		VkSampler smp = free_sampler ? sampler : VK_NULL_HANDLE;
+		VkDeviceMemory mem = is_swapchain_images ? VK_NULL_HANDLE : deviceMemory;
+		view = VK_NULL_HANDLE;
+		stencil_view = VK_NULL_HANDLE;
+		image = VK_NULL_HANDLE;
+		sampler = VK_NULL_HANDLE;
+		deviceMemory = VK_NULL_HANDLE;
+
+		if (v == VK_NULL_HANDLE && sv == VK_NULL_HANDLE && img == VK_NULL_HANDLE &&
+			smp == VK_NULL_HANDLE && mem == VK_NULL_HANDLE)
+			return;
+		if (!device)
+			return;
+
+		if (device->m_in_shutdown)
+		{
+			destroy_handles_now(v, sv, img, smp, mem);
+		}
+		else
+		{
+			VulkanDevice* dev = device;
+			device->retire([dev, v, sv, img, smp, mem]() {
+				if (v != VK_NULL_HANDLE)
+					vkDestroyImageView(dev->logicalDevice, v, nullptr);
+				if (sv != VK_NULL_HANDLE)
+					vkDestroyImageView(dev->logicalDevice, sv, nullptr);
+				if (img != VK_NULL_HANDLE)
+					vkDestroyImage(dev->logicalDevice, img, nullptr);
+				if (smp != VK_NULL_HANDLE)
+					vkDestroySampler(dev->logicalDevice, smp, nullptr);
+				if (mem != VK_NULL_HANDLE)
+					vkFreeMemory(dev->logicalDevice, mem, nullptr);
+			});
+		}
+	}
+
+	inline void VFrameBuffer::destroy()
+	{
+		VkRenderPass rp = delete_renderpass ? renderPass : VK_NULL_HANDLE;
+		VkFramebuffer fb = framebuffer;
+		if (delete_renderpass)
+			renderPass = VK_NULL_HANDLE;
+		framebuffer = VK_NULL_HANDLE;
+
+		if (rp == VK_NULL_HANDLE && fb == VK_NULL_HANDLE)
+			return;
+		if (!device)
+			return;
+
+		if (device->m_in_shutdown)
+		{
+			if (fb != VK_NULL_HANDLE)
+				vkDestroyFramebuffer(device->logicalDevice, fb, nullptr);
+			if (rp != VK_NULL_HANDLE)
+				vkDestroyRenderPass(device->logicalDevice, rp, nullptr);
+		}
+		else
+		{
+			VulkanDevice* dev = device;
+			device->retire([dev, fb, rp]() {
+				if (fb != VK_NULL_HANDLE)
+					vkDestroyFramebuffer(dev->logicalDevice, fb, nullptr);
+				if (rp != VK_NULL_HANDLE)
+					vkDestroyRenderPass(dev->logicalDevice, rp, nullptr);
+			});
+		}
+	}
 
 }

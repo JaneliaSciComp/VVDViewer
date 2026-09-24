@@ -314,9 +314,19 @@ void MeshRenderer::init_palette()
 
 void MeshRenderer::update_palette_tex()
 {
+    //an in-flight frame may still sample the palette textures: the upload flips
+    //their layout, so wait the frames out first
+    if (m_vulkan)
+        for (auto dev : m_vulkan->devices)
+            dev->WaitIdleAllFrameSlots();
+
     m_vulkan->UploadTextures(palette_tex_id_, palette_);
     m_vulkan->UploadTextures(selection_palette_tex_id_, selection_palette_);
     m_vulkan->UploadTextures(base_palette_tex_id_, base_palette_);
+
+    //without clearing this flag, every subsequent frame re-uploaded all three
+    //palettes synchronously
+    palette_dirty = false;
 }
 
 std::map<vks::VulkanDevice*, std::shared_ptr<vks::VTexture>> MeshRenderer::get_palette()
@@ -1990,10 +2000,20 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 
 	void MeshRenderer::update()
 	{
+		//an in-flight frame may still bind these buffers: defer their destruction
+		//to the device deletion queue instead of freeing them immediately
 		for (auto& vb : m_vertbufs)
 		{
-			vb.vertexBuffer.destroy();
-			vb.indexBuffer.destroy();
+			if (device_)
+			{
+				device_->retireBuffer(vb.vertexBuffer);
+				device_->retireBuffer(vb.indexBuffer);
+			}
+			else
+			{
+				vb.vertexBuffer.destroy();
+				vb.indexBuffer.destroy();
+			}
 			vb.indexCount = 0;
 		}
 		m_vertbufs.clear();

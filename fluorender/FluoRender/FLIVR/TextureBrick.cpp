@@ -124,7 +124,6 @@ namespace FLIVR
       priority_ = 0;
 
 	  brkdata_ = NULL;
-	  id_in_loadedbrks = -1;
 	  loading_ = false;
 	  
 	  disp_ = true;

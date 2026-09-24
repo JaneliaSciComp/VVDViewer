@@ -1963,8 +1963,13 @@ void VRenderVulkanView::DrawVolumes(int peel)
 			TextureRenderer::get_done_update_loop())
 		{
 			TextureRenderer::reset_update_loop();
-			vkQueueWaitIdle(m_vulkan->vulkanDevice->queue);
-            if (m_capture) m_postdraw = true;
+			if (m_capture)
+			{
+				//the capture path reads this frame back right after the
+				//streaming loop completes, so the queue must drain first
+				vkQueueWaitIdle(m_vulkan->vulkanDevice->queue);
+				m_postdraw = true;
+			}
             //ed_time = milliseconds_now();
             //sprintf(dbgstr, "Frame Draw: %lld \n", ed_time - st_time);
             //OutputDebugStringA(dbgstr);
@@ -2998,6 +3003,23 @@ int VRenderVulkanView::GetPaintMode()
 	return m_selector.GetMode();
 }
 
+//write CPU-generated overlay geometry into the device's per-frame host-visible
+//rings; the geometry is transient (rewritten every draw), so persistent per-object
+//buffers would be overwritten while a previous frame still reads them
+template <typename VTX>
+static void UpdateV2dObject(vks::VulkanDevice* dev, Vulkan2dRender::V2dObject& obj,
+	const vector<VTX>& vertex, const vector<uint32_t>& index)
+{
+	VkDeviceSize vsize = vertex.size() * sizeof(VTX);
+	VkDeviceSize isize = index.size() * sizeof(uint32_t);
+	dev->GetNextHostVertexBuffer(vsize, obj.vertBuf, obj.vertOffset);
+	memcpy((char*)obj.vertBuf.mapped + obj.vertOffset, vertex.data(), vsize);
+	dev->GetNextHostIndexBuffer(isize, obj.idxBuf, obj.idxOffset);
+	memcpy((char*)obj.idxBuf.mapped + obj.idxOffset, index.data(), isize);
+	obj.vertCount = vertex.size();
+	obj.idxCount = index.size();
+}
+
 void VRenderVulkanView::DrawCircle(double cx, double cy,
 							   double radius, Color &color, glm::mat4 &matrix)
 {
@@ -3021,33 +3043,7 @@ void VRenderVulkanView::DrawCircle(double cx, double cy,
 	}
 	index.push_back(0);
 
-	if (m_brush_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_brush_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_brush_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_brush_vobj.idxCount = index.size();
-		m_brush_vobj.idxOffset = 0;
-		m_brush_vobj.vertCount = vertex.size();
-		m_brush_vobj.vertOffset = 0;
-	}
-	m_brush_vobj.vertBuf.map();
-	m_brush_vobj.idxBuf.map();
-	m_brush_vobj.vertBuf.copyTo(vertex.data(), vertex.size()*sizeof(Vulkan2dRender::Vertex));
-	m_brush_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-	m_brush_vobj.vertBuf.unmap();
-	m_brush_vobj.idxBuf.unmap();
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_brush_vobj, vertex, index);
 
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -3332,6 +3328,12 @@ VolumeData *VRenderVulkanView::CopyLevel(VolumeData *src, int lv)
 //segment volumes in current view
 void VRenderVulkanView::Segment()
 {
+	//segmentation runs compute passes outside the per-frame slot cycle;
+	//they reuse per-slot resources, so all in-flight frames must retire first
+	if (m_vulkan)
+		for (auto dev : m_vulkan->devices)
+			dev->WaitIdleAllFrameSlots();
+
     HandleCamera();
 
 	//translate object
@@ -4278,10 +4280,11 @@ void VRenderVulkanView::StartTileRendering(int w_, int h_, int tilew_, int tileh
 		m_tiled_image = new unsigned char [(size_t)m_capture_resx*(size_t)m_capture_resy*3];
 	}
 
+	//an in-flight frame may still bind the old tile quad: defer its destruction
 	if (m_tile_vobj.vertBuf.buffer != VK_NULL_HANDLE)
-		m_tile_vobj.vertBuf.destroy();
+		m_vulkan->vulkanDevice->retireBuffer(m_tile_vobj.vertBuf);
 	if (m_tile_vobj.idxBuf.buffer != VK_NULL_HANDLE)
-		m_tile_vobj.idxBuf.destroy();
+		m_vulkan->vulkanDevice->retireBuffer(m_tile_vobj.idxBuf);
 
 	vector<Vulkan2dRender::Vertex> verts;
 	std::vector<uint32_t> indices = { 0,1,2, 2,3,0 };
@@ -9646,12 +9649,14 @@ void VRenderVulkanView::PostDraw()
 			!TextureRenderer::get_done_update_loop())
 			return;
 	}
-    
-    vkQueueWaitIdle(m_vulkan->vulkanDevice->queue);
 
 	//output animations
 	if (m_capture && !m_cap_file.IsEmpty())
 	{
+		//the readbacks below copy out of this frame's render target, so its
+		//GPU work must be complete
+		vkQueueWaitIdle(m_vulkan->vulkanDevice->queue);
+
 		wxString outputfilename = m_cap_file;
 		
 		//capture
@@ -10244,6 +10249,9 @@ void VRenderVulkanView::UpdateScreen()
 	if (m_recording)
 		m_recording_frame = true;
 	
+	//for the primary device this is redundant (prepareFrame's slot advance resets
+	//the chain), but it is the only per-frame reset of the secondary devices'
+	//semaphore chains in multi-GPU configurations, whose slots never advance
 	m_vulkan->ResetRenderSemaphores();
 	m_vulkan->prepareFrame();
 	m_frame_clear = true;
@@ -12878,48 +12886,21 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 				});
 			}
 
-			if (m_clip_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-			{
-				//indices
-				index.push_back(4); index.push_back(0); index.push_back(5); index.push_back(1);
-				index.push_back(7); index.push_back(3); index.push_back(6); index.push_back(2);
-				index.push_back(1); index.push_back(0); index.push_back(3); index.push_back(2);
-				index.push_back(4); index.push_back(5); index.push_back(6); index.push_back(7);
-				index.push_back(0); index.push_back(4); index.push_back(2); index.push_back(6);
-				index.push_back(5); index.push_back(1); index.push_back(7); index.push_back(3);
-				index.push_back(4); index.push_back(0); index.push_back(1); index.push_back(5); index.push_back(4);
-				index.push_back(7); index.push_back(3); index.push_back(2); index.push_back(6); index.push_back(7);
-				index.push_back(1); index.push_back(0); index.push_back(2); index.push_back(3); index.push_back(1);
-				index.push_back(4); index.push_back(5); index.push_back(7); index.push_back(6); index.push_back(4);
-				index.push_back(0); index.push_back(4); index.push_back(6); index.push_back(2); index.push_back(0);
-				index.push_back(5); index.push_back(1); index.push_back(3); index.push_back(7); index.push_back(5);
+			//indices (fixed topology)
+			index.push_back(4); index.push_back(0); index.push_back(5); index.push_back(1);
+			index.push_back(7); index.push_back(3); index.push_back(6); index.push_back(2);
+			index.push_back(1); index.push_back(0); index.push_back(3); index.push_back(2);
+			index.push_back(4); index.push_back(5); index.push_back(6); index.push_back(7);
+			index.push_back(0); index.push_back(4); index.push_back(2); index.push_back(6);
+			index.push_back(5); index.push_back(1); index.push_back(7); index.push_back(3);
+			index.push_back(4); index.push_back(0); index.push_back(1); index.push_back(5); index.push_back(4);
+			index.push_back(7); index.push_back(3); index.push_back(2); index.push_back(6); index.push_back(7);
+			index.push_back(1); index.push_back(0); index.push_back(2); index.push_back(3); index.push_back(1);
+			index.push_back(4); index.push_back(5); index.push_back(7); index.push_back(6); index.push_back(4);
+			index.push_back(0); index.push_back(4); index.push_back(6); index.push_back(2); index.push_back(0);
+			index.push_back(5); index.push_back(1); index.push_back(3); index.push_back(7); index.push_back(5);
 
-				VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_clip_vobj.vertBuf,
-					vertex.size() * sizeof(Vulkan2dRender::Vertex),
-					vertex.data()));
-
-				VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-					VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_clip_vobj.idxBuf,
-					index.size() * sizeof(uint32_t),
-					index.data()));
-
-				m_clip_vobj.idxCount = index.size();
-				m_clip_vobj.idxOffset = 0;
-				m_clip_vobj.vertCount = vertex.size();
-				m_clip_vobj.vertOffset = 0;
-
-				m_clip_vobj.idxBuf.map();
-				m_clip_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-				m_clip_vobj.idxBuf.unmap();
-			}
-			m_clip_vobj.vertBuf.map();
-			m_clip_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-			m_clip_vobj.vertBuf.unmap();
+			UpdateV2dObject(m_vulkan->vulkanDevice, m_clip_vobj, vertex, index);
 
 			vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();
 			Vulkan2dRender::V2dPipeline pipeline_line =
@@ -13270,48 +13251,21 @@ void VRenderVulkanView::DrawClippingPlanes(bool border, int face_winding)
 					});
 			}
 
-			if (m_clip_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-			{
-				//indices
-				index.push_back(4); index.push_back(0); index.push_back(5); index.push_back(1);
-				index.push_back(7); index.push_back(3); index.push_back(6); index.push_back(2);
-				index.push_back(1); index.push_back(0); index.push_back(3); index.push_back(2);
-				index.push_back(4); index.push_back(5); index.push_back(6); index.push_back(7);
-				index.push_back(0); index.push_back(4); index.push_back(2); index.push_back(6);
-				index.push_back(5); index.push_back(1); index.push_back(7); index.push_back(3);
-				index.push_back(4); index.push_back(0); index.push_back(1); index.push_back(5); index.push_back(4);
-				index.push_back(7); index.push_back(3); index.push_back(2); index.push_back(6); index.push_back(7);
-				index.push_back(1); index.push_back(0); index.push_back(2); index.push_back(3); index.push_back(1);
-				index.push_back(4); index.push_back(5); index.push_back(7); index.push_back(6); index.push_back(4);
-				index.push_back(0); index.push_back(4); index.push_back(6); index.push_back(2); index.push_back(0);
-				index.push_back(5); index.push_back(1); index.push_back(3); index.push_back(7); index.push_back(5);
+			//indices (fixed topology)
+			index.push_back(4); index.push_back(0); index.push_back(5); index.push_back(1);
+			index.push_back(7); index.push_back(3); index.push_back(6); index.push_back(2);
+			index.push_back(1); index.push_back(0); index.push_back(3); index.push_back(2);
+			index.push_back(4); index.push_back(5); index.push_back(6); index.push_back(7);
+			index.push_back(0); index.push_back(4); index.push_back(2); index.push_back(6);
+			index.push_back(5); index.push_back(1); index.push_back(7); index.push_back(3);
+			index.push_back(4); index.push_back(0); index.push_back(1); index.push_back(5); index.push_back(4);
+			index.push_back(7); index.push_back(3); index.push_back(2); index.push_back(6); index.push_back(7);
+			index.push_back(1); index.push_back(0); index.push_back(2); index.push_back(3); index.push_back(1);
+			index.push_back(4); index.push_back(5); index.push_back(7); index.push_back(6); index.push_back(4);
+			index.push_back(0); index.push_back(4); index.push_back(6); index.push_back(2); index.push_back(0);
+			index.push_back(5); index.push_back(1); index.push_back(3); index.push_back(7); index.push_back(5);
 
-				VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_clip_vobj.vertBuf,
-					vertex.size() * sizeof(Vulkan2dRender::Vertex),
-					vertex.data()));
-
-				VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-					VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_clip_vobj.idxBuf,
-					index.size() * sizeof(uint32_t),
-					index.data()));
-
-				m_clip_vobj.idxCount = index.size();
-				m_clip_vobj.idxOffset = 0;
-				m_clip_vobj.vertCount = vertex.size();
-				m_clip_vobj.vertOffset = 0;
-
-				m_clip_vobj.idxBuf.map();
-				m_clip_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-				m_clip_vobj.idxBuf.unmap();
-			}
-			m_clip_vobj.vertBuf.map();
-			m_clip_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-			m_clip_vobj.vertBuf.unmap();
+			UpdateV2dObject(m_vulkan->vulkanDevice, m_clip_vobj, vertex, index);
 
 			vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();
 			Vulkan2dRender::V2dPipeline pipeline_line =
@@ -13551,33 +13505,7 @@ void VRenderVulkanView::DrawGrid()
 		index.push_back(2*line_num + 2*i + 1);
 	}
 
-	if (m_grid_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_grid_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_grid_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_grid_vobj.idxCount = index.size();
-		m_grid_vobj.idxOffset = 0;
-		m_grid_vobj.vertCount = vertex.size();
-		m_grid_vobj.vertOffset = 0;
-	}
-	m_grid_vobj.vertBuf.map();
-	m_grid_vobj.idxBuf.map();
-	m_grid_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-	m_grid_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-	m_grid_vobj.vertBuf.unmap();
-	m_grid_vobj.idxBuf.unmap();
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_grid_vobj, vertex, index);
 
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -13625,33 +13553,7 @@ void VRenderVulkanView::DrawCamCtr()
 	vertex.push_back(Vulkan2dRender::Vertex{ {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f} });
 	vertex.push_back(Vulkan2dRender::Vertex{ {0.0f, 0.0f, len }, {0.0f, 0.0f, 1.0f} });
 	
-	if (m_camctr_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_camctr_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_camctr_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_camctr_vobj.idxCount = index.size();
-		m_camctr_vobj.idxOffset = 0;
-		m_camctr_vobj.vertCount = vertex.size();
-		m_camctr_vobj.vertOffset = 0;
-	}
-	m_camctr_vobj.vertBuf.map();
-	m_camctr_vobj.idxBuf.map();
-	m_camctr_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-	m_camctr_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-	m_camctr_vobj.vertBuf.unmap();
-	m_camctr_vobj.idxBuf.unmap();
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_camctr_vobj, vertex, index);
 
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -13697,33 +13599,7 @@ void VRenderVulkanView::DrawFrame()
 	vertex.push_back(Vulkan2dRender::Vertex{ {(float)(m_frame_x + m_frame_w + 1), (float)(m_frame_y + m_frame_h + 1), 0.0f}, {0.0f, 0.0f, 0.0f} });
 	vertex.push_back(Vulkan2dRender::Vertex{ {(float)(m_frame_x - 1), (float)(m_frame_y + m_frame_h + 1), 0.0f}, {0.0f, 0.0f, 0.0f} });
 
-	if (m_frame_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_frame_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_frame_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_frame_vobj.idxCount = index.size();
-		m_frame_vobj.idxOffset = 0;
-		m_frame_vobj.vertCount = vertex.size();
-		m_frame_vobj.vertOffset = 0;
-	}
-	m_frame_vobj.vertBuf.map();
-	m_frame_vobj.idxBuf.map();
-	m_frame_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-	m_frame_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-	m_frame_vobj.vertBuf.unmap();
-	m_frame_vobj.idxBuf.unmap();
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_frame_vobj, vertex, index);
 
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -14008,33 +13884,7 @@ void VRenderVulkanView::DrawScaleBar()
 		}
 	}
 
-	if (m_scbar_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_scbar_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_scbar_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_scbar_vobj.idxCount = index.size();
-		m_scbar_vobj.idxOffset = 0;
-		m_scbar_vobj.vertCount = vertex.size();
-		m_scbar_vobj.vertOffset = 0;
-	}
-	m_scbar_vobj.vertBuf.map();
-	m_scbar_vobj.idxBuf.map();
-	m_scbar_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-	m_scbar_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-	m_scbar_vobj.vertBuf.unmap();
-	m_scbar_vobj.idxBuf.unmap();
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_scbar_vobj, vertex, index);
 
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -14367,35 +14217,8 @@ void VRenderVulkanView::DrawGradBg()
 	vertex.push_back(Vulkan2dRender::Vertex{ {0.0f, 0.0f, 0.0f}, {(float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b()} });
 	vertex.push_back(Vulkan2dRender::Vertex{ {1.0f, 0.0f, 0.0f}, {(float)m_bg_color.r(), (float)m_bg_color.g(), (float)m_bg_color.b()} });
 
-	if (m_grad_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		vector<uint32_t> index = { 0,1,2,3,4,5,6,7 };
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_grad_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_grad_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_grad_vobj.idxCount = index.size();
-		m_grad_vobj.idxOffset = 0;
-		m_grad_vobj.vertCount = vertex.size();
-		m_grad_vobj.vertOffset = 0;
-
-		m_grad_vobj.idxBuf.map();
-		m_grad_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-		m_grad_vobj.idxBuf.unmap();
-	}
-	m_grad_vobj.vertBuf.map();
-	m_grad_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex));
-	m_grad_vobj.vertBuf.unmap();
+	vector<uint32_t> index = { 0,1,2,3,4,5,6,7 };
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_grad_vobj, vertex, index);
 	
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 	vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();
@@ -14636,35 +14459,8 @@ void VRenderVulkanView::DrawColormap()
 		{(float)m_color_7.r(), (float)m_color_7.g(), (float)m_color_7.b(), 1.0f}
 		});
 
-	if (m_cmap_vobj.vertBuf.buffer == VK_NULL_HANDLE)
-	{
-		vector<uint32_t> index = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13 };
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_cmap_vobj.vertBuf,
-			vertex.size() * sizeof(Vulkan2dRender::Vertex34),
-			vertex.data()));
-
-		VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-			&m_cmap_vobj.idxBuf,
-			index.size() * sizeof(uint32_t),
-			index.data()));
-
-		m_cmap_vobj.idxCount = index.size();
-		m_cmap_vobj.idxOffset = 0;
-		m_cmap_vobj.vertCount = vertex.size();
-		m_cmap_vobj.vertOffset = 0;
-
-		m_cmap_vobj.idxBuf.map();
-		m_cmap_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-		m_cmap_vobj.idxBuf.unmap();
-	}
-	m_cmap_vobj.vertBuf.map();
-	m_cmap_vobj.vertBuf.copyTo(vertex.data(), vertex.size() * sizeof(Vulkan2dRender::Vertex34));
-	m_cmap_vobj.vertBuf.unmap();
+	vector<uint32_t> index = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13 };
+	UpdateV2dObject(m_vulkan->vulkanDevice, m_cmap_vobj, vertex, index);
 
 	Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 	vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();
@@ -18433,39 +18229,7 @@ void VRenderVulkanView::DrawRulers()
 	}
 	if (!verts.empty() && !index.empty())
 	{
-		if (m_ruler_vobj.vertCount != verts.size())
-		{
-			if (m_ruler_vobj.vertBuf.buffer != VK_NULL_HANDLE)
-				m_ruler_vobj.vertBuf.destroy();
-			VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&m_ruler_vobj.vertBuf,
-				verts.size() * sizeof(Vulkan2dRender::Vertex),
-				verts.data()));
-			m_ruler_vobj.vertCount = verts.size();
-			m_ruler_vobj.vertOffset = 0;
-		}
-		if (m_ruler_vobj.idxCount != index.size())
-		{
-			if (m_ruler_vobj.idxBuf.buffer != VK_NULL_HANDLE)
-				m_ruler_vobj.idxBuf.destroy();
-			VK_CHECK_RESULT(m_vulkan->vulkanDevice->createBuffer(
-				VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&m_ruler_vobj.idxBuf,
-				index.size() * sizeof(uint32_t),
-				index.data()));
-
-			m_ruler_vobj.idxCount = index.size();
-			m_ruler_vobj.idxOffset = 0;
-		}
-		m_ruler_vobj.vertBuf.map();
-		m_ruler_vobj.idxBuf.map();
-		m_ruler_vobj.vertBuf.copyTo(verts.data(), verts.size() * sizeof(Vulkan2dRender::Vertex));
-		m_ruler_vobj.idxBuf.copyTo(index.data(), index.size() * sizeof(uint32_t));
-		m_ruler_vobj.vertBuf.unmap();
-		m_ruler_vobj.idxBuf.unmap();
+		UpdateV2dObject(m_vulkan->vulkanDevice, m_ruler_vobj, verts, index);
 
 		Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 		vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();

@@ -698,26 +698,6 @@ namespace FLIVR
 		}
 	}
 
-	void MshShaderFactory::getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, MshUniformBufs& uniformBuffers, std::vector<VkWriteDescriptorSet>& writeDescriptorSets)
-	{
-		VkDevice device = vdev->logicalDevice;
-
-		writeDescriptorSets.push_back(
-			vks::initializers::writeDescriptorSet(
-				VK_NULL_HANDLE,
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,
-				&uniformBuffers.vert.descriptor)
-		);
-		writeDescriptorSets.push_back(
-			vks::initializers::writeDescriptorSet(
-				VK_NULL_HANDLE,
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				1,
-				&uniformBuffers.frag.descriptor)
-		);
-	}
-
 	void MshShaderFactory::getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, vks::Buffer& vert, vks::Buffer& frag, std::vector<VkWriteDescriptorSet>& writeDescriptorSets)
 	{
 		VkDevice device = vdev->logicalDevice;
@@ -736,39 +716,6 @@ namespace FLIVR
 				1,
 				&frag.descriptor)
 		);
-	}
-
-	// Prepare and initialize uniform buffer containing shader uniforms
-	void MshShaderFactory::prepareUniformBuffers(std::map<vks::VulkanDevice*, MshUniformBufs>& uniformBuffers)
-	{
-		for (auto vulkanDev : vdevices_)
-		{
-			MshUniformBufs uniformbufs;
-
-			VK_CHECK_RESULT(vulkanDev->createBuffer(
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&uniformbufs.vert,
-				sizeof(MshVertShaderUBO)));
-
-			VK_CHECK_RESULT(vulkanDev->createBuffer(
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&uniformbufs.frag,
-				sizeof(MshFragShaderUBO)));
-
-			// Map persistent
-			VK_CHECK_RESULT(uniformbufs.vert.map());
-			VK_CHECK_RESULT(uniformbufs.frag.map());
-
-			uniformBuffers[vulkanDev] = uniformbufs;
-		}
-	}
-
-	void MshShaderFactory::updateUniformBuffers(MshUniformBufs& uniformBuffers, MshVertShaderUBO vubo, MshFragShaderUBO fubo)
-	{
-		memcpy(uniformBuffers.vert.mapped, &vubo, sizeof(vubo));
-		memcpy(uniformBuffers.frag.mapped, &fubo, sizeof(fubo));
 	}
 
 } // end namespace FLIVR

@@ -161,10 +161,6 @@ namespace FLIVR
 
 		long long main_membuf_size_;
 
-		//find out combined bricks in interactive mode
-		vector<TextureBrick*> *get_combined_bricks(
-			Point& center, Ray& view, bool is_orthographic = false);
-
 		struct MultiVolRenederSettings {
 			VolumeRenderer::VRayPipeline pipeline;
 			VkPipelineLayout pipelineLayout;

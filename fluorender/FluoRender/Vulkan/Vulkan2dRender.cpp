@@ -598,12 +598,16 @@ void Vulkan2dRender::buildCommandBuffer(
 				if (dst != VK_IMAGE_LAYOUT_UNDEFINED)
 				{
 					params.tex[j]->descriptor.imageLayout = dst;
+					//attachment write -> sampled read: explicit stages instead of the
+					//ALL_COMMANDS default, so unrelated GPU work can overlap the barrier
 					vks::tools::setImageLayout(
 						commandbufs[i],
 						params.tex[j]->image,
 						src,
 						dst,
-						params.tex[j]->subresourceRange);
+						params.tex[j]->subresourceRange,
+						VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+						VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 				}
 			}
 			else
@@ -694,12 +698,15 @@ void Vulkan2dRender::buildCommandBuffer(
 			{
 				if (layout[j] != params.tex[j]->descriptor.imageLayout)
 				{
+					//sampled read -> attachment write: explicit stages (see pre-pass note)
 					vks::tools::setImageLayout(
 						commandbufs[i],
 						params.tex[j]->image,
 						params.tex[j]->descriptor.imageLayout,
 						layout[j],
-						params.tex[j]->subresourceRange);
+						params.tex[j]->subresourceRange,
+						VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT);
 					params.tex[j]->descriptor.imageLayout = layout[j];
 				}
 			}

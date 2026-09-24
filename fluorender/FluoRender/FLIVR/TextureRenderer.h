@@ -58,63 +58,7 @@
 
 namespace FLIVR
 {
-   //a simple fixed-length fifo sequence
-   class EXPORT_API BrickQueue
-   {
-      public:
-         BrickQueue(int limit):
-            m_queue(0),
-            m_limit(limit),
-            m_pos(0)
-      {
-         if (m_limit >=0)
-         {
-            m_queue = new int[m_limit];
-            memset(m_queue, 0, m_limit*sizeof(int));
-         }
-      }
-         ~BrickQueue()
-         {
-            if (m_queue)
-               delete []m_queue;
-         }
-
-         int GetLimit()
-         {return m_limit;}
-         int Push(int value)
-         {
-            if (m_queue)
-            {
-               m_queue[m_pos] = value;
-               if (m_pos < m_limit-1)
-                  m_pos++;
-               else
-                  m_pos = 0;
-               return 1;
-            }
-            else
-               return 0;
-         }
-         int Get(int index)
-         {
-            if (index>=0 && index<m_limit)
-               return m_queue[m_pos+index<m_limit?m_pos+index:m_pos+index-m_limit];
-            else
-               return 0;
-         }
-         int GetLast()
-         {
-            return m_queue[m_pos==0?m_limit-1:m_pos-1];
-         }
-
-      private:
-         int *m_queue;
-         int m_limit;
-         int m_pos;
-   };
-
    class ShaderProgram;
-   class VolShaderFactory;
    class SegShaderFactory;
    class VolCalShaderFactory;
    class VolKernelFactory;
@@ -321,18 +265,6 @@ namespace FLIVR
                static void reset_finished_bricks();
                static int get_finished_bricks() {return finished_bricks_;}
                static void set_finished_bricks(int i) {finished_bricks_ = i;}
-               static int get_finished_bricks_max();
-               static int get_est_bricks(int mode);
-               static int get_queue_last() {return brick_queue_.GetLast();}
-               //quota bricks in interactive mode
-               static void set_quota_bricks(int quota) {quota_bricks_ = quota;}
-               static int get_quota_bricks() {return quota_bricks_;}
-               //current channel
-               void set_quota_bricks_chan(int quota) {quota_bricks_chan_ = quota;}
-               int get_quota_bricks_chan() {return quota_bricks_chan_;}
-               //quota center
-               static void set_qutoa_center(Point &point) {quota_center_ = point;}
-               static Point get_quota_center() {return quota_center_; }
                //update order
                static void set_update_order(int val) {update_order_ = val;}
                static int get_update_order() {return update_order_;}
@@ -361,12 +293,6 @@ namespace FLIVR
 			   //static VolKernelFactory vol_kernel_factory_;
 
       public:
-               struct BrickDist
-               {
-                  unsigned int index;    //index of the brick in current tex pool
-                  TextureBrick* brick;  //a brick
-                  double dist;      //distance to another brick
-               };
                Texture *tex_;
                RenderMode mode_;
                double sampling_rate_;
@@ -417,14 +343,6 @@ namespace FLIVR
 
                int blend_num_bits_;
 
-			   struct LoadedBrick {
-				   bool swapped;
-				   TextureBrick *brk;
-				   double size;
-			   };
-			   static vector<LoadedBrick> loadedbrks;
-			   static int del_id;
-			   
                //memory management
                static bool mem_swap_;
                static bool streaming_;
@@ -454,12 +372,6 @@ namespace FLIVR
                static bool interactive_;
                //number of rendered blocks before time is up
                static int finished_bricks_;
-               static BrickQueue brick_queue_;
-               //quota in interactive mode
-               static int quota_bricks_;
-               int quota_bricks_chan_;//for current channel
-               //center point of the quota
-               static Point quota_center_;
                //update order
                static int update_order_;
 
@@ -490,10 +402,6 @@ namespace FLIVR
                Ray compute_view();
 			   Ray compute_snapview(double snap);
 			   double compute_rate_scale(Vector v);
-
-               //brick distance sort
-               static bool brick_sort(const BrickDist& bd1, const BrickDist& bd2);
-
 
                //load texture bricks for drawing
                //unit:assigned unit, c:channel

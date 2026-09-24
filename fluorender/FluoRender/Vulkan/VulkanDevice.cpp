@@ -95,10 +95,10 @@ namespace vks
 		{
 			if (tex_pool[j].tex)
 			{
-				available_mem += tex_pool[j].tex->memsize / 1.04e6;
+				available_mem += tex_pool[j].tex->memsize / MEM_MB;
 				//keep the texture alive until the next frame boundary:
 				//in-flight command buffers may still reference it
-				retired_texs.push_back(tex_pool[j].tex);
+				frame().retired_texs.push_back(tex_pool[j].tex);
 			}
 		}
 		tex_pool.clear();
@@ -161,10 +161,10 @@ namespace vks
 				//save before deletion
 				return_brick(tex_pool[j]);
 				if (tex_pool[j].comp >= 0 && tex_pool[j].comp < TEXTURE_MAX_COMPONENTS && tex_pool[j].tex->bytes > 0)
-					available_mem += tex_pool[j].tex->memsize / 1.04e6;
+					available_mem += tex_pool[j].tex->memsize / MEM_MB;
 				//defer the actual destruction to the next frame boundary:
 				//in-flight command buffers may still sample this texture
-				retired_texs.push_back(tex_pool[j].tex);
+				frame().retired_texs.push_back(tex_pool[j].tex);
 				tex_pool.erase(tex_pool.begin()+j);
 			}
 		}
@@ -176,15 +176,16 @@ namespace vks
 		FLIVR::TextureBrick* brick;
 		double dist;      //distance to another brick
 	};
-	bool brick_sort(const BrickDist& bd1, const BrickDist& bd2)
+	//max-heap comparator: the heap top is the FARTHEST brick
+	inline bool brick_closer(const BrickDist& bd1, const BrickDist& bd2)
 	{
-		return bd1.dist > bd2.dist;
+		return bd1.dist < bd2.dist;
 	}
 
 	int VulkanDevice::check_swap_memory(FLIVR::TextureBrick* brick, int c, bool *swapped)
 	{
 		unsigned int i;
-		double new_mem = (VkDeviceSize)brick->nx()*brick->ny()*brick->nz()*brick->nb(c)/1.04e6;
+		double new_mem = (VkDeviceSize)brick->nx()*brick->ny()*brick->nz()*brick->nb(c)/MEM_MB;
 
 		int overwrite = -1;
 
@@ -223,28 +224,43 @@ namespace vks
 
 		//release bricks far away
 		double est_avlb_mem = available_mem;
-		int comp;
 		if (bd_list.size() > 0)
 		{
-			//sort from farthest to closest
-			std::sort(bd_list.begin(), bd_list.end(), brick_sort);
-
+			//partition without sorting; eviction order comes from a max-heap on the
+			//distance, popped only as far as needed (the full sort was O(N log N)
+			//per brick per frame on pools of thousands of entries)
 			std::vector<BrickDist> bd_undisp;
-			std::vector<BrickDist> bd_saved;
 			std::vector<BrickDist> bd_others;
 			for (i=0; i<bd_list.size(); i++)
 			{
 				FLIVR::TextureBrick* b = bd_list[i].brick;
 				if (b->is_tex_deletion_prevented())
-					bd_saved.push_back(bd_list[i]);
+					continue; //saved bricks are never touched
 				else if (!b->get_disp())
 					bd_undisp.push_back(bd_list[i]);
 				else
 					bd_others.push_back(bd_list[i]);
 			}
 
+			//pop bricks farthest-first, marking them for delayed deletion until
+			//enough memory would be released
+			auto evict_from = [&](std::vector<BrickDist>& bucket, std::vector<int>& deleted)
+			{
+				std::make_heap(bucket.begin(), bucket.end(), brick_closer);
+				size_t heap_end = bucket.size();
+				while (heap_end > 0 && est_avlb_mem < new_mem)
+				{
+					std::pop_heap(bucket.begin(), bucket.begin() + heap_end, brick_closer);
+					heap_end--;
+					TexParam &texp = tex_pool[bucket[heap_end].index];
+					texp.delayed_del = true;
+					deleted.push_back(bucket[heap_end].index);
+					est_avlb_mem += texp.tex->memsize / MEM_MB;
+				}
+			};
+
 			//overwrite or remove undisplayed bricks.
-			//try to overwrite
+			//try to overwrite (any exact-property match is valid; order-insensitive)
 			for (i=0; i<bd_undisp.size(); i++)
 			{
 				TexParam &texp = tex_pool[bd_undisp[i].index];
@@ -275,17 +291,7 @@ namespace vks
 			}
 			//remove
 			std::vector<int> deleted;
-			for (i=0; i<bd_undisp.size(); i++)
-			{
-				TexParam &texp = tex_pool[bd_undisp[i].index];
-				texp.delayed_del = true;
-				comp = texp.comp;
-				deleted.push_back(bd_undisp[i].index);
-				double released_mem = texp.tex->memsize / 1.04e6;
-				est_avlb_mem += released_mem;
-				if (est_avlb_mem >= new_mem)
-					break;
-			}
+			evict_from(bd_undisp, deleted);
 
 			//overwrite or remove displayed bricks far away.
 			if (est_avlb_mem < new_mem)
@@ -319,18 +325,7 @@ namespace vks
 				}
 				else
 				{
-					//remove
-					for (i=0; i<bd_others.size(); i++)
-					{
-						TexParam &texp = tex_pool[bd_others[i].index];
-						texp.delayed_del = true;
-						comp = texp.comp;
-						deleted.push_back(bd_others[i].index);
-						double released_mem = texp.tex->memsize / 1.04e6;
-						est_avlb_mem += released_mem;
-						if (est_avlb_mem >= new_mem)
-							break;
-					}
+					evict_from(bd_others, deleted);
 				}
 			}
 
@@ -377,7 +372,7 @@ namespace vks
 			vks::TexParam p = vks::TexParam(comp, ret);
 			p.brick = b;
 			tex_pool.push_back(p);
-			available_mem -= ret->memsize / 1.04e6;
+			available_mem -= ret->memsize / MEM_MB;
 
 			return int(tex_pool.size()) - 1;
 		}
@@ -497,31 +492,45 @@ namespace vks
 		VK_CHECK_RESULT(vkCreateDescriptorPool(logicalDevice, &descriptorPoolInfo, nullptr, &descriptorPool));
 	}
 
-	void VulkanDevice::PrepareMainRenderBuffers()
+	void VulkanDevice::prepareFrameSlot(FrameSlot& slot)
 	{
-		VkCommandBuffer cmdbuf = createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-		m_cmdbufs.push_back(cmdbuf);
-		VkCommandBuffer trans_cmdbuf = createTransferCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-		m_trans_cmdbufs.push_back(trans_cmdbuf);
+		//fence and link semaphore live outside the early-return: the link semaphore
+		//is dropped by ResetAllFrameSlots (window resize) and must be recreated even
+		//when the slot's buffers already exist
+		if (slot.fence == VK_NULL_HANDLE)
+		{
+			VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
+			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceInfo, nullptr, &slot.fence));
+		}
+		if (!slot.frame_link_sem)
+		{
+			slot.frame_link_sem = std::make_unique<vks::VSemaphore>(this);
+			slot.frame_link_signaled = false;
+		}
 
-		VkDeviceSize max_ubo_range = properties.limits.maxUniformBufferRange;
-		VkDeviceSize ubo_size = 1024;//max_ubo_range > 65536 ? 65536 : max_ubo_range;
+		if (!slot.cmdbufs.empty())
+			return;
+
+		slot.cmdbufs.push_back(createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY));
+		slot.trans_cmdbufs.push_back(createTransferCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY));
+
+		VkDeviceSize ubo_size = 1024;
 		VK_CHECK_RESULT(
 			createBuffer(
 				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-				&m_ubo,
+				&slot.ubo,
 				ubo_size
 			)
 		);
-		m_ubo.map();
+		slot.ubo.map();
 
 		VkDeviceSize buf_size = 1024;
 		VK_CHECK_RESULT(
 			createBuffer(
 				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				&m_vbuf,
+				&slot.vbuf,
 				buf_size
 			)
 		);
@@ -529,202 +538,291 @@ namespace vks
 			createBuffer(
 				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				&m_ibuf,
+				&slot.ibuf,
 				buf_size
 			)
 		);
+		//host-visible rings for CPU-generated overlay geometry
+		VK_CHECK_RESULT(
+			createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+				&slot.hvbuf,
+				4096
+			)
+		);
+		slot.hvbuf.map();
+		VK_CHECK_RESULT(
+			createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+				&slot.hibuf,
+				4096
+			)
+		);
+		slot.hibuf.map();
 	}
+
+	void VulkanDevice::PrepareMainRenderBuffers()
+	{
+		for (uint32_t s = 0; s < m_frame_slots; s++)
+			prepareFrameSlot(m_frames[s]);
+	}
+
+	//grow-consolidate a transient ring at the frame boundary: if the last frame in
+	//this slot spilled into extra blocks, merge them into one larger block
+	void VulkanDevice::consolidateRing(vks::Buffer& cur, std::vector<vks::Buffer>& spill,
+		VkBufferUsageFlags usage, VkMemoryPropertyFlags mem, bool map_buf)
+	{
+		if (spill.empty())
+			return;
+		VkDeviceSize newsize = cur.size;
+		for (auto& b : spill)
+		{
+			newsize += b.size;
+			b.destroy();
+		}
+		spill.clear();
+		cur.destroy();
+		VK_CHECK_RESULT(createBuffer(usage, mem, &cur, newsize));
+		if (map_buf)
+			cur.map();
+	}
+
 	void VulkanDevice::ResetMainRenderBuffers()
 	{
-		//frame boundary: the previous frame's work has completed (submitFrame drains the
-		//queues), so textures evicted during that frame can now really be destroyed
-		retired_texs.clear();
+		//advance to the next frame slot; with more than one slot the CPU can start
+		//recording the new frame while the GPU still executes the previous one
+		m_cur_frame = (m_cur_frame + 1) % m_frame_slots;
+		FrameSlot& slot = frame();
 
-		m_cur_cmdbuf_id = 0;
-		m_cur_trans_cmdbuf_id = 0;
-		m_ubo_offset = 0;
-		m_vbuf_offset = 0;
-		m_ibuf_offset = 0;
-		if (m_ubos.size() > 0)
+		//the slot is only reused once its frame has fully executed
+		if (slot.fence_pending && slot.fence != VK_NULL_HANDLE)
 		{
-			VkDeviceSize newsize = m_ubo.size;
-			for (auto b : m_ubos)
-			{
-				newsize += b.size;
-				b.destroy();
-			}
-			m_ubos.clear();
-
-			m_ubo.destroy();
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_ubo,
-					newsize
-				)
-			);
-			m_ubo.map();
+			VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+			VK_CHECK_RESULT(vkResetFences(logicalDevice, 1, &slot.fence));
+			slot.fence_pending = false;
 		}
-		if (m_vbufs.size() > 0)
-		{
-			VkDeviceSize newsize = m_vbuf.size;
-			for (auto b : m_vbufs)
-			{
-				newsize += b.size;
-				b.destroy();
-			}
-			m_vbufs.clear();
 
-			m_vbuf.destroy();
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					&m_vbuf,
-					newsize
-				)
-			);
-		}
-		if (m_ibufs.size() > 0)
-		{
-			VkDeviceSize newsize = m_ibuf.size;
-			for (auto b : m_ibufs)
-			{
-				newsize += b.size;
-				b.destroy();
-			}
-			m_ibufs.clear();
+		//now everything this slot's frame referenced is safe to destroy
+		for (auto& fn : slot.deferred_destroys)
+			fn();
+		slot.deferred_destroys.clear();
+		slot.retired_texs.clear();
 
-			m_ibuf.destroy();
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					&m_ibuf,
-					newsize
-				)
-			);
-		}
+		prepareFrameSlot(slot);
+
+		slot.cur_cmdbuf_id = 0;
+		slot.cur_trans_cmdbuf_id = 0;
+		slot.ubo_offset = 0;
+		slot.vbuf_offset = 0;
+		slot.ibuf_offset = 0;
+		slot.hvbuf_offset = 0;
+		slot.hibuf_offset = 0;
+		slot.cur_semaphore_id = -1;
+
+		consolidateRing(slot.ubo, slot.ubos,
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true);
+		consolidateRing(slot.vbuf, slot.vbufs,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+		consolidateRing(slot.ibuf, slot.ibufs,
+			VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+		consolidateRing(slot.hvbuf, slot.hvbufs,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true);
+		consolidateRing(slot.hibuf, slot.hibufs,
+			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true);
 	}
-	void VulkanDevice::GetNextUniformBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
+
+	//allocate the next req_size bytes from a transient ring, spilling to a fresh
+	//block when the current one is full
+	void VulkanDevice::ringNext(vks::Buffer& cur, std::vector<vks::Buffer>& spill, VkDeviceSize& cursor,
+		VkDeviceSize req_size, VkBufferUsageFlags usage, VkMemoryPropertyFlags mem, bool map_buf,
+		vks::Buffer& buf, VkDeviceSize& offset)
 	{
-		offset = m_ubo_offset;
+		offset = cursor;
 
-		if (m_ubo.alignment > 0)
-			req_size = (req_size + m_ubo.alignment - 1) & ~(m_ubo.alignment - 1);
+		if (cur.alignment > 0)
+			req_size = (req_size + cur.alignment - 1) & ~(cur.alignment - 1);
 
-		if (m_ubo.size >= m_ubo_offset + req_size)
-			m_ubo_offset += req_size;
+		if (cur.size >= cursor + req_size)
+			cursor += req_size;
 		else
 		{
 			offset = 0;
-			m_ubos.push_back(m_ubo);
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-					&m_ubo,
-					req_size
-				)
-			);
-			m_ubo_offset = req_size;
-			m_ubo.map();
+			spill.push_back(cur);
+			VK_CHECK_RESULT(createBuffer(usage, mem, &cur, req_size));
+			cursor = req_size;
+			if (map_buf)
+				cur.map();
 		}
 
-		buf = m_ubo;
+		buf = cur;
+		buf.descriptor.buffer = buf.buffer;
 		buf.descriptor.offset = offset;
 		buf.descriptor.range = req_size;
+	}
+
+	void VulkanDevice::GetNextUniformBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
+	{
+		FrameSlot& slot = frame();
+		ringNext(slot.ubo, slot.ubos, slot.ubo_offset, req_size,
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true,
+			buf, offset);
 	}
 	VkDeviceSize VulkanDevice::GetCurrentUniformBufferOffset()
 	{
-		return m_ubo_offset;
+		return frame().ubo_offset;
 	}
 	void VulkanDevice::GetNextVertexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
 	{
-		offset = m_vbuf_offset;
-
-		if (m_vbuf.alignment > 0)
-			req_size = (req_size + m_vbuf.alignment - 1) & ~(m_vbuf.alignment - 1);
-
-		if (m_vbuf.size >= m_vbuf_offset + req_size)
-			m_vbuf_offset += req_size;
-		else
-		{
-			offset = 0;
-			m_vbufs.push_back(m_vbuf);
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					&m_vbuf,
-					req_size
-				)
-			);
-			m_vbuf_offset = req_size;
-		}
-		buf = m_vbuf;
-		buf.descriptor.buffer = buf.buffer;
-		buf.descriptor.offset = offset;
-		buf.descriptor.range = req_size;
+		FrameSlot& slot = frame();
+		ringNext(slot.vbuf, slot.vbufs, slot.vbuf_offset, req_size,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false,
+			buf, offset);
 	}
 	void VulkanDevice::GetNextIndexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
 	{
-		offset = m_ibuf_offset;
-
-		if (m_ibuf.alignment > 0)
-			req_size = (req_size + m_ibuf.alignment - 1) & ~(m_ibuf.alignment - 1);
-
-		if (m_ibuf.size >= m_ibuf_offset + req_size)
-			m_ibuf_offset += req_size;
-		else
-		{
-			offset = 0;
-			m_ibufs.push_back(m_ibuf);
-			VK_CHECK_RESULT(
-				createBuffer(
-					VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					&m_ibuf,
-					req_size
-				)
-			);
-			m_ibuf_offset = req_size;
-		}
-		buf = m_ibuf;
-		buf.descriptor.buffer = buf.buffer;
-		buf.descriptor.offset = offset;
-		buf.descriptor.range = req_size;
+		FrameSlot& slot = frame();
+		ringNext(slot.ibuf, slot.ibufs, slot.ibuf_offset, req_size,
+			VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false,
+			buf, offset);
 	}
-	VkDeviceSize VulkanDevice::GetCurrentVertexBufferOffset()
+	void VulkanDevice::GetNextHostVertexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
 	{
-		return m_vbuf_offset;
+		FrameSlot& slot = frame();
+		ringNext(slot.hvbuf, slot.hvbufs, slot.hvbuf_offset, req_size,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true,
+			buf, offset);
 	}
-	VkDeviceSize VulkanDevice::GetCurrentIndexBufferOffset()
+	void VulkanDevice::GetNextHostIndexBuffer(VkDeviceSize req_size, vks::Buffer& buf, VkDeviceSize& offset)
 	{
-		return m_ibuf_offset;
+		FrameSlot& slot = frame();
+		ringNext(slot.hibuf, slot.hibufs, slot.hibuf_offset, req_size,
+			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true,
+			buf, offset);
 	}
-
 	VkCommandBuffer VulkanDevice::GetNextCommandBuffer()
 	{
-		if (m_cur_cmdbuf_id >= m_cmdbufs.size())
-		{
-			VkCommandBuffer cmdbuf = createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-			m_cmdbufs.push_back(cmdbuf);
-		}
+		FrameSlot& slot = frame();
+		if (slot.cur_cmdbuf_id >= slot.cmdbufs.size())
+			slot.cmdbufs.push_back(createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY));
 
-		return m_cmdbufs[m_cur_cmdbuf_id++];
+		return slot.cmdbufs[slot.cur_cmdbuf_id++];
 	}
 
 	VkCommandBuffer VulkanDevice::GetNextTransferCommandBuffer()
 	{
-		if (m_cur_trans_cmdbuf_id >= m_trans_cmdbufs.size())
-		{
-			VkCommandBuffer cmdbuf = createTransferCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-			m_trans_cmdbufs.push_back(cmdbuf);
-		}
+		FrameSlot& slot = frame();
+		if (slot.cur_trans_cmdbuf_id >= slot.trans_cmdbufs.size())
+			slot.trans_cmdbufs.push_back(createTransferCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY));
 
-		return m_trans_cmdbufs[m_cur_trans_cmdbuf_id++];
+		return slot.trans_cmdbufs[slot.cur_trans_cmdbuf_id++];
+	}
+
+	//queue a destruction to run when the current frame slot is next reused (i.e.
+	//after its frame fence has signaled)
+	void VulkanDevice::retire(std::function<void()> fn)
+	{
+		if (m_in_shutdown)
+		{
+			fn();
+			return;
+		}
+		frame().deferred_destroys.push_back(std::move(fn));
+	}
+
+	void VulkanDevice::retireBuffer(vks::Buffer& buf)
+	{
+		if (buf.buffer == VK_NULL_HANDLE && buf.memory == VK_NULL_HANDLE)
+			return;
+		if (m_in_shutdown)
+		{
+			buf.destroy();
+			return;
+		}
+		if (buf.mapped)
+			buf.unmap();
+		VkDevice dev = buf.device;
+		VkBuffer b = buf.buffer;
+		VkDeviceMemory m = buf.memory;
+		buf.buffer = VK_NULL_HANDLE;
+		buf.memory = VK_NULL_HANDLE;
+		retire([dev, b, m]() {
+			if (b != VK_NULL_HANDLE)
+				vkDestroyBuffer(dev, b, nullptr);
+			if (m != VK_NULL_HANDLE)
+				vkFreeMemory(dev, m, nullptr);
+		});
+	}
+
+	//reset every slot after the caller has drained the device (vkDeviceWaitIdle)
+	void VulkanDevice::ResetAllFrameSlots()
+	{
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (slot.fence != VK_NULL_HANDLE && slot.fence_pending)
+			{
+				vkResetFences(logicalDevice, 1, &slot.fence);
+				slot.fence_pending = false;
+			}
+			for (auto& fn : slot.deferred_destroys)
+				fn();
+			slot.deferred_destroys.clear();
+			slot.retired_texs.clear();
+			//recreate the chains: a binary semaphore may be left signaled with no
+			//pending waiter after an OUT_OF_DATE acquire/present sequence
+			slot.render_semaphore.clear();
+			slot.frame_link_sem.reset();
+			slot.frame_link_signaled = false;
+			slot.cur_semaphore_id = -1;
+			slot.cur_cmdbuf_id = 0;
+			slot.cur_trans_cmdbuf_id = 0;
+			slot.ubo_offset = 0;
+			slot.vbuf_offset = 0;
+			slot.ibuf_offset = 0;
+			slot.hvbuf_offset = 0;
+			slot.hibuf_offset = 0;
+		}
+	}
+
+	//wait until every slot's in-flight frame has completed and run its deferred work
+	void VulkanDevice::WaitIdleAllFrameSlots()
+	{
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (slot.fence_pending && slot.fence != VK_NULL_HANDLE)
+			{
+				vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX);
+				vkResetFences(logicalDevice, 1, &slot.fence);
+				slot.fence_pending = false;
+			}
+		}
+		//with no pending fences (or single-slot mode) the queues may still be busy
+		if (m_frame_slots <= 1)
+			return;
+		//deferred work of non-current slots can now run safely
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			if (s == m_cur_frame)
+				continue;
+			FrameSlot& slot = m_frames[s];
+			for (auto& fn : slot.deferred_destroys)
+				fn();
+			slot.deferred_destroys.clear();
+			slot.retired_texs.clear();
+		}
 	}
 
 	void VulkanDevice::prepareSamplers()
@@ -1750,7 +1848,80 @@ namespace vks
 
 	void VulkanDevice::ResetRenderSemaphores()
 	{
-		m_cur_semaphore_id = -1;
+		frame().cur_semaphore_id = -1;
+	}
+
+	void VulkanDevice::SubmitFrameLink()
+	{
+		//called right after a successful acquire: chain[0] must be the only
+		//semaphore allocated so far this frame
+		assert(frame().cur_semaphore_id == 0);
+
+		uint32_t prev = (m_cur_frame + m_frame_slots - 1) % m_frame_slots;
+		FrameSlot& prev_slot = m_frames[prev];
+
+		VkSemaphore waits[2];
+		VkPipelineStageFlags waitStages[2] = {
+			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+		uint32_t nwaits = 0;
+		//chain[0], signaled by the swapchain acquire
+		VkSemaphore* acquired = GetCurrentRenderSemaphore();
+		if (acquired)
+			waits[nwaits++] = *acquired;
+		//previous frame's frame-end signal (absent on the very first frame and
+		//right after a resize recreated the semaphores)
+		if (prev_slot.frame_link_sem && prev_slot.frame_link_signaled)
+		{
+			waits[nwaits++] = prev_slot.frame_link_sem->vksemaphore;
+			prev_slot.frame_link_signaled = false;
+		}
+
+		//chain[1]: everything this frame submits is ordered after this link
+		VkSemaphore* next = GetNextRenderSemaphore();
+
+		VkSubmitInfo si = vks::initializers::submitInfo();
+		si.waitSemaphoreCount = nwaits;
+		si.pWaitSemaphores = nwaits ? waits : nullptr;
+		si.pWaitDstStageMask = nwaits ? waitStages : nullptr;
+		si.signalSemaphoreCount = 1;
+		si.pSignalSemaphores = next;
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE));
+	}
+
+	void VulkanDevice::SubmitFrameEnd(VkSemaphore present_sem)
+	{
+		FrameSlot& slot = frame();
+		//id 0 would mean an acquire happened but SubmitFrameLink never ran, and
+		//waiting chain[0] here would consume the acquire signal the link expects
+		assert(slot.cur_semaphore_id != 0);
+		//tail of this frame's semaphore chain (at least the link submit signaled one)
+		VkSemaphore* tail = GetCurrentRenderSemaphore();
+		VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+		VkSemaphore signals[2];
+		uint32_t nsignals = 0;
+		if (slot.frame_link_sem)
+		{
+			signals[nsignals++] = slot.frame_link_sem->vksemaphore;
+			slot.frame_link_signaled = true;
+		}
+		if (present_sem != VK_NULL_HANDLE)
+			signals[nsignals++] = present_sem;
+
+		VkSubmitInfo si = vks::initializers::submitInfo();
+		if (tail)
+		{
+			si.waitSemaphoreCount = 1;
+			si.pWaitSemaphores = tail;
+			si.pWaitDstStageMask = &waitStage;
+		}
+		si.signalSemaphoreCount = nsignals;
+		si.pSignalSemaphores = nsignals ? signals : nullptr;
+		//the fence signals only after all earlier submission-order work on this
+		//queue completes, so it covers the whole frame, not just this empty submit
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &si, slot.fence));
+		slot.fence_pending = true;
 	}
 
 	VulkanSemaphoreSettings VulkanDevice::GetNextRenderSemaphoreSettings()
@@ -1776,19 +1947,28 @@ namespace vks
 
 	VkSemaphore* VulkanDevice::GetNextRenderSemaphore()
 	{
-		m_cur_semaphore_id++;
-		if (m_cur_semaphore_id >= m_render_semaphore.size())
-			m_render_semaphore.resize((size_t)m_cur_semaphore_id + 1);
-		if (!m_render_semaphore[m_cur_semaphore_id])
-			m_render_semaphore[m_cur_semaphore_id] = std::make_unique<vks::VSemaphore>(this);
-		return &m_render_semaphore[m_cur_semaphore_id]->vksemaphore;
+		FrameSlot& slot = frame();
+		slot.cur_semaphore_id++;
+		if (slot.cur_semaphore_id >= slot.render_semaphore.size())
+			slot.render_semaphore.resize((size_t)slot.cur_semaphore_id + 1);
+		if (!slot.render_semaphore[slot.cur_semaphore_id])
+			slot.render_semaphore[slot.cur_semaphore_id] = std::make_unique<vks::VSemaphore>(this);
+		return &slot.render_semaphore[slot.cur_semaphore_id]->vksemaphore;
 	}
 
 	VkSemaphore* VulkanDevice::GetCurrentRenderSemaphore()
 	{
-		if (m_cur_semaphore_id < 0 || m_cur_semaphore_id >= m_render_semaphore.size())
+		FrameSlot& slot = frame();
+		if (slot.cur_semaphore_id < 0 || slot.cur_semaphore_id >= slot.render_semaphore.size())
 			return nullptr;
-		return &m_render_semaphore[m_cur_semaphore_id]->vksemaphore;
+		return &slot.render_semaphore[slot.cur_semaphore_id]->vksemaphore;
+	}
+
+	void VulkanDevice::RollbackRenderSemaphore()
+	{
+		FrameSlot& slot = frame();
+		if (slot.cur_semaphore_id >= 0)
+			slot.cur_semaphore_id--;
 	}
 
 	void VulkanDevice::UploadData2Buffer(void* data, vks::Buffer* dst, VkDeviceSize offset, VkDeviceSize size)

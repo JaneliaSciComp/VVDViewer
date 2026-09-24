@@ -326,85 +326,6 @@ namespace FLIVR
 		return bricks_;
 	}
 
-	vector<TextureBrick*>* Texture::get_closest_bricks(
-		Point& center, int quota, bool skip,
-		Ray& view, bool is_orthographic)
-	{
-		if (sort_bricks_)
-		{
-			quota_bricks_.clear();
-			unsigned int i;
-			if (quota >= (int64_t)(*bricks_).size())
-				quota = int((*bricks_).size());
-			else
-			{
-				for (i=0; i<(*bricks_).size(); i++)
-				{
-					Point brick_center = (*bricks_)[i]->bbox().center();
-					double d = (brick_center - center).length();
-					(*bricks_)[i]->set_d(d);
-				}
-				std::sort((*bricks_).begin(), (*bricks_).end(), TextureBrick::sort_dsc);
-			}
-
-			for (i=0; i<(unsigned int)(*bricks_).size(); i++)
-			{
-				if (skip)
-				{
-					if ((*bricks_)[i]->get_priority() == 0)
-						quota_bricks_.push_back((*bricks_)[i]);
-				}
-				else
-					quota_bricks_.push_back((*bricks_)[i]);
-				if (quota_bricks_.size() == (size_t)quota)
-					break;
-			}
-
-			for (i = 0; i < quota_bricks_.size(); i++)
-			{
-				Point minp(quota_bricks_[i]->bbox().min());
-				Point maxp(quota_bricks_[i]->bbox().max());
-				Vector diag(quota_bricks_[i]->bbox().diagonal());
-				minp += diag / 1000.;
-				maxp -= diag / 1000.;
-				Point corner[8];
-				corner[0] = minp;
-				corner[1] = Point(minp.x(), minp.y(), maxp.z());
-				corner[2] = Point(minp.x(), maxp.y(), minp.z());
-				corner[3] = Point(minp.x(), maxp.y(), maxp.z());
-				corner[4] = Point(maxp.x(), minp.y(), minp.z());
-				corner[5] = Point(maxp.x(), minp.y(), maxp.z());
-				corner[6] = Point(maxp.x(), maxp.y(), minp.z());
-				corner[7] = maxp;
-				double d = 0.0;
-				for (unsigned int c = 0; c < 8; c++)
-				{
-					double dd;
-					if (is_orthographic)
-					{
-						// orthographic: sort bricks based on distance to the view plane
-						dd = Dot(corner[c], view.direction());
-					}
-					else
-					{
-						// perspective: sort bricks based on distance to the eye point
-						dd = (corner[c] - view.origin()).length();
-					}
-					if (c == 0 || dd < d) d = dd;
-				}
-				quota_bricks_[i]->set_d(d);
-			}
-			if (TextureRenderer::get_update_order() == 0)
-				std::sort(quota_bricks_.begin(), quota_bricks_.end(), TextureBrick::sort_asc);
-			else if (TextureRenderer::get_update_order() == 1)
-				std::sort(quota_bricks_.begin(), quota_bricks_.end(), TextureBrick::sort_dsc);
-
-			sort_bricks_ = false;
-		}
-
-		return &quota_bricks_;
-	}
-
 	vector<TextureBrick*>* Texture::get_bricks(int lv)
 	{
 		if (brkxml_)
@@ -416,11 +337,6 @@ namespace FLIVR
 		}
 		else
 			return bricks_;
-	}
-
-	vector<TextureBrick*>* Texture::get_quota_bricks()
-	{
-		return &quota_bricks_;
 	}
 
 	//brxml�̂Ƃ��͍ŉ��w��spacing��ݒ肷��i���̊K�w�͎����I�Ɍv�Z�j
@@ -651,7 +567,7 @@ namespace FLIVR
 		//further determine the max texture size
 		if (TextureRenderer::get_mem_swap())
 		{
-			double data_size = double(sz_x)*double(sz_y)*double(sz_z)*double(numb[0])/1.04e6;
+			double data_size = double(sz_x)*double(sz_y)*double(sz_z)*double(numb[0])/vks::MEM_MB;
 			if (data_size > TextureRenderer::m_vulkan->vulkanDevice->mem_limit ||
 				data_size > TextureRenderer::get_large_data_size())
 				max_texture_size = TextureRenderer::get_force_brick_size();

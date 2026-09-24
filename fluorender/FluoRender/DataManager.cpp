@@ -539,7 +539,9 @@ void VolumeData::FlipHorizontally()
 	GetResolution(iw, ih, id);
 	size_t w = iw, h = ih, d = id;
 	size_t linenum = h*d;
+	//hardware_concurrency() may return 0, which would silently skip the whole flip
 	size_t nthreads = std::thread::hardware_concurrency();
+	if (nthreads == 0) nthreads = 1;
 	if (nthreads > linenum) nthreads = linenum;
 	if (nrrd)
 	{
@@ -681,7 +683,9 @@ void VolumeData::FlipVertically()
 	GetResolution(iw, ih, id);
 	size_t w = iw, h = ih, d = id;
 
+	//hardware_concurrency() may return 0, which would silently skip the whole flip
 	size_t nthreads = std::thread::hardware_concurrency();
+	if (nthreads == 0) nthreads = 1;
 	if (nthreads > d) nthreads = d;
 	if (nrrd)
 	{
@@ -2540,8 +2544,10 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 							if (m_colormap_mode == 3)
 							{
 								size_t pixnum = block_vlnrrd->getDatasize() / block_vlnrrd->getBytesPerSample();
-								size_t nthreads = std::thread::hardware_concurrency() - 1;
-								if (nthreads < 1) nthreads = 1;
+								//hardware_concurrency() may return 0: 0 - 1 underflows to SIZE_MAX
+								//and slips past a "< 1" check on an unsigned type
+								unsigned int hc = std::thread::hardware_concurrency();
+								size_t nthreads = (hc > 1) ? (size_t)hc - 1 : 1;
 								std::vector<std::thread> threads(nthreads);
 								int grain_size = pixnum / nthreads;
 								auto worker = [this, &block_vlnrrd, &pixnum](size_t start, size_t end) {

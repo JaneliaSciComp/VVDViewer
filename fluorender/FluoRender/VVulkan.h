@@ -5,13 +5,10 @@
 
 #include <vulkan/vulkan.h>
 #include "Vulkan/vulkanexamplebase.h"
-#include "Vulkan/VulkanTexture.hpp"
-#include "Vulkan/VulkanModel.hpp"
 #include "Vulkan/VulkanBuffer.hpp"
 #include "Vulkan/VulkanDevice.hpp"
 
 #include <FLIVR/ShaderProgram.h>
-#include <FLIVR/VolShader.h>
 #include <FLIVR/VRayShader.h>
 #include <FLIVR/VolCalShader.h>
 #include <FLIVR/SegShader.h>
@@ -43,7 +40,6 @@ public:
 
 	~VVulkan();
 
-	std::unique_ptr<FLIVR::VolShaderFactory> vol_shader_factory_;
 	std::unique_ptr<FLIVR::VRayShaderFactory> vray_shader_factory_;
 	std::unique_ptr<FLIVR::VolCalShaderFactory> cal_shader_factory_;
 	std::unique_ptr<FLIVR::SegShaderFactory> seg_shader_factory_;

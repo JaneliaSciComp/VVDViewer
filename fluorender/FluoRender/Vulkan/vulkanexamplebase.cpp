@@ -81,37 +81,6 @@ VkResult VulkanExampleBase::createInstance(bool enableValidation)
 	return vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 }
 
-bool VulkanExampleBase::checkCommandBuffers()
-{
-	for (auto& cmdBuffer : drawCmdBuffers)
-	{
-		if (cmdBuffer == VK_NULL_HANDLE)
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
-void VulkanExampleBase::createCommandBuffers()
-{
-	// Create one command buffer for each swap chain image and reuse for rendering
-	drawCmdBuffers.resize(swapChain.imageCount);
-
-	VkCommandBufferAllocateInfo cmdBufAllocateInfo =
-		vks::initializers::commandBufferAllocateInfo(
-			cmdPool,
-			VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			static_cast<uint32_t>(drawCmdBuffers.size()));
-
-	VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, drawCmdBuffers.data()));
-}
-
-void VulkanExampleBase::destroyCommandBuffers()
-{
-	vkFreeCommandBuffers(device, cmdPool, static_cast<uint32_t>(drawCmdBuffers.size()), drawCmdBuffers.data());
-}
-
 VkCommandBuffer VulkanExampleBase::createCommandBuffer(VkCommandBufferLevel level, bool begin)
 {
 	VkCommandBuffer cmdBuffer;
@@ -170,12 +139,27 @@ void VulkanExampleBase::prepare()
 	initSwapchain();
 	createCommandPool();
 	setupSwapChain();
-	createCommandBuffers();
-	createSynchronizationPrimitives();
 	setupDepthStencil();
 	setupRenderPass();
 	createPipelineCache();
 	setupFrameBuffer();
+	createPresentSemaphores();
+}
+
+void VulkanExampleBase::createPresentSemaphores()
+{
+	destroyPresentSemaphores();
+	presentSemaphores.resize(swapChain.imageCount);
+	VkSemaphoreCreateInfo semaphoreInfo = vks::initializers::semaphoreCreateInfo();
+	for (auto& s : presentSemaphores)
+		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &s));
+}
+
+void VulkanExampleBase::destroyPresentSemaphores()
+{
+	for (auto s : presentSemaphores)
+		vkDestroySemaphore(device, s, nullptr);
+	presentSemaphores.clear();
 }
 
 VkPipelineShaderStageCreateInfo VulkanExampleBase::loadShader(std::string fileName, VkShaderStageFlagBits stage)
@@ -191,26 +175,48 @@ VkPipelineShaderStageCreateInfo VulkanExampleBase::loadShader(std::string fileNa
 
 void VulkanExampleBase::prepareFrame()
 {
-	vulkanDevice->ResetRenderSemaphores();
-	VkSemaphore* present_complete = vulkanDevice->GetNextRenderSemaphore();
+	//advance the frame slot first (it waits the slot's fence, runs its deferred
+	//destructions and resets the slot's semaphore chain), then allocate the acquire
+	//semaphore from the fresh chain
 	vulkanDevice->ResetMainRenderBuffers();
+	VkSemaphore* present_complete = vulkanDevice->GetNextRenderSemaphore();
 
 	// Acquire the next image from the swap chain
-	VkResult err = swapChain.acquireNextImage(present_complete ? *present_complete : semaphores.presentComplete, &currentBuffer);
-	// Recreate the swapchain if it's no longer compatible with the surface (OUT_OF_DATE) or no longer optimal for presentation (SUBOPTIMAL)
-	if ((err == VK_ERROR_OUT_OF_DATE_KHR) || (err == VK_SUBOPTIMAL_KHR)) {
+	VkResult err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
+	if (err == VK_ERROR_OUT_OF_DATE_KHR) {
+		//the swapchain is unusable and the acquire did not signal the semaphore;
+		//recreate the swapchain (this also recreates all per-slot semaphore
+		//chains and the present semaphores) and acquire once more
 		windowResize();
+		present_complete = vulkanDevice->GetNextRenderSemaphore();
+		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
+		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
+			//give up for this frame; run it without an acquire wait so no submit
+			//ends up waiting a semaphore nothing will ever signal
+			vulkanDevice->ResetRenderSemaphores();
+			return;
+		}
 	}
-	else {
+	//SUBOPTIMAL still presents correctly; the resize path will be taken via the
+	//window size event (destroying an acquire-signaled semaphore here would leave
+	//a pending signal with no waiter)
+	if (err != VK_SUBOPTIMAL_KHR) {
 		VK_CHECK_RESULT(err);
 	}
+
+	//order this frame's GPU work after the acquire and the previous frame's end
+	vulkanDevice->SubmitFrameLink();
 }
 
 void VulkanExampleBase::submitFrame()
 {
-	VkSemaphore* render_complete = vulkanDevice->GetCurrentRenderSemaphore();
+	//frame-end submit: waits the tail of this frame's semaphore chain, signals the
+	//cross-frame link and the per-image present semaphore, and arms the slot fence
+	VkSemaphore present_sem = (currentBuffer < presentSemaphores.size()) ?
+		presentSemaphores[currentBuffer] : VK_NULL_HANDLE;
+	vulkanDevice->SubmitFrameEnd(present_sem);
 
-	VkResult res = swapChain.queuePresent(vulkanDevice->queue, currentBuffer, render_complete ? *render_complete : semaphores.renderComplete);
+	VkResult res = swapChain.queuePresent(vulkanDevice->queue, currentBuffer, present_sem);
 	if (!((res == VK_SUCCESS) || (res == VK_SUBOPTIMAL_KHR))) {
 		if (res == VK_ERROR_OUT_OF_DATE_KHR) {
 			// Swap chain is no longer compatible with the surface and needs to be recreated
@@ -221,8 +227,14 @@ void VulkanExampleBase::submitFrame()
 			VK_CHECK_RESULT(res);
 		}
 	}
-	VK_CHECK_RESULT(vkQueueWaitIdle(vulkanDevice->queue));
-	VK_CHECK_RESULT(vkQueueWaitIdle(vulkanDevice->transfer_queue));
+	if (vulkanDevice->m_frame_slots <= 1)
+	{
+		//serialized fallback (VVD_FRAMES_IN_FLIGHT=1): drain both queues so the
+		//next frame can freely reuse every per-frame resource. With multiple
+		//slots the slot fence provides this guarantee without stalling the CPU.
+		VK_CHECK_RESULT(vkQueueWaitIdle(vulkanDevice->queue));
+		VK_CHECK_RESULT(vkQueueWaitIdle(vulkanDevice->transfer_queue));
+	}
 }
 
 VulkanExampleBase::VulkanExampleBase(bool enableValidation)
@@ -255,64 +267,22 @@ VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 			uint32_t h = strtol(args[i + 1], &numConvPtr, 10);
 			if (numConvPtr != args[i + 1]) { height = h; };
 		}
-		// Benchmark
-		if ((args[i] == std::string("-b")) || (args[i] == std::string("--benchmark"))) {
-			benchmark.active = true;
-			vks::tools::errorModeSilent = true;
-		}
-		// Warmup time (in seconds)
-		if ((args[i] == std::string("-bw")) || (args[i] == std::string("--benchwarmup"))) {
-			if (args.size() > i + 1) {
-				uint32_t num = strtol(args[i + 1], &numConvPtr, 10);
-				if (numConvPtr != args[i + 1]) {
-					benchmark.warmup = num;
-				} else {
-					std::cerr << "Warmup time for benchmark mode must be specified as a number!" << std::endl;
-				}
-			}
-		}
-		// Benchmark runtime (in seconds)
-		if ((args[i] == std::string("-br")) || (args[i] == std::string("--benchruntime"))) {
-			if (args.size() > i + 1) {
-				uint32_t num = strtol(args[i + 1], &numConvPtr, 10);
-				if (numConvPtr != args[i + 1]) {
-					benchmark.duration = num;
-				}
-				else {
-					std::cerr << "Benchmark run duration must be specified as a number!" << std::endl;
-				}
-			}
-		}
-		// Bench result save filename (overrides default)
-		if ((args[i] == std::string("-bf")) || (args[i] == std::string("--benchfilename"))) {
-			if (args.size() > i + 1) {
-				if (args[i + 1][0] == '-') {
-					std::cerr << "Filename for benchmark results must not start with a hyphen!" << std::endl;
-				} else {
-					benchmark.filename = args[i + 1];
-				}
-			}
-		}
-		// Output frame times to benchmark result file
-		if ((args[i] == std::string("-bt")) || (args[i] == std::string("--benchframetimes"))) {
-			benchmark.outputFrameTimes = true;
-		}
 	}
 }
 
 VulkanExampleBase::~VulkanExampleBase()
 {
 	// Clean up Vulkan resources
+	destroyPresentSemaphores();
 	swapChain.cleanup();
 	if (descriptorPool != VK_NULL_HANDLE)
 	{
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 	}
-	destroyCommandBuffers();
 	vkDestroyRenderPass(device, renderPass, nullptr);
-	
+
 	frameBuffers.clear();
-	
+
 	for (auto& shaderModule : shaderModules)
 	{
 		vkDestroyShaderModule(device, shaderModule, nullptr);
@@ -321,16 +291,6 @@ VulkanExampleBase::~VulkanExampleBase()
 	depthStencil->destroy();
 
 	vkDestroyCommandPool(device, cmdPool, nullptr);
-
-	vkDestroySemaphore(device, semaphores.presentComplete, nullptr);
-	vkDestroySemaphore(device, semaphores.renderComplete, nullptr);
-	for (auto& fence : waitFences) {
-		vkDestroyFence(device, fence, nullptr);
-	}
-
-	//if (settings.overlay) {
-	//	UIOverlay.freeResources();
-	//}
 
 	delete vulkanDevice;
 
@@ -502,41 +462,10 @@ bool VulkanExampleBase::initVulkan(int device_id)
 
 	swapChain.connect(instance, physicalDevice, device);
 
-	// Create synchronization objects
-	VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
-	// Create a semaphore used to synchronize image presentation
-	// Ensures that the image is displayed before we start submitting new commands to the queue
-	VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &semaphores.presentComplete));
-	// Create a semaphore used to synchronize command submission
-	// Ensures that the image is not presented until all commands have been sumbitted and executed
-	VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &semaphores.renderComplete));
-
-	// Set up submit info structure
-	// Semaphores will stay the same during application lifetime
-	// Command buffer submission info is set by each example
-	submitInfo = vks::initializers::submitInfo();
-	submitInfo.pWaitDstStageMask = &submitPipelineStages;
-	submitInfo.waitSemaphoreCount = 1;
-	submitInfo.pWaitSemaphores = &semaphores.presentComplete;
-	submitInfo.signalSemaphoreCount = 1;
-	submitInfo.pSignalSemaphores = &semaphores.renderComplete;
-
 	return true;
 }
 
 void VulkanExampleBase::viewChanged() {}
-
-void VulkanExampleBase::buildCommandBuffers() {}
-
-void VulkanExampleBase::createSynchronizationPrimitives()
-{
-	// Wait fences to sync command buffer access
-	VkFenceCreateInfo fenceCreateInfo = vks::initializers::fenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT);
-	waitFences.resize(drawCmdBuffers.size());
-	for (auto& fence : waitFences) {
-		VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, nullptr, &fence));
-	}
-}
 
 void VulkanExampleBase::createCommandPool()
 {
@@ -730,6 +659,9 @@ void VulkanExampleBase::windowResize()
 
 	// Ensure all operations on the device have been finished before destroying resources
 	vkDeviceWaitIdle(device);
+	//the device is idle: no frame is in flight anymore, so clear all frame-slot
+	//fences and run their deferred destructions
+	vulkanDevice->ResetAllFrameSlots();
 
 	// Recreate swap chain
 	width = destWidth;
@@ -746,11 +678,14 @@ void VulkanExampleBase::windowResize()
 
 	// Recreate the frame buffers
 	depthStencil->destroy();
-	setupDepthStencil();	
+	setupDepthStencil();
 	for (uint32_t i = 0; i < frameBuffers.size(); i++)
 		frameBuffers[i].reset();
     setupSwapChain();
 	setupFrameBuffer();
+	//image count may have changed, and the old semaphores may hold signals with
+	//no pending waiter after the failed acquire/present sequence
+	createPresentSemaphores();
 /*
 	if ((width > 0.0f) && (height > 0.0f)) {
 		if (settings.overlay) {
@@ -758,17 +693,7 @@ void VulkanExampleBase::windowResize()
 		}
 	}
 */
-	// Command buffers need to be recreated as they may store
-	// references to the recreated frame buffer
-	destroyCommandBuffers();
-	createCommandBuffers();
-	buildCommandBuffers();
-
 	vkDeviceWaitIdle(device);
-
-	if ((width > 0.0f) && (height > 0.0f)) {
-		camera.updateAspectRatio((float)width / (float)height);
-	}
 
 	// Notify derived class
 	windowResized();

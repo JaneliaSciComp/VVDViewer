@@ -31,7 +31,6 @@
 #include <FLIVR/Color.h>
 #include <FLIVR/Utils.h>
 #include <FLIVR/ShaderProgram.h>
-#include <FLIVR/VolShader.h>
 #include <FLIVR/SegShader.h>
 #include <FLIVR/VolCalShader.h>
 #include <algorithm>
@@ -83,14 +82,8 @@ namespace FLIVR
 	unsigned long TextureRenderer::consumed_time_ = 0;
 	bool TextureRenderer::interactive_ = false;
 	int TextureRenderer::finished_bricks_ = 0;
-	BrickQueue TextureRenderer::brick_queue_(15);
-	int TextureRenderer::quota_bricks_ = 0;
-	Point TextureRenderer::quota_center_;
 	int TextureRenderer::update_order_ = 0;
 	bool TextureRenderer::load_on_main_thread_ = false;
-
-	vector<TextureRenderer::LoadedBrick> TextureRenderer::loadedbrks;
-	int TextureRenderer::del_id = 0;
 
 	std::shared_ptr<VVulkan> TextureRenderer::m_vulkan;
 	std::shared_ptr<Vulkan2dRender> TextureRenderer::m_v2drender;
@@ -1526,118 +1519,7 @@ namespace FLIVR
 	//number of bricks rendered before time is up
 	void TextureRenderer::reset_finished_bricks()
 	{
-		if (finished_bricks_>0 && consumed_time_>0)
-		{
-			brick_queue_.Push(int(double(finished_bricks_)*double(up_time_)/double(consumed_time_)));
-		}
 		finished_bricks_ = 0;
-	}
-
-	//get the maximum finished bricks in queue
-	int TextureRenderer::get_finished_bricks_max()
-	{
-		int max = 0;
-		int temp;
-		for (int i=0; i<brick_queue_.GetLimit(); i++)
-		{
-			temp = brick_queue_.Get(i);
-			max = temp>max?temp:max;
-		}
-		return max;
-	}
-
-	//estimate next brick number
-	int TextureRenderer::get_est_bricks(int mode)
-	{
-		double result = 0.0;
-		if (mode == 0)
-		{
-			//mean
-			double sum = 0.0;
-			for (int i=0; i<brick_queue_.GetLimit(); i++)
-				sum += brick_queue_.Get(i);
-			result = sum / brick_queue_.GetLimit();
-		}
-		else if (mode == 1)
-		{
-			//trend (weighted average)
-			double sum = 0.0;
-			double weights = 0.0;
-			double w;
-			for (int i=0; i<brick_queue_.GetLimit(); i++)
-			{
-				w = (i+1) * (i+1);
-				sum += brick_queue_.Get(i) * w;
-				weights += w;
-			}
-			result = sum / weights;
-		}
-		else if (mode == 2)
-		{
-			//linear regression
-			double sum_xy = 0.0;
-			double sum_x = 0.0;
-			double sum_y = 0.0;
-			double sum_x2 = 0.0;
-			double x, y;
-			double n = brick_queue_.GetLimit();
-			for (int i=0; i<brick_queue_.GetLimit(); i++)
-			{
-				x = i;
-				y = brick_queue_.Get(i);
-				sum_xy += x * y;
-				sum_x += x;
-				sum_y += y;
-				sum_x2 += x * x;
-			}
-			double beta = (sum_xy/n - sum_x*sum_y/n/n)/(sum_x2/n - sum_x*sum_x/n/n);
-			result = Max(sum_y/n - beta*sum_x/n + beta*n, 1.0);
-		}
-		else if (mode == 3)
-		{
-			//most recently
-			result = brick_queue_.GetLast();
-		}
-		else if (mode ==4)
-		{
-			//median
-			int n0 = 0;
-			double sum = 0.0;
-			int n = brick_queue_.GetLimit();
-			int *sorted_queue = new int[n];
-			memset(sorted_queue, 0, n*sizeof(int));
-			for (int i=0; i<n; i++)
-			{
-				sorted_queue[i] = brick_queue_.Get(i);
-				if (sorted_queue[i] == 0)
-					n0++;
-				else
-					sum += sorted_queue[i];
-				for (int j=i; j>0; j--)
-				{
-					if (sorted_queue[j] < sorted_queue[j-1])
-					{
-						sorted_queue[j] = sorted_queue[j]+sorted_queue[j-1];
-						sorted_queue[j-1] = sorted_queue[j]-sorted_queue[j-1];
-						sorted_queue[j] = sorted_queue[j]-sorted_queue[j-1];
-					}
-					else
-						break;
-				}
-			}
-			if (n0 == 0)
-				result = sorted_queue[n/2];
-			else if (n0 < n)
-				result = sum / (n-n0);
-			else
-				result = 0.0;
-			delete []sorted_queue;
-		}
-
-		if (interactive_)
-			return Max(1, int(cor_up_time_*result/up_time_));
-		else
-			return int(result);
 	}
 
 	Ray TextureRenderer::compute_view()
@@ -1964,14 +1846,18 @@ namespace FLIVR
 						ms_pThreadCS->Leave();
 					if (streaming_)
 					{
+						//wait for the loader thread within the frame budget, but wake up
+						//as soon as the brick arrives instead of sleeping the budget away
 						uint32_t rn_time;
 						unsigned long elapsed;
 						long t;
 						do {
+							if (brick->isLoaded())
+								break;
 							rn_time = GET_TICK_COUNT();
 							elapsed = rn_time - st_time_;
 							t = up_time_ - elapsed;
-							if (t > 0) wxMilliSleep(t);
+							if (t > 0) wxMilliSleep(t < 5 ? t : 5);
 						} while (elapsed <= up_time_);
 					}
 					else
@@ -2190,12 +2076,7 @@ namespace FLIVR
 		return std::move(result);
 	}
 
-	bool TextureRenderer::brick_sort(const BrickDist& bd1, const BrickDist& bd2)
-	{
-		return bd1.dist > bd2.dist;
-	}
-
-	//void TextureRenderer::draw_polygons(vector<double>& vertex, 
+	//void TextureRenderer::draw_polygons(vector<double>& vertex,
 	//	vector<double>& texcoord,
 	//	vector<int>& poly, 
 	//	bool fog,

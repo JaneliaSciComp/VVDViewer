@@ -122,10 +122,6 @@ namespace FLIVR
 		vector<TextureBrick*>* get_sorted_bricks(
 			Ray& view, bool is_orthographic = false);
 		vector<TextureBrick*>* get_sorted_bricks_dir(Ray& view);
-		//get closest bricks
-		vector<TextureBrick*>* get_closest_bricks(
-			Point& center, int quota, bool skip,
-			Ray& view, bool is_orthographic = false);
 		//set sort bricks
 		void set_sort_bricks() {sort_bricks_ = true;}
 		void reset_sort_bricks() {sort_bricks_ = false;}
@@ -133,8 +129,6 @@ namespace FLIVR
 		// load the bricks independent of the view
 		vector<TextureBrick*>* get_bricks(int lv=-1);
 		int get_brick_num() {return int((*bricks_).size());}
-		//quota bricks
-		vector<TextureBrick*>* get_quota_bricks();
 
 		int get_brick_id_point(int ix, int iy, int iz);
 		//relative coordinate
@@ -249,8 +243,6 @@ namespace FLIVR
 		//! data carved up to texture memory sized chunks.
 		vector<TextureBrick*>						*bricks_;
 		Vector										brick_idspace_max_extent_;
-		//for limited number of bricks during interactions
-		vector<TextureBrick*>						quota_bricks_;
 		//sort texture brick
 		bool sort_bricks_;
 		//! data size

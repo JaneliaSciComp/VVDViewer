@@ -645,8 +645,6 @@ namespace FLIVR {
 		bool isLoaded() {return brkdata_ ? true : false;};
 		bool isLoading() {return loading_;}
 		void set_loading_state(bool val) {loading_ = val;}
-		void set_id_in_loadedbrks(int id) {id_in_loadedbrks = id;};
-		int get_id_in_loadedbrks() {return id_in_loadedbrks;}
 		int getID() {return findex_;}
 		void *getBrickData() {return brkdata_ ? brkdata_->getData() : NULL;}
 		std::shared_ptr<VL_Array> getBrickDataSP() {return brkdata_;}
@@ -765,7 +763,6 @@ namespace FLIVR {
 		long long fsize_;
 		std::shared_ptr<VL_Array> brkdata_;
 		bool loading_;
-		int id_in_loadedbrks;
 
 		bool prevent_tex_deletion_;
 		bool lock_brickdata_;

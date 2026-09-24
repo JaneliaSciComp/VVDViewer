@@ -136,16 +136,8 @@ namespace FLIVR
 			uint32_t loci0;//name
 		};
 
-		struct MshUniformBufs {
-			vks::Buffer vert;
-			vks::Buffer frag;
-		};
-
 		void setupDescriptorSetLayout();
-		void getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, MshUniformBufs& uniformBuffers, std::vector<VkWriteDescriptorSet>& writeDescriptorSets);
 		void getDescriptorSetWriteUniforms(vks::VulkanDevice* vdev, vks::Buffer& vert, vks::Buffer& frag, std::vector<VkWriteDescriptorSet>& writeDescriptorSets);
-		void prepareUniformBuffers(std::map<vks::VulkanDevice*, MshUniformBufs>& uniformBuffers);
-		static void updateUniformBuffers(MshUniformBufs& uniformBuffers, MshVertShaderUBO vubo, MshFragShaderUBO fubo);
 
 		static inline VkWriteDescriptorSet writeDescriptorSetTex(
 			VkDescriptorSet dstSet,

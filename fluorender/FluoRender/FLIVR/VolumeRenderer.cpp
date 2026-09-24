@@ -27,7 +27,6 @@
 //
 
 #include <FLIVR/VolumeRenderer.h>
-#include <FLIVR/VolShader.h>
 #include <FLIVR/SegShader.h>
 #include <FLIVR/VolCalShader.h>
 #include <FLIVR/ShaderProgram.h>
@@ -59,9 +58,6 @@ namespace FLIVR
 
 	double VolumeRenderer::sw_ = 0.0;
 	
-	std::vector<VolumeRenderer::VVolPipeline> VolumeRenderer::m_vol_pipelines;
-	std::map<vks::VulkanDevice*, VkRenderPass> VolumeRenderer::m_vol_draw_pass;
-
 	std::vector<VolumeRenderer::VRayPipeline> VolumeRenderer::m_vray_pipelines;
 	std::map<vks::VulkanDevice*, VkRenderPass> VolumeRenderer::m_vray_draw_pass;
 	
@@ -156,8 +152,6 @@ namespace FLIVR
 		
 		if (m_vulkan)
 		{
-			m_vulkan->vol_shader_factory_->prepareUniformBuffers(m_volUniformBuffers);
-			m_vulkan->vray_shader_factory_->prepareUniformBuffers(m_vrayUniformBuffers);
 			m_vulkan->seg_shader_factory_->prepareUniformBuffers(m_segUniformBuffers);
 			for (auto dev : m_vulkan->devices)
 				m_commandBuffers[dev] = dev->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
@@ -167,7 +161,6 @@ namespace FLIVR
 
 		setupVertexDescriptions();
 
-		m_prev_vol_pipeline = -1;
 		m_prev_vray_pipeline = -1;
 		m_prev_seg_pipeline = -1;
 		m_prev_cal_pipeline = -1;
@@ -258,8 +251,6 @@ namespace FLIVR
 
 		if (m_vulkan)
 		{
-			m_vulkan->vol_shader_factory_->prepareUniformBuffers(m_volUniformBuffers);
-			m_vulkan->vray_shader_factory_->prepareUniformBuffers(m_vrayUniformBuffers);
 			m_vulkan->seg_shader_factory_->prepareUniformBuffers(m_segUniformBuffers);
 			for (auto dev : m_vulkan->devices)
 				m_commandBuffers[dev] = dev->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
@@ -269,7 +260,6 @@ namespace FLIVR
 
 		setupVertexDescriptions();
 
-		m_prev_vol_pipeline = copy.m_prev_vol_pipeline;
 		m_prev_vray_pipeline = copy.m_prev_vray_pipeline;
 		m_prev_seg_pipeline = copy.m_prev_seg_pipeline;
 		m_prev_cal_pipeline = copy.m_prev_cal_pipeline;
@@ -292,27 +282,12 @@ namespace FLIVR
 
 		for (auto vdev : m_vulkan->devices)
 		{
-			if (m_vertbufs.count(vdev) > 0)
-			{
-				m_vertbufs[vdev].vertexBuffer.destroy();
-				m_vertbufs[vdev].indexBuffer.destroy();
-			}
 			if (m_vray_vbufs.count(vdev) > 0)
 			{
 				m_vray_vbufs[vdev].vertexBuffer.destroy();
 				m_vray_vbufs[vdev].indexBuffer.destroy();
 			}
-			if (m_volUniformBuffers.count(vdev) > 0)
-			{
-				m_volUniformBuffers[vdev].vert.destroy();
-				m_volUniformBuffers[vdev].frag_base.destroy();
-			}
-			if (m_vrayUniformBuffers.count(vdev) > 0)
-			{
-				m_vrayUniformBuffers[vdev].vert.destroy();
-				m_vrayUniformBuffers[vdev].frag_base.destroy();
-			}
-			if (m_segUniformBuffers.count(vdev) > 0) 
+			if (m_segUniformBuffers.count(vdev) > 0)
 				m_segUniformBuffers[vdev].frag_base.destroy();
 			if (m_commandBuffers.count(vdev) > 0)
 				vkFreeCommandBuffers(vdev->logicalDevice, vdev->commandPool, 1, &m_commandBuffers[vdev]);
@@ -329,8 +304,6 @@ namespace FLIVR
 		{
 			for (auto dev : m_vulkan->devices)
 			{
-				if (m_vol_draw_pass.count(dev) == 0)
-					m_vol_draw_pass[dev] = prepareRenderPass(dev, 1);
 				if (m_vray_draw_pass.count(dev) == 0)
 					m_vray_draw_pass[dev] = prepareRenderPass(dev, 1);
 			}
@@ -343,14 +316,9 @@ namespace FLIVR
 		{
 			for (auto dev : m_vulkan->devices)
 			{
-				vkDestroyRenderPass(dev->logicalDevice, m_vol_draw_pass[dev], nullptr);
 				vkDestroyRenderPass(dev->logicalDevice, m_vray_draw_pass[dev], nullptr);
 			}
 
-			for (auto &p : m_vol_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
 			for (auto& p : m_vray_pipelines)
 			{
 				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
@@ -1154,167 +1122,6 @@ namespace FLIVR
 		return ret;
 	}
 
-	VolumeRenderer::VVolPipeline VolumeRenderer::prepareVolPipeline(vks::VulkanDevice* device, int mode, int update_order, int colormap_mode)
-	{
-		VVolPipeline ret_pipeline;
-
-		bool use_fog = m_use_fog && colormap_mode_ != 2;
-		ShaderProgram *shader = m_vulkan->vol_shader_factory_->shader(
-			device->logicalDevice,
-			false, tex_->nc(),
-			shading_, use_fog,
-			depth_peel_, true,
-			hiqual_, ml_mode_,
-			colormap_mode_, colormap_, colormap_proj_,
-			solid_, 1, tex_->nmask() != -1 ? m_mask_hide_mode : VOL_MASK_HIDE_NONE);
-
-		if (m_prev_vol_pipeline >= 0) {
-			if (m_vol_pipelines[m_prev_vol_pipeline].device == device &&
-				m_vol_pipelines[m_prev_vol_pipeline].shader == shader &&
-				m_vol_pipelines[m_prev_vol_pipeline].mode == mode &&
-				m_vol_pipelines[m_prev_vol_pipeline].update_order == update_order &&
-				m_vol_pipelines[m_prev_vol_pipeline].colormap_mode == colormap_mode)
-				return m_vol_pipelines[m_prev_vol_pipeline];
-		}
-		for (int i = 0; i < m_vol_pipelines.size(); i++) {
-			if (m_vol_pipelines[i].device == device &&
-				m_vol_pipelines[i].shader == shader &&
-				m_vol_pipelines[i].mode == mode &&
-				m_vol_pipelines[i].update_order == update_order &&
-				m_vol_pipelines[i].colormap_mode == colormap_mode)
-			{
-				m_prev_vol_pipeline = i;
-				return m_vol_pipelines[i];
-			}
-		}
-
-		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState =
-			vks::initializers::pipelineInputAssemblyStateCreateInfo(
-				VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				0,
-				VK_FALSE);
-
-		VkPipelineRasterizationStateCreateInfo rasterizationState =
-			vks::initializers::pipelineRasterizationStateCreateInfo(
-				VK_POLYGON_MODE_FILL,
-				VK_CULL_MODE_NONE,
-				VK_FRONT_FACE_COUNTER_CLOCKWISE,
-				0);
-
-		VkPipelineDepthStencilStateCreateInfo depthStencilState =
-			vks::initializers::pipelineDepthStencilStateCreateInfo(
-				VK_FALSE,
-				VK_FALSE,
-				VK_COMPARE_OP_NEVER);
-
-		VkPipelineViewportStateCreateInfo viewportState =
-			vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
-
-		VkPipelineMultisampleStateCreateInfo multisampleState =
-			vks::initializers::pipelineMultisampleStateCreateInfo(
-				VK_SAMPLE_COUNT_1_BIT,
-				0);
-
-		std::vector<VkDynamicState> dynamicStateEnables = {
-			VK_DYNAMIC_STATE_VIEWPORT,
-			VK_DYNAMIC_STATE_SCISSOR
-		};
-		VkPipelineDynamicStateCreateInfo dynamicState =
-			vks::initializers::pipelineDynamicStateCreateInfo(
-				dynamicStateEnables.data(),
-				static_cast<uint32_t>(dynamicStateEnables.size()),
-				0);
-
-		VolShaderFactory::VolPipelineSettings pipeline_settings = m_vulkan->vol_shader_factory_->pipeline_[device];
-		VkGraphicsPipelineCreateInfo pipelineCreateInfo =
-			vks::initializers::pipelineCreateInfo(
-				pipeline_settings.pipelineLayout,
-				m_vol_draw_pass[device],
-				0);
-
-		pipelineCreateInfo.pVertexInputState = &m_vertices.inputState;
-		pipelineCreateInfo.pInputAssemblyState = &inputAssemblyState;
-		pipelineCreateInfo.pRasterizationState = &rasterizationState;
-		pipelineCreateInfo.pMultisampleState = &multisampleState;
-		pipelineCreateInfo.pViewportState = &viewportState;
-		pipelineCreateInfo.pDepthStencilState = &depthStencilState;
-		pipelineCreateInfo.pDynamicState = &dynamicState;
-		pipelineCreateInfo.stageCount = 2;
-
-		//blend mode
-		VkBool32 enable_blend;
-		VkBlendOp blendop;
-		VkBlendFactor src_blend, dst_blend;
-		
-		enable_blend = VK_TRUE;
-		switch (mode_)
-		{
-		case MODE_MIP:
-			blendop = VK_BLEND_OP_MAX;
-			src_blend = VK_BLEND_FACTOR_ONE;
-			dst_blend = VK_BLEND_FACTOR_ONE;
-			break;
-		case MODE_OVER:
-		default:
-			blendop = VK_BLEND_OP_ADD;
-			if (update_order_ == 0)
-			{
-				src_blend = VK_BLEND_FACTOR_ONE;
-				dst_blend = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-			}
-			else if (update_order_ == 1)
-			{
-				src_blend = VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-				dst_blend = VK_BLEND_FACTOR_ONE;
-			}
-			break;
-		}
-		enable_blend = (colormap_mode_ == 3) ? VK_FALSE : VK_TRUE;
-
-		VkPipelineColorBlendAttachmentState blendAttachmentState =
-			vks::initializers::pipelineColorBlendAttachmentState(
-				enable_blend,
-				blendop,
-				src_blend,
-				dst_blend,
-				0xf);
-
-		VkPipelineColorBlendStateCreateInfo colorBlendState =
-			vks::initializers::pipelineColorBlendStateCreateInfo(
-				1,
-				&blendAttachmentState);
-		pipelineCreateInfo.pColorBlendState = &colorBlendState;
-
-		// Load shaders
-		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
-		shaderStages[0] = shader->get_vertex_shader();
-		shaderStages[1] = shader->get_fragment_shader();
-		pipelineCreateInfo.pStages = shaderStages.data();
-
-		VK_CHECK_RESULT(
-			vkCreateGraphicsPipelines(
-				device->logicalDevice,
-				m_vulkan->getPipelineCache(),
-				1,
-				&pipelineCreateInfo,
-				nullptr,
-				&ret_pipeline.vkpipeline
-			)
-		);
-
-		ret_pipeline.device = device;
-		ret_pipeline.renderpass = m_vol_draw_pass[device];
-		ret_pipeline.shader = shader;
-		ret_pipeline.mode = mode;
-		ret_pipeline.update_order = update_order;
-		ret_pipeline.colormap_mode = colormap_mode;
-
-		m_vol_pipelines.push_back(ret_pipeline);
-		m_prev_vol_pipeline = m_vol_pipelines.size() - 1;
-
-		return ret_pipeline;
-	}
-
 	VolumeRenderer::VRayPipeline VolumeRenderer::prepareVRayPipeline(vks::VulkanDevice* device, int mode, int update_order, int colormap_mode, bool persp, int multi_mode, bool na_mode, Texture* ext_msk, bool highlight)
 	{
 		VRayPipeline ret_pipeline = {};
@@ -1326,6 +1133,10 @@ namespace FLIVR
 #endif
 
 		bool use_fog = m_use_fog && colormap_mode_ != 2;
+		//the gradient magnitude only matters when thresholding on it; inverted mode
+		//(negative scalar scale) can push the scaled magnitude below zero, so keep
+		//the computation there for bit-exact output
+		bool use_gm = gm_thresh_ > 0.0 || inv_;
 		ShaderProgram* shader = m_vulkan->vray_shader_factory_->shader(
 			device->logicalDevice,
 			false, tex_->nc(),
@@ -1333,7 +1144,7 @@ namespace FLIVR
 			depth_peel_, true,
 			hiqual_, ml_mode_,
 			colormap_mode_, colormap_, colormap_proj_,
-			solid_, 1, (tex_->nmask() != -1 || (ext_msk && ext_msk->nmask() != -1)) ? m_mask_hide_mode : VOL_MASK_HIDE_NONE, persp, mode_, multi_mode, na_mode, highlight);
+			solid_, 1, (tex_->nmask() != -1 || (ext_msk && ext_msk->nmask() != -1)) ? m_mask_hide_mode : VOL_MASK_HIDE_NONE, persp, mode_, multi_mode, na_mode, highlight, use_gm);
         
 #ifdef _DARWIN
         if (slice_mode_)
@@ -1757,40 +1568,6 @@ namespace FLIVR
 		return ret_pipeline;
 	}
 
-	void VolumeRenderer::prepareVertexBuffers(vks::VulkanDevice* device, unsigned int total_slicenum)
-	{
-		if (!tex_ || !m_vulkan)
-			return;
-
-		Vector diag = tex_->GetBrickIdSpaceMaxExtent();
-
-		VkDeviceSize vertbufsize = (size_t)(total_slicenum*1.2) * 6 * 6 * sizeof(float);
-		VkDeviceSize idxbufsize = (size_t)(total_slicenum*1.2) * 12 * sizeof(unsigned int);
-
-		if (m_vertbufs[device].vertexBuffer.buffer && m_vertbufs[device].vertexBuffer.size < vertbufsize)
-			m_vertbufs[device].vertexBuffer.destroy();
-		if (m_vertbufs[device].indexBuffer.buffer && m_vertbufs[device].indexBuffer.size < idxbufsize)
-			m_vertbufs[device].indexBuffer.destroy();
-
-		if (!m_vertbufs[device].vertexBuffer.buffer)
-		{
-			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-								 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-								 &m_vertbufs[device].vertexBuffer,
-								 vertbufsize);
-			m_vertbufs[device].vertexBuffer.map();
-		}
-
-		if (!m_vertbufs[device].indexBuffer.buffer)
-		{
-			device->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-								 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-								 &m_vertbufs[device].indexBuffer,
-								 idxbufsize);
-			m_vertbufs[device].indexBuffer.map();
-		}
-	}
-
 	//draw
 	void VolumeRenderer::draw(
 		const std::unique_ptr<vks::VFrameBuffer>& framebuf,
@@ -1798,803 +1575,9 @@ namespace FLIVR
 		bool draw_wireframe_p, bool interactive_mode_p,
 		bool orthographic_p, double zoom, int mode, double sampling_frq_fac, VkClearColorValue clearColor, Texture* ext_msk, Texture* ext_lbl)
 	{
-		//draw_volume(framebuf, clear_framebuf, interactive_mode_p, orthographic_p, zoom, mode, sampling_frq_fac, clearColor);
 		draw_volume_ray(framebuf, clear_framebuf, interactive_mode_p, orthographic_p, zoom, mode, sampling_frq_fac, clearColor, ext_msk, ext_lbl);
 		//if(draw_wireframe_p)
 		//	draw_wireframe(orthographic_p);
-	}
-
-	void VolumeRenderer::draw_volume(
-		const std::unique_ptr<vks::VFrameBuffer>& framebuf,
-		bool clear_framebuf,
-		bool interactive_mode_p, bool orthographic_p, double zoom, int mode, double sampling_frq_fac, VkClearColorValue clearColor)
-	{
-		if (!tex_ || !m_vulkan)
-			return;
-
-		//comment off when debug_ds
-		if (streaming_)
-		{
-			uint32_t rn_time = GET_TICK_COUNT();
-			if (rn_time - st_time_ > get_up_time())
-				return;
-		}
-
-		/*uint64_t st_time, ed_time;
-		char dbgstr[50];
-		st_time = milliseconds_now();*/
-
-		Ray view_ray = compute_view();
-		Ray snapview = compute_snapview(0.4);
-
-		vector<TextureBrick*>* bricks = 0;
-		/*		if (mem_swap_ && interactive_)
-					bricks = tex_->get_closest_bricks(
-					quota_center_, quota_bricks_chan_, true,
-					view_ray, orthographic_p);
-				else
-		*/			bricks = tex_->get_sorted_bricks(view_ray, orthographic_p);
-		if (!bricks || bricks->size() == 0)
-			return;
-
-		set_interactive_mode(adaptive_ && interactive_mode_p);
-
-		// Set sampling rate based on interaction
-		double rate = imode_ ? irate_ * 2.0 : sampling_rate_ * 2.0;
-		double rate_fac = 1.0;
-		Vector diag = tex_->bbox()->diagonal();
-		/*		Vector cell_diag(
-					diag.x() / tex_->nx(),
-					diag.y() / tex_->ny(),
-					diag.z() / tex_->nz());
-				double dt = cell_diag.length()/compute_rate_scale()/rate;
-		*/		//double dt = 0.0020/rate * compute_dt_fac(sampling_frq_fac, &rate_fac);
-		uint32_t w = m_vulkan->width;
-		uint32_t h = m_vulkan->height;
-		uint32_t minwh = min(w, h);
-		uint32_t w2 = w;
-		uint32_t h2 = h;
-		
-		double dt = compute_dt_fac_1px(w, h, zoom, rate);
-		//num_slices_ = (int)(tex_->GetBrickIdSpaceMaxExtent().length() / dt);
-
-		//--------------------------------------------------------------------------
-		bool use_fog = m_use_fog && colormap_mode_ != 2;
-
-		double sf = CalcScaleFactor(w, h, tex_->nx(), tex_->ny(), zoom);
-		if (fabs(sf - sfactor_) > 0.05)
-		{
-			sfactor_ = sf;
-			//			blend_framebuffer_resize_ = true;
-			//			filter_buffer_resize_ = true;
-		}
-		else if (sf == 1.0 && sfactor_ != 1.0)
-		{
-			sfactor_ = sf;
-			//			blend_framebuffer_resize_ = true;
-			//			filter_buffer_resize_ = true;
-		}
-
-		w2 = int(w/**sfactor_*/ * buffer_scale_ + 0.5);
-		h2 = int(h/**sfactor_*/ * buffer_scale_ + 0.5);
-
-		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
-		vks::Buffer vert_ubuf, frag_ubuf;
-		VkDeviceSize vert_ubuf_offset, frag_ubuf_offset;
-		prim_dev->GetNextUniformBuffer(sizeof(VolShaderFactory::VolVertShaderUBO), vert_ubuf, vert_ubuf_offset);
-		prim_dev->GetNextUniformBuffer(sizeof(VolShaderFactory::VolFragShaderBaseUBO), frag_ubuf, frag_ubuf_offset);
-		
-		std::vector<VkWriteDescriptorSet> descriptorWritesBase;
-		m_vulkan->vol_shader_factory_->getDescriptorSetWriteUniforms(prim_dev, vert_ubuf, frag_ubuf, descriptorWritesBase);
-
-		eval_ml_mode();
-
-		VVolPipeline pipeline = prepareVolPipeline(prim_dev, mode_, update_order_, colormap_mode_);
-		VkPipelineLayout pipelineLayout = m_vulkan->vol_shader_factory_->pipeline_[prim_dev].pipelineLayout;
-
-		VSlicePipeline slice_pipeline = prepareVSlicePipeline(prim_dev, update_order_);
-		VkPipelineLayout slice_pipelineLayout = m_vulkan->vslice_shader_factory_->pipeline_[prim_dev].pipelineLayout;
-		
-		if (blend_num_bits_ > 8)
-		{
-			if (blend_framebuffer_ && 
-				(blend_framebuffer_resize_ || pipeline.renderpass != blend_framebuffer_->renderPass))
-			{
-				blend_framebuffer_.reset();
-				blend_tex_id_.reset();
-
-				if (blend_framebuffer_resize_) blend_framebuffer_resize_ = false;
-			}
-
-			if (!blend_framebuffer_ )
-			{
-				blend_framebuffer_ = std::make_unique<vks::VFrameBuffer>(vks::VFrameBuffer());
-				blend_framebuffer_->w = w2;
-				blend_framebuffer_->h = h2;
-				blend_framebuffer_->device = prim_dev;
-
-				if (!blend_tex_id_)
-					blend_tex_id_ = prim_dev->GenTexture2D(VK_FORMAT_R32G32B32A32_SFLOAT, VK_FILTER_LINEAR, w2, h2);
-
-				blend_framebuffer_->addAttachment(blend_tex_id_);
-
-				blend_framebuffer_->setup(pipeline.renderpass);
-			}
-		}
-
-		if (colormap_mode_ == 3)
-		{
-			auto palette = get_palette();
-			if (palette[0])
-				descriptorWritesBase.push_back(VolShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 7, &palette[prim_dev]->descriptor));
-		}
-
-		VolShaderFactory::VolVertShaderUBO vert_ubo;
-		VolShaderFactory::VolFragShaderBaseUBO frag_ubo;
-		VolShaderFactory::VolFragShaderBrickConst frag_const;
-
-		Vector light = view_ray.direction();
-		light.safe_normalize();
-
-		frag_ubo.loc0_light_alpha = { light.x(), light.y(), light.z(), alpha_ };
-		if (shading_)
-			frag_ubo.loc1_material = { 2.0 - ambient_, diffuse_, specular_, shine_ };
-		else
-			frag_ubo.loc1_material = { 2.0 - ambient_, 0.0, specular_, shine_ };
-
-		//spacings
-		double spcx, spcy, spcz;
-		tex_->get_spacings(spcx, spcy, spcz);
-		if (colormap_mode_ == 3)
-		{
-			int max_id = (*bricks)[0]->nb(0) == 2 ? USHRT_MAX : UCHAR_MAX;
-			frag_ubo.loc5_spc_id = { spcx, spcy, spcz, max_id };
-		}
-		else
-			frag_ubo.loc5_spc_id = { spcx, spcy, spcz, 1.0 };
-
-		//transfer function
-		frag_ubo.loc2_scscale_th = { inv_ ? -scalar_scale_ : scalar_scale_, gm_scale_, lo_thresh_, hi_thresh_ };
-		frag_ubo.loc3_gamma_offset = { 1.0 / gamma3d_, gm_thresh_, offset_, sw_ };
-		switch (colormap_mode_)
-		{
-		case 0://normal
-			if (mask_ && !label_)
-				frag_ubo.loc6_colparam = { mask_color_.r(), mask_color_.g(), mask_color_.b(), mask_thresh_ };
-			else
-				frag_ubo.loc6_colparam = { color_.r(), color_.g(), color_.b(), 0.0 };
-			break;
-		case 1://colormap
-			frag_ubo.loc6_colparam = { colormap_low_value_, colormap_hi_value_, colormap_hi_value_ - colormap_low_value_, 0.0 };
-			break;
-		case 2://depth map
-			frag_ubo.loc6_colparam = { color_.r(), color_.g(), color_.b(), 0.0 };
-			break;
-		case 3://indexed color
-			HSVColor hsv(color_);
-			double luminance = hsv.val();
-			frag_ubo.loc6_colparam = { 1.0 / double(w2), 1.0 / double(h2), luminance, 0.0 };
-			break;
-		}
-
-		//setup depth peeling
-		if (depth_peel_ || colormap_mode_ == 2)
-			frag_ubo.loc7_view = { 1.0 / double(w2), 1.0 / double(h2), 0.0, 0.0 };
-
-		//fog
-		if (m_use_fog)
-			frag_ubo.loc8_fog = { m_fog_intensity, m_fog_start, m_fog_end, 0.0 };
-
-		//set clipping planes
-		double abcd[4];
-		planes_[0]->get(abcd);
-		frag_ubo.plane0 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-		planes_[1]->get(abcd);
-		frag_ubo.plane1 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-		planes_[2]->get(abcd);
-		frag_ubo.plane2 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-		planes_[3]->get(abcd);
-		frag_ubo.plane3 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-		planes_[4]->get(abcd);
-		frag_ubo.plane4 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-		planes_[5]->get(abcd);
-		frag_ubo.plane5 = { abcd[0], abcd[1], abcd[2], abcd[3] };
-
-		// Set up transform
-		Transform* tform = tex_->transform();
-		double mvmat[16];
-		tform->get_trans(mvmat);
-		m_mv_mat2 = glm::mat4(
-                              mvmat[0], mvmat[4], mvmat[8], mvmat[3],
-                              mvmat[1], mvmat[5], mvmat[9], mvmat[7],
-                              mvmat[2], mvmat[6], mvmat[10], mvmat[11],
-                              mvmat[12], mvmat[13], mvmat[14], mvmat[15]);
-		m_mv_mat2 = m_mv_mat * m_mv_mat2;
-		vert_ubo.proj_mat = m_proj_mat;
-		vert_ubo.mv_mat = m_mv_mat2;
-
-		vert_ubuf.copyTo(&vert_ubo, sizeof(VolShaderFactory::VolVertShaderUBO), vert_ubuf_offset);
-		frag_ubuf.copyTo(&frag_ubo, sizeof(VolShaderFactory::VolFragShaderBaseUBO), frag_ubuf_offset);
-		if (vert_ubuf.buffer == frag_ubuf.buffer)
-			vert_ubuf.flush(prim_dev->GetCurrentUniformBufferOffset() - vert_ubuf_offset, vert_ubuf_offset);
-		else
-		{
-			if (vert_ubuf_offset == 0)
-				vert_ubuf.flush();
-			else
-				vert_ubuf.flush(VK_WHOLE_SIZE, vert_ubuf_offset);
-			frag_ubuf.flush();
-		}
-		
-		bool clear = true;
-		bool waitsemaphore = true;
-		vks::VulkanSemaphoreSettings semaphores = prim_dev->GetNextRenderSemaphoreSettings();
-
-		
-		//////////////////////////////////////////
-		//render bricks
-
-		int bmode = mode;
-		if (mask_)  bmode = TEXTURE_RENDER_MODE_MASK;
-		if (label_) bmode = TEXTURE_RENDER_MODE_LABEL;
-
-		VkCommandBuffer cmdbuf = prim_dev->GetNextCommandBuffer();
-		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
-		renderPassBeginInfo.renderPass = pipeline.renderpass;
-		renderPassBeginInfo.renderArea.offset.x = 0;
-		renderPassBeginInfo.renderArea.offset.y = 0;
-		renderPassBeginInfo.renderArea.extent.width = blend_framebuffer_->w;
-		renderPassBeginInfo.renderArea.extent.height = blend_framebuffer_->h;
-		renderPassBeginInfo.framebuffer = blend_framebuffer_->framebuffer;
-
-		if (!mem_swap_)
-		{
-			VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-			cmdBufInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-			VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
-		}
-		
-		int count = 0;
-		int que = 1;
-		for (unsigned int i=0; i < bricks->size(); i++)
-		{
-			TextureBrick* b = (*bricks)[i];
-			std::vector<VkWriteDescriptorSet> descriptorWrites = descriptorWritesBase;
-						
-			if (mem_swap_ && start_update_loop_ && !done_update_loop_)
-			{
-				if (b->drawn(bmode))
-					continue;
-			}
-
-			if (!b->get_disp() || // Clip against view
-				b->get_priority()>0) //nothing to draw
-			{
-				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
-				{
-					if (!b->drawn(bmode))
-					{
-						b->set_drawn(bmode, true);
-						//cur_brick_num_++;
-						cur_chan_brick_num_++;
-					}
-				}
-				continue;
-			}
-
-			unsigned int slicenum;
-			double tmax, tmin;
-			b->compute_slicenum(view_ray, dt, tmax, tmin, slicenum);
-			if (slicenum == 0){
-				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
-				{
-					if (!b->drawn(bmode))
-					{
-						b->set_drawn(bmode, true);
-						cur_brick_num_++;
-						cur_chan_brick_num_++;
-					}
-				}
-				continue;
-			}
-			vks::Buffer vertbuf, idxbuf;
-			VkDeviceSize vert_offset, idx_offset;
-			prim_dev->GetNextVertexBuffer((VkDeviceSize)slicenum * 6 * 8 * sizeof(float), vertbuf, vert_offset);
-			prim_dev->GetNextIndexBuffer((VkDeviceSize)slicenum * 12 * sizeof(unsigned int), idxbuf, idx_offset);
-			
-			VkFilter filter;
-			if (interpolate_ && colormap_mode_ != 3)
-				filter = VK_FILTER_LINEAR;
-			else
-				filter = VK_FILTER_NEAREST;
-
-			shared_ptr<vks::VTexture> brktex, msktex, lbltex;
-			brktex = load_brick(prim_dev, 0, 0, bricks, i, filter, compression_, mode, (mask_ || label_) ? false : true);
-			if (!brktex)
-				continue;
-			b->prevent_tex_deletion(true);
-			if (mask_)
-				msktex = load_brick_mask(prim_dev, bricks, i, filter, false, 0, true);
-			else if (tex_->nmask() != -1 && m_mask_hide_mode != VOL_MASK_HIDE_NONE)
-			{
-#ifndef _UNIT_TEST_VOLUME_RENDERER_
-				if (tex_->isBrxml() && tex_->GetMaskLv() != tex_->GetCurLevel())
-				{
-					ms_pThreadCS->Enter();
-
-					int cnx = b->nx(), cny = b->ny(), cnz = b->nz();
-					int cox = b->ox(), coy = b->oy(), coz = b->oz();
-					int cmx = b->mx(), cmy = b->my(), cmz = b->mz();
-					int csx = b->sx(), csy = b->sy(), csz = b->sz();
-					auto cdata = b->get_nrrd(0);
-					auto cmdata = b->get_nrrd(tex_->nmask());
-					
-					b->set_nrrd(tex_->get_nrrd_lv(tex_->GetMaskLv(),0), 0);
-					b->set_nrrd(tex_->get_nrrd(tex_->nmask()), tex_->nmask());
-					int sx = b->sx(), sy = b->sy(), sz = b->sz();
-					double xscale = (double)sx/csx;
-					double yscale = (double)sy/csy;
-					double zscale = (double)sz/csz;
-					
-					double ox_d = (double)cox*xscale;
-					double oy_d = (double)coy*yscale;
-					double oz_d = (double)coz*zscale;
-					int ox = (int)floor(ox_d);
-					int oy = (int)floor(oy_d);
-					int oz = (int)floor(oz_d);
-
-					b->ox(ox); b->oy(oy); b->oz(oz);
-
-					double endx_d = (double)(cox+cnx)*xscale;
-					double endy_d = (double)(coy+cny)*yscale;
-					double endz_d = (double)(coz+cnz)*zscale;
-					int nx = (int)ceil(endx_d) - ox;
-					int ny = (int)ceil(endy_d) - oy;
-					int nz = (int)ceil(endz_d) - oz;
-					
-					b->nx(nx); b->ny(ny); b->nz(nz);
-					b->mx(nx); b->my(ny); b->mz(nz);
-
-					msktex = load_brick_mask(prim_dev, bricks, i, filter, false, 0, true, false);
-
-					double trans_x = (ox_d-ox)/nx;
-					double trans_y = (oy_d-oy)/ny;
-					double trans_z = (oz_d-oz)/nz;
-					double scale_x = (endx_d-ox_d)/nx;
-					double scale_y = (endy_d-oy_d)/ny;
-					double scale_z = (endz_d-oz_d)/nz;
-
-					frag_const.mask_b_scale = { (float)scale_x, (float)scale_y, (float)scale_z, 1.0f };
-					frag_const.mask_b_trans = { (float)trans_x, (float)trans_y, (float)trans_z, 0.0f };
-
-					b->nx(cnx); b->ny(cny); b->nz(cnz);
-					b->ox(cox); b->oy(coy); b->oz(coz);
-					b->mx(cmx); b->my(cmy); b->mz(cmz);
-					b->set_nrrd(cdata, 0);
-					b->set_nrrd(cmdata, tex_->nmask());
-
-					ms_pThreadCS->Leave();
-				}
-				else
-				{
-					msktex = load_brick_mask(prim_dev, bricks, i, filter, false, 0, true, false);
-
-					frag_const.mask_b_scale = { 1.0f, 1.0f, 1.0f, 1.0f };
-					frag_const.mask_b_trans = { 0.0f, 0.0f, 0.0f, 0.0f };
-				}
-#endif
-			}
-
-			if (label_)
-				lbltex = load_brick_label(prim_dev, bricks, i);
-
-			b->prevent_tex_deletion(false);
-
-			brktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			descriptorWrites.push_back(VolShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 0, &brktex->descriptor));
-			if (msktex)
-			{
-				msktex->descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				descriptorWrites.push_back(VolShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 2, &msktex->descriptor));
-			}
-			if (lbltex)
-			{
-				lbltex->descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				descriptorWrites.push_back(VolShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 3, &lbltex->descriptor));
-			}
-
-			frag_const.loc_dim_inv = { 1.0 / b->nx(), 1.0 / b->ny(), 1.0 / b->nz(),
-									   mode_ == MODE_OVER ? 1.0 / (rate * min(max(zoom, 1.0), 10.0) * 2.0) : 1.0 };
-			//for brick transformation
-			BBox dbox = b->dbox();
-			frag_const.b_scale = { float(dbox.max().x() - dbox.min().x()),
-								   float(dbox.max().y() - dbox.min().y()),
-								   float(dbox.max().z() - dbox.min().z()),
-								   1.0f };
-
-			frag_const.b_trans = { float(dbox.min().x()), float(dbox.min().y()), float(dbox.min().z()), 0.0f };
-
-
-
-			//////////////////////
-			//build command buffer
-			if (mem_swap_ && count == 0)
-			{
-				VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-				cmdBufInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-				VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
-			}
-			
-			//compute vertices and indices
-			{
-				vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, slice_pipeline.vkpipeline);
-				
-				std::vector<VkWriteDescriptorSet> slice_dw;
-				slice_dw.push_back(VolSliceShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, 0, &vertbuf.descriptor));
-				slice_dw.push_back(VolSliceShaderFactory::writeDescriptorSetStrageBuf(VK_NULL_HANDLE, 1, &idxbuf.descriptor));
-				prim_dev->vkCmdPushDescriptorSetKHR(
-					cmdbuf,
-					VK_PIPELINE_BIND_POINT_COMPUTE,
-					slice_pipelineLayout,
-					0,
-					slice_dw.size(),
-					slice_dw.data()
-				);
-
-				BBox bb = b->bbox();
-				BBox tb = b->tbox();
-				Vector vdir = view_ray.direction();
-				Vector up;
-				switch (MinIndex(fabs(vdir.x()),
-					fabs(vdir.y()),
-					fabs(vdir.z())))
-				{
-				case 0:
-					up.x(0.0); up.y(-vdir.z()); up.z(vdir.y());
-					break;
-				case 1:
-					up.x(-vdir.z()); up.y(0.0); up.z(vdir.x());
-					break;
-				case 2:
-					up.x(-vdir.y()); up.y(vdir.x()); up.z(0.0);
-					break;
-				}
-				up.normalize();
-
-				VolSliceShaderFactory::VolSliceShaderBrickConst slice_const;
-				slice_const.b_min_tmin = glm::vec4((float)bb.min().x(), (float)bb.min().y(), (float)bb.min().z(), (float)tmin);
-				slice_const.b_max_tmax = glm::vec4((float)bb.max().x(), (float)bb.max().y(), (float)bb.max().z(), (float)tmax);
-				slice_const.tb_min = glm::vec4((float)tb.min().x(), (float)tb.min().y(), (float)tb.min().z(), 0.0f);
-				slice_const.tb_max = glm::vec4((float)tb.max().x(), (float)tb.max().y(), (float)tb.max().z(), 0.0f);
-				slice_const.view_origin_dt = glm::vec4((float)view_ray.origin().x(), (float)view_ray.origin().y(), (float)view_ray.origin().z(), (float)dt);
-				slice_const.view_direction = glm::vec4((float)view_ray.direction().x(), (float)view_ray.direction().y(), (float)view_ray.direction().z(), 0.0f);
-				slice_const.up = glm::vec4((float)up.x(), (float)up.y(), (float)up.z(), 0.0f);
-				slice_const.range = glm::uvec4(slicenum);
-
-				vkCmdPushConstants(
-					cmdbuf,
-					slice_pipelineLayout,
-					VK_SHADER_STAGE_COMPUTE_BIT,
-					0,
-					sizeof(VolSliceShaderFactory::VolSliceShaderBrickConst),
-					&slice_const
-				);
-
-				uint32_t group_count_x = slicenum / 64 + ((slicenum % 64) > 0 ? 1 : 0);
-				vkCmdDispatch(cmdbuf, group_count_x, 1, 1);
-
-				VkBufferMemoryBarrier bufferBarriers[2];
-				bufferBarriers[0] = vks::initializers::bufferMemoryBarrier();
-				bufferBarriers[0].buffer = vertbuf.buffer;
-				bufferBarriers[0].offset = vertbuf.descriptor.offset;
-				bufferBarriers[0].size = vertbuf.descriptor.range;
-				bufferBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-				bufferBarriers[0].dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-				bufferBarriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-				bufferBarriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-				bufferBarriers[1] = vks::initializers::bufferMemoryBarrier();
-				bufferBarriers[1].buffer = idxbuf.buffer;
-				bufferBarriers[1].offset = idxbuf.descriptor.offset;
-				bufferBarriers[1].size = idxbuf.descriptor.range;
-				bufferBarriers[1].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-				bufferBarriers[1].dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-				bufferBarriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-				bufferBarriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-				vkCmdPipelineBarrier(
-					cmdbuf,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-					VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-					VK_FLAGS_NONE,
-					0, nullptr,
-					2, bufferBarriers,
-					0, nullptr);
-			}
-			/*
-			prepareVertexBuffers(prim_dev, slicenum);
-			vector<float> vert;
-			vector<uint32_t> index;
-			vector<uint32_t> size;
-			b->compute_polygons(view_ray, dt, vert, index, size);
-			m_vertbufs[prim_dev].vertexBuffer.copyTo(vert.data(), vert.size()*sizeof(float));
-			m_vertbufs[prim_dev].indexBuffer.copyTo(index.data(), index.size()*sizeof(uint32_t));
-*/
-
-			vkCmdBeginRenderPass(cmdbuf, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-			VkViewport viewport = vks::initializers::viewport((float)w2, (float)h2, 0.0f, 1.0f);
-			vkCmdSetViewport(cmdbuf, 0, 1, &viewport);
-
-			VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
-			vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
-
-			if (!descriptorWrites.empty())
-			{
-				prim_dev->vkCmdPushDescriptorSetKHR(
-					cmdbuf,
-					VK_PIPELINE_BIND_POINT_GRAPHICS,
-					pipelineLayout,
-					0,
-					descriptorWrites.size(),
-					descriptorWrites.data()
-				);
-			}
-
-			if (clear)
-			{
-				VkClearValue clearValues[1];
-				clearValues[0].color = m_clear_color;
-
-				VkClearAttachment clearAttachments[1] = {};
-				clearAttachments[0].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				clearAttachments[0].clearValue = clearValues[0];
-				clearAttachments[0].colorAttachment = 0;
-
-				VkClearRect clearRect[1] = {};
-				clearRect[0].layerCount = 1;
-				clearRect[0].rect.offset = { 0, 0 };
-				clearRect[0].rect.extent = { w2, h2 };
-
-				vkCmdClearAttachments(
-					cmdbuf,
-					1,
-					clearAttachments,
-					1,
-					clearRect);
-
-				clear = false;
-			}
-
-			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkpipeline);
-
-			vkCmdPushConstants(
-				cmdbuf,
-				pipelineLayout,
-				VK_SHADER_STAGE_FRAGMENT_BIT,
-				0,
-				sizeof(VolShaderFactory::VolFragShaderBrickConst),
-				&frag_const);
-
-			vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vertbuf.buffer, &vert_offset);
-			vkCmdBindIndexBuffer(cmdbuf, idxbuf.buffer, idx_offset, VK_INDEX_TYPE_UINT32);
-			vkCmdDrawIndexed(cmdbuf, (uint32_t)slicenum*12, 1, 0, 0, 0);
-			/*VkDeviceSize tmpoffset = 0;
-			vkCmdBindVertexBuffers(cmdbuf, 0, 1, &m_vertbufs[prim_dev].vertexBuffer.buffer, &tmpoffset);
-			vkCmdBindIndexBuffer(cmdbuf, m_vertbufs[prim_dev].indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-			vkCmdDrawIndexed(cmdbuf, index.size(), 1, 0, 0, 0);*/
-
-			vkCmdEndRenderPass(cmdbuf);
-
-			count++;
-			if (mem_swap_ && (count >= que || i >= bricks->size()-1) )
-			{
-				count = 0;
-
-				VK_CHECK_RESULT(vkEndCommandBuffer(cmdbuf));
-
-				VkSubmitInfo submitInfo = vks::initializers::submitInfo();
-				submitInfo.commandBufferCount = 1;
-				submitInfo.pCommandBuffers = &cmdbuf;
-
-				std::vector<VkPipelineStageFlags> waitStages;
-				if (waitsemaphore && semaphores.waitSemaphoreCount > 0)
-				{
-					for (uint32_t i = 0; i < semaphores.waitSemaphoreCount; i++)
-						waitStages.push_back(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-					submitInfo.waitSemaphoreCount = semaphores.waitSemaphoreCount;
-					submitInfo.pWaitSemaphores = semaphores.waitSemaphores;
-					submitInfo.pWaitDstStageMask = waitStages.data();
-					waitsemaphore = false;
-				}
-				
-				VkFenceCreateInfo fenceInfo = vks::initializers::fenceCreateInfo(VK_FLAGS_NONE);
-				VkFence fence;
-				VK_CHECK_RESULT(vkCreateFence(prim_dev->logicalDevice, &fenceInfo, nullptr, &fence));
-
-				// Submit to the queue
-				VK_CHECK_RESULT(vkQueueSubmit(prim_dev->queue, 1, &submitInfo, fence));
-				// Wait for the fence to signal that command buffer has finished executing
-				VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-
-				vkDestroyFence(prim_dev->logicalDevice, fence, nullptr);
-
-				finished_bricks_++;
-			}
-
-			//comment off when debug_ds
-			if (streaming_/* && !mask_ && !label_*/ && count == 0)
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - st_time_ > get_up_time())
-					break;
-			}
-		}
-
-		if (!mem_swap_)
-		{
-			vkCmdEndRenderPass(cmdbuf);
-
-			VK_CHECK_RESULT(vkEndCommandBuffer(cmdbuf));
-
-			VkSubmitInfo submitInfo = vks::initializers::submitInfo();
-			submitInfo.commandBufferCount = 1;
-			submitInfo.pCommandBuffers = &cmdbuf;
-			submitInfo.signalSemaphoreCount = semaphores.signalSemaphoreCount;
-			submitInfo.pSignalSemaphores = semaphores.signalSemaphores;
-
-			std::vector<VkPipelineStageFlags> waitStages;
-			if (waitsemaphore && semaphores.waitSemaphoreCount > 0)
-			{
-				for (uint32_t i = 0; i < semaphores.waitSemaphoreCount; i++)
-					waitStages.push_back(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-				submitInfo.waitSemaphoreCount = semaphores.waitSemaphoreCount;
-				submitInfo.pWaitSemaphores = semaphores.waitSemaphores;
-				submitInfo.pWaitDstStageMask = waitStages.data();
-				waitsemaphore = false;
-			}
-
-			// Submit to the queue
-			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->queue, 1, &submitInfo, VK_NULL_HANDLE));
-
-			//VK_CHECK_RESULT(vkQueueWaitIdle(prim_dev->queue));
-			//saveScreenshot("E:\\vulkan_screenshot.ppm");
-		}
-
-		if (mem_swap_ &&
-			cur_brick_num_ == total_brick_num_)
-		{
-			done_update_loop_ = true;
-			done_current_chan_ = true;
-			clear_chan_buffer_ = true;
-			save_final_buffer_ = true;
-			cur_chan_brick_num_ = 0;
-			done_loop_[bmode] = true;
-		}
-
-		if (mem_swap_ &&
-			(size_t)cur_chan_brick_num_ == (*bricks).size())
-		{
-			done_current_chan_ = true;
-			clear_chan_buffer_ = true;
-			save_final_buffer_ = true;
-			cur_chan_brick_num_ = 0;
-			done_loop_[bmode] = true;
-		}
-
-		////////////////////////////////////////////////////////
-		//output result
-		if (blend_num_bits_ > 8)
-		{
-			ShaderProgram* img_shader = 0;
-
-			if (noise_red_ && colormap_mode_!=2)
-			{
-				//FILTERING/////////////////////////////////////////////////////////////////
-				filter_size_min_ = CalcFilterSize(4, w, h, tex_->nx(), tex_->ny(), zoom, sfactor_);
-
-				Vulkan2dRender::V2DRenderParams filter_params;
-				filter_params.pipeline =
-					m_v2drender->preparePipeline(
-						IMG_SHDR_FILTER_BLUR,
-						V2DRENDER_BLEND_OVER,
-						VK_FORMAT_R32G32B32A32_SFLOAT,
-						1,
-						0,
-						filter_buffer_->attachments[0]->is_swapchain_images);
-
-				if (filter_buffer_ &&
-					(filter_buffer_resize_ || filter_buffer_->renderPass != filter_params.pipeline.pass))
-				{
-					filter_buffer_.reset();
-					filter_tex_id_.reset();
-
-					filter_buffer_resize_ = false;
-				}
-				if (!filter_buffer_)
-				{
-					filter_buffer_ = std::make_unique<vks::VFrameBuffer>(vks::VFrameBuffer());
-					filter_buffer_->w = w2;
-					filter_buffer_->h = h2;
-					filter_buffer_->device = prim_dev;
-
-					if (!filter_tex_id_)
-						filter_tex_id_ = prim_dev->GenTexture2D(VK_FORMAT_R32G32B32A32_SFLOAT, VK_FILTER_LINEAR, w2, h2);
-
-					filter_buffer_->addAttachment(blend_tex_id_);
-
-					filter_buffer_->setup(filter_params.pipeline.pass);
-				}
-
-				filter_params.clear = true;
-				filter_params.loc[0] = { filter_size_min_/w2, filter_size_min_/h2, 1.0/w2, 1.0/h2 };
-				filter_params.tex[0] = blend_tex_id_.get();
-
-				vks::VulkanSemaphoreSettings sem = prim_dev->GetNextRenderSemaphoreSettings();
-				if (!mem_swap_)
-				{
-					filter_params.waitSemaphoreCount = sem.waitSemaphoreCount;
-					filter_params.waitSemaphores = sem.waitSemaphores;
-				}
-				filter_params.signalSemaphoreCount = sem.signalSemaphoreCount;
-				filter_params.signalSemaphores = sem.signalSemaphores;
-
-				m_v2drender->render(filter_buffer_, filter_params);
-			}
-
-			Vulkan2dRender::V2DRenderParams params;
-			vks::VulkanSemaphoreSettings semfinal = prim_dev->GetNextRenderSemaphoreSettings();
-
-			if (noise_red_ && colormap_mode_ != 2)
-			{
-				params.pipeline =
-					m_v2drender->preparePipeline(
-						IMG_SHDR_FILTER_SHARPEN,
-						V2DRENDER_BLEND_OVER_INV,
-						framebuf->attachments[0]->format,
-						framebuf->attachments.size(),
-						0,
-						framebuf->attachments[0]->is_swapchain_images);
-				params.tex[0] = filter_tex_id_.get();
-				filter_size_shp_ = CalcFilterSize(3, w, h, tex_->nx(), tex_->ny(), zoom, sfactor_);
-				params.loc[0] = { filter_size_shp_/w, filter_size_shp_/h, 0.0, 0.0 };
-			}
-			else
-			{
-				params.pipeline =
-					m_v2drender->preparePipeline(
-						IMG_SHADER_TEXTURE_LOOKUP,
-						V2DRENDER_BLEND_OVER_INV,
-						framebuf->attachments[0]->format,
-						framebuf->attachments.size(),
-						0,
-						framebuf->attachments[0]->is_swapchain_images);
-				params.tex[0] = blend_tex_id_.get();
-			}
-
-			if (!mem_swap_ || (noise_red_ && colormap_mode_ != 2))
-			{
-				params.waitSemaphoreCount = semfinal.waitSemaphoreCount;
-				params.waitSemaphores = semfinal.waitSemaphores;
-			}
-			params.signalSemaphoreCount = semfinal.signalSemaphoreCount;
-			params.signalSemaphores = semfinal.signalSemaphores;
-
-			params.clear = clear_framebuf;
-			params.clearColor = clearColor;
-
-			framebuf->replaceRenderPass(params.pipeline.pass);
-			
-			m_v2drender->render(framebuf, params);
-			
-			//VK_CHECK_RESULT(vkQueueWaitIdle(prim_dev->queue));
-		}
-/*
-		ed_time = milliseconds_now();
-		sprintf(dbgstr, "VR time: %lld\n", ed_time - st_time);
-		OutputDebugStringA(dbgstr);*/
 	}
 
 	void VolumeRenderer::prepareVRayVertexBuffers(vks::VulkanDevice* device)
@@ -3188,7 +2171,7 @@ namespace FLIVR
 				//when count > 0 the vector still holds settings needed by the pending submit
 				if (mem_swap_ && count == 0 && !semaphores.empty())
 				{
-					prim_dev->m_cur_semaphore_id--;
+					prim_dev->RollbackRenderSemaphore();
 					semaphores.pop_back();
 				}
 				continue;
@@ -3843,6 +2826,11 @@ namespace FLIVR
 		double scl_translate, double w2d, double bins, bool orthographic_p,
 		bool estimate, Texture* ext_msk, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
 	{
+		//this writes textures the in-flight frame may sample: wait it out first
+		if (m_vulkan)
+			for (auto dev : m_vulkan->devices)
+				dev->WaitIdleAllFrameSlots();
+
 /*		if (paint_mode == 1 || paint_mode == 2)
 		{
 			draw_mask_cpu(type, paint_mode, hr_mode, ini_thresh, gm_falloff, scl_falloff, scl_translate, w2d, bins, orthographic_p, estimate);
@@ -4142,6 +3130,11 @@ namespace FLIVR
 	//mode: 0-normal; 1-posterized; 2-copy values; 3-poster, copy
 	void VolumeRenderer::draw_label(int type, int mode, double thresh, double gm_falloff)
 	{
+		//this writes textures the in-flight frame may sample: wait it out first
+		if (m_vulkan)
+			for (auto dev : m_vulkan->devices)
+				dev->WaitIdleAllFrameSlots();
+
 		vector<TextureBrick*> *bricks = tex_->get_bricks();
 		if (!bricks || bricks->size() == 0)
 			return;
@@ -4372,9 +3365,14 @@ namespace FLIVR
 	//7:apply mask inverted, then replace volume a
 	//8:intersection with masks if available
 	//9:fill holes
-	void VolumeRenderer::calculate(int type, FLIVR::VolumeRenderer *vr_a, FLIVR::VolumeRenderer *vr_b, FLIVR::VolumeRenderer* vr_c, 
+	void VolumeRenderer::calculate(int type, FLIVR::VolumeRenderer *vr_a, FLIVR::VolumeRenderer *vr_b, FLIVR::VolumeRenderer* vr_c,
 		Texture* ext_msk, Texture* ext_lbl)
 	{
+		//this writes textures the in-flight frame may sample: wait it out first
+		if (m_vulkan)
+			for (auto dev : m_vulkan->devices)
+				dev->WaitIdleAllFrameSlots();
+
 		//sync sorting
 		Ray view_ray(Point(0.802,0.267,0.534), Vector(0.802,0.267,0.534));
 		tex_->set_sort_bricks();
@@ -4728,6 +3726,10 @@ namespace FLIVR
 	{
 		if (!vr_in || !tex_ || !vr_in->tex_ || !m_vulkan || !tps.valid())
 			return;
+
+		//this writes textures the in-flight frame may sample: wait it out first
+		for (auto dev : m_vulkan->devices)
+			dev->WaitIdleAllFrameSlots();
 
 		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
 		tex_->set_sort_bricks();
@@ -5430,6 +4432,11 @@ namespace FLIVR
 	void VolumeRenderer::draw_mask_th(float thresh, bool orthographic_p, bool use_absolute_value)
 	{
 		if (!tex_ || tex_->nstroke() < 0 || tex_->nmask() < 0) return;
+
+		//this writes textures the in-flight frame may sample: wait it out first
+		if (m_vulkan)
+			for (auto dev : m_vulkan->devices)
+				dev->WaitIdleAllFrameSlots();
 
 		//sync sorting
 		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));

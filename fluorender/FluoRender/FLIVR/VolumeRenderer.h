@@ -326,8 +326,6 @@ namespace FLIVR
 
 public:
 		VkClearColorValue m_clear_color;
-		std::map<vks::VulkanDevice*, VolShaderFactory::VolUniformBufs> m_volUniformBuffers;
-		std::map<vks::VulkanDevice*, VRayShaderFactory::VRayUniformBufs> m_vrayUniformBuffers;
 		std::map<vks::VulkanDevice*, SegShaderFactory::SegUniformBufs> m_segUniformBuffers;
 		std::map<vks::VulkanDevice*, VkCommandBuffer> m_commandBuffers;
 		std::map<vks::VulkanDevice*, VkCommandBuffer> m_seg_commandBuffers;
@@ -366,16 +364,6 @@ public:
 			VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 0.0f },
 			Texture* ext_msk = NULL,
 			Texture* ext_lbl = NULL
-		);
-		void draw_volume(
-			const std::unique_ptr<vks::VFrameBuffer>& framebuf,
-			bool clear_framebuf,
-			bool interactive_mode_p,
-			bool orthographic_p = false,
-			double zoom = 1.0,
-			int mode = 0,
-			double sampling_frq_fac = -1.0,
-			VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 0.0f }
 		);
 		void draw_volume_ray(
 			const std::unique_ptr<vks::VFrameBuffer>& framebuf,
@@ -455,14 +443,6 @@ public:
 
 		static VkRenderPass prepareRenderPass(vks::VulkanDevice* device, int attatchment_num);
 
-		struct VVolVertexBuffers {
-			vks::Buffer vertexBuffer;
-			vks::Buffer indexBuffer;
-			uint32_t indexCount;
-		};
-		std::map<vks::VulkanDevice*, VVolVertexBuffers> m_vertbufs;
-		void prepareVertexBuffers(vks::VulkanDevice* device, unsigned int total_slicenum);
-
 		static void init();
 		static void finalize();
 
@@ -490,21 +470,6 @@ public:
 		void prepareVRayVertexBuffers(vks::VulkanDevice* device);
 
 
-		struct VVolPipeline {
-			VkPipeline vkpipeline;
-			VkRenderPass renderpass;
-			ShaderProgram* shader;
-			vks::VulkanDevice* device;
-			int mode;
-			int update_order;
-			int colormap_mode;
-			VkBool32 samplers[IMG_SHDR_SAMPLER_NUM] = { VK_FALSE };
-		};
-		static std::vector<VVolPipeline> m_vol_pipelines;
-		static std::map<vks::VulkanDevice*, VkRenderPass> m_vol_draw_pass;
-		int m_prev_vol_pipeline;
-		VVolPipeline prepareVolPipeline(vks::VulkanDevice* device, int mode, int update_order, int colormap_mode);
-		
 		struct VSlicePipeline {
 			VkPipeline vkpipeline;
 			ShaderProgram* shader;

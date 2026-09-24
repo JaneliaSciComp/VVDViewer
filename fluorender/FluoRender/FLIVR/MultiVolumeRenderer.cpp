@@ -27,7 +27,6 @@
 //
 
 #include "MultiVolumeRenderer.h"
-#include "VolShader.h"
 #include "ShaderProgram.h"
 #include "../compatibility.h"
 #include <algorithm>
@@ -234,7 +233,7 @@ namespace FLIVR
 		{
 			int idx = device->findTexInPool(b, c, b->nx(), b->ny(), b->nz(), b->nb(c), b->tex_format(c));
 			if (idx == -1) {
-				double new_mem = (VkDeviceSize)b->nx() * b->ny() * b->nz() * b->nb(c) / 1.04e6;
+				double new_mem = (VkDeviceSize)b->nx() * b->ny() * b->nz() * b->nb(c) / vks::MEM_MB;
 				int sw_idx = device->check_swap_memory(b, c);
 				if (sw_idx == -1 && device->available_mem < new_mem)
 				{
@@ -1201,138 +1200,6 @@ namespace FLIVR
 			//VolumeRenderer::saveScreenshot("E:\\vulkan_screenshot.ppm", framebuf->attachments[0]);
 		}
 
-	}
-
-	vector<TextureBrick*>* MultiVolumeRenderer::get_combined_bricks(
-		Point& center, Ray& view, bool is_orthographic)
-	{
-		if (!vr_list_.size())
-			return 0;
-
-		if (!vr_list_[0]->tex_->get_sort_bricks())
-			return vr_list_[0]->tex_->get_quota_bricks();
-
-		size_t i, j, k;
-		vector<TextureBrick*>* bs;
-		vector<TextureBrick*>* bs0;
-		vector<TextureBrick*>* result;
-		Point brick_center;
-		double d;
-
-		for (i = 0; i < vr_list_.size(); i++)
-		{
-			//sort each brick list based on distance to center
-			bs = vr_list_[i]->tex_->get_bricks();
-			for (j = 0; j < bs->size(); j++)
-			{
-				brick_center = (*bs)[j]->bbox().center();
-				d = (brick_center - center).length();
-				(*bs)[j]->set_d(d);
-			}
-			std::sort((*bs).begin(), (*bs).end(), TextureBrick::sort_dsc);
-
-			//assign indecis so that bricks can be selected later
-			for (j = 0; j < bs->size(); j++)
-				(*bs)[j]->set_ind(j);
-		}
-
-		//generate quota brick list for vr0
-		bs0 = vr_list_[0]->tex_->get_bricks();
-		result = vr_list_[0]->tex_->get_quota_bricks();
-		result->clear();
-		int quota = 0;
-		int count;
-		TextureBrick* pb;
-		size_t ind;
-		bool found;
-		for (i = 0; i < vr_list_.size(); i++)
-		{
-			//insert nonduplicated bricks into result list
-			bs = vr_list_[i]->tex_->get_bricks();
-			quota = vr_list_[i]->get_quota_bricks_chan();
-			//quota = quota/2+1;
-			count = 0;
-			for (j = 0; j < bs->size(); j++)
-			{
-				pb = (*bs)[j];
-				if (pb->get_priority() > 0)
-					continue;
-				ind = pb->get_ind();
-				found = false;
-				for (k = 0; k < result->size(); k++)
-				{
-					if (ind == (*result)[k]->get_ind())
-					{
-						found = true;
-						break;
-					}
-				}
-				if (!found)
-				{
-					result->push_back((*bs0)[ind]);
-					count++;
-					if (count == quota)
-						break;
-				}
-			}
-		}
-		//reorder result
-		for (i = 0; i < result->size(); i++)
-		{
-			Point minp((*result)[i]->bbox().min());
-			Point maxp((*result)[i]->bbox().max());
-			Vector diag((*result)[i]->bbox().diagonal());
-			minp += diag / 1000.;
-			maxp -= diag / 1000.;
-			Point corner[8];
-			corner[0] = minp;
-			corner[1] = Point(minp.x(), minp.y(), maxp.z());
-			corner[2] = Point(minp.x(), maxp.y(), minp.z());
-			corner[3] = Point(minp.x(), maxp.y(), maxp.z());
-			corner[4] = Point(maxp.x(), minp.y(), minp.z());
-			corner[5] = Point(maxp.x(), minp.y(), maxp.z());
-			corner[6] = Point(maxp.x(), maxp.y(), minp.z());
-			corner[7] = maxp;
-			double d = 0.0;
-			for (unsigned int c = 0; c < 8; c++)
-			{
-				double dd;
-				if (is_orthographic)
-				{
-					// orthographic: sort bricks based on distance to the view plane
-					dd = Dot(corner[c], view.direction());
-				}
-				else
-				{
-					// perspective: sort bricks based on distance to the eye point
-					dd = (corner[c] - view.origin()).length();
-				}
-				if (c == 0 || dd < d) d = dd;
-			}
-			(*result)[i]->set_d(d);
-		}
-		if (TextureRenderer::get_update_order() == 0)
-			std::sort((*result).begin(), (*result).end(), TextureBrick::sort_asc);
-		else if (TextureRenderer::get_update_order() == 1)
-			std::sort((*result).begin(), (*result).end(), TextureBrick::sort_dsc);
-		vr_list_[0]->tex_->reset_sort_bricks();
-
-		//duplicate result into other quota-bricks
-		for (i = 1; i < vr_list_.size(); i++)
-		{
-			bs0 = vr_list_[i]->tex_->get_bricks();
-			bs = vr_list_[i]->tex_->get_quota_bricks();
-			bs->clear();
-
-			for (j = 0; j < result->size(); j++)
-			{
-				ind = (*result)[j]->get_ind();
-				bs->push_back((*bs0)[ind]);
-			}
-			vr_list_[i]->tex_->reset_sort_bricks();
-		}
-
-		return result;
 	}
 
 	void MultiVolumeRenderer::draw_wireframe(bool orthographic_p)

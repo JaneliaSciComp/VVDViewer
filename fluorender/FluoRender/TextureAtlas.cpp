@@ -44,6 +44,9 @@ std::shared_ptr<AtlasTexture> TextureAtlas::Add(uint32_t width, uint32_t height,
 	offset.y = area->y;
 	extent.width = width;
 	extent.height = height;
+	//the upload transitions the whole atlas image, which an in-flight frame may be
+	//sampling; glyphs are cached, so this only happens on first rasterization
+	m_device->WaitIdleAllFrameSlots();
 	m_device->UploadSubTexture2D(m_tex, pixels, offset, extent);
 
     return std::make_shared<AtlasTexture>(this, area);
