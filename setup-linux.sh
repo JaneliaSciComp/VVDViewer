@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# setup-linux.sh — Prepare a Debian/Ubuntu machine to run the VVDViewer
-# auto-build (build.sh).
+# setup-linux.sh — Prepare a Debian/Ubuntu or Arch machine to run the
+# VVDViewer auto-build (build.sh).
 #
 # It installs:
 #   * the C/C++ toolchain and the tools vcpkg needs to compile every dependency
@@ -11,14 +11,15 @@
 #   * the LunarG Vulkan SDK (which build.sh intentionally does not manage), and
 #     wires up VULKAN_SDK in ~/.bashrc.
 #
-# Run as your NORMAL user (it calls sudo itself only for apt, so the Vulkan SDK
-# and ~/.bashrc land in YOUR home — do NOT run the whole script with sudo).
+# Run as your NORMAL user (it calls sudo itself only for the package manager,
+# so the Vulkan SDK and ~/.bashrc land in YOUR home — do NOT run the whole
+# script with sudo).
 #
-# Usage: bash setup-linux.sh [--sdk-dir DIR] [--skip-apt] [--skip-vulkan]
+# Usage: bash setup-linux.sh [--sdk-dir DIR] [--skip-packages] [--skip-vulkan]
 #
-#   --sdk-dir DIR   Where to install the Vulkan SDK (default: $HOME/vulkan)
-#   --skip-apt      Do not install apt packages
-#   --skip-vulkan   Do not install the Vulkan SDK
+#   --sdk-dir DIR    Where to install the Vulkan SDK (default: $HOME/vulkan)
+#   --skip-packages  Do not install system packages (--skip-apt is an alias)
+#   --skip-vulkan    Do not install the Vulkan SDK
 #
 # After it finishes: open a new shell (or `source ~/.bashrc`), then `bash build.sh`.
 
@@ -26,7 +27,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="${HOME}/vulkan"
-DO_APT=1
+DO_PKGS=1
 DO_VULKAN=1
 SDK_URL="https://sdk.lunarg.com/sdk/download/latest/linux/vulkan_sdk.tar.xz"
 
@@ -37,9 +38,9 @@ fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --sdk-dir)     shift; SDK_DIR="${1:?--sdk-dir needs a path}" ;;
-    --skip-apt)    DO_APT=0 ;;
+    --skip-packages|--skip-apt) DO_PKGS=0 ;;
     --skip-vulkan) DO_VULKAN=0 ;;
-    -h|--help)     grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,/^[^#]/{/^[^#]/!s/^# \{0,1\}//p;}' "$0"; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
   shift
@@ -49,9 +50,9 @@ done
 # would put the SDK and .bashrc changes in root's home instead of the user's.
 if [ "$(id -u)" -eq 0 ]; then
   if [ -n "${SUDO_USER:-}" ]; then
-    fail "Run as your normal user, NOT via sudo. The script sudo's for apt by itself."
+    fail "Run as your normal user, NOT via sudo. The script sudo's for the package manager by itself."
   fi
-  SUDO=""           # genuine root (e.g. a container) — run apt directly
+  SUDO=""           # genuine root (e.g. a container) — run the package manager directly
 else
   command -v sudo >/dev/null 2>&1 || fail "sudo not found, and you are not root. Install sudo or run as root."
   SUDO="sudo"
@@ -63,9 +64,49 @@ echo "Vulkan SDK:  $SDK_DIR"
 echo
 
 # 1) System packages -----------------------------------------------------------
-if [ "$DO_APT" = "1" ]; then
-  command -v apt-get >/dev/null 2>&1 || fail \
-"This script targets Debian/Ubuntu (apt). On Fedora install the equivalents:
+# Two families are handled natively: Debian/Ubuntu (apt) and Arch (pacman).
+# Anything else gets the equivalent package list to install by hand.
+if [ "$DO_PKGS" = "1" ]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    log "apt-get update (sudo)..."
+    $SUDO apt-get update -y
+
+    log "Installing toolchain + vcpkg build deps + display libraries (sudo)..."
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      build-essential cmake ninja-build git curl ca-certificates \
+      zip unzip tar xz-utils pkg-config \
+      nasm yasm autoconf automake libtool libtool-bin autoconf-archive \
+      bison flex gperf python3 python3-venv python3-pip perl \
+      libgtk-3-dev \
+      libgl1-mesa-dev libglu1-mesa-dev \
+      libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxrender-dev libxrandr-dev \
+      libxi-dev libxfixes-dev libxcursor-dev libxcomposite-dev libxdamage-dev \
+      libxinerama-dev libxkbcommon-dev \
+      libwayland-dev libwayland-bin wayland-protocols \
+      libva-dev libvdpau-dev
+
+  elif command -v pacman >/dev/null 2>&1; then
+    # Arch ships headers in the main package, so there are no -dev counterparts.
+    # base-devel is a GROUP and covers gcc/make/autoconf/automake/libtool/bison/
+    # flex/pkgconf/patch/m4; --needed keeps already-installed members untouched.
+    log "Installing toolchain + vcpkg build deps + display libraries (sudo)..."
+    $SUDO pacman -S --needed --noconfirm \
+      base-devel cmake ninja git curl ca-certificates \
+      zip unzip tar xz pkgconf \
+      nasm yasm autoconf-archive \
+      bison flex gperf python python-pip perl \
+      gtk3 \
+      mesa glu \
+      libx11 libxcb libxext libxrender libxrandr \
+      libxi libxfixes libxcursor libxcomposite libxdamage \
+      libxinerama libxkbcommon \
+      wayland wayland-protocols \
+      libva libvdpau
+
+  else
+    fail \
+"No supported package manager found (need apt-get or pacman).
+On Fedora install the equivalents:
   sudo dnf install gcc gcc-c++ make cmake ninja-build git curl zip unzip tar xz \\
     pkgconf-pkg-config nasm yasm autoconf automake libtool bison flex gperf perl \\
     python3-pip \\
@@ -73,26 +114,10 @@ if [ "$DO_APT" = "1" ]; then
     libXext-devel libXrender-devel libXrandr-devel libXi-devel libXfixes-devel \\
     libXcursor-devel libXcomposite-devel libXdamage-devel libXinerama-devel \\
     libxkbcommon-devel wayland-devel wayland-protocols-devel libva-devel libvdpau-devel
-then install the Vulkan SDK from https://vulkan.lunarg.com/ and re-run with --skip-apt."
-
-  log "apt-get update (sudo)..."
-  $SUDO apt-get update -y
-
-  log "Installing toolchain + vcpkg build deps + display libraries (sudo)..."
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    build-essential cmake ninja-build git curl ca-certificates \
-    zip unzip tar xz-utils pkg-config \
-    nasm yasm autoconf automake libtool libtool-bin autoconf-archive \
-    bison flex gperf python3 python3-venv python3-pip perl \
-    libgtk-3-dev \
-    libgl1-mesa-dev libglu1-mesa-dev \
-    libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxrender-dev libxrandr-dev \
-    libxi-dev libxfixes-dev libxcursor-dev libxcomposite-dev libxdamage-dev \
-    libxinerama-dev libxkbcommon-dev \
-    libwayland-dev libwayland-bin wayland-protocols \
-    libva-dev libvdpau-dev
+then install the Vulkan SDK from https://vulkan.lunarg.com/ and re-run with --skip-packages."
+  fi
 else
-  log "Skipping apt (per --skip-apt)."
+  log "Skipping system packages (per --skip-packages)."
 fi
 
 # 2) Vulkan SDK (LunarG tarball) -----------------------------------------------
@@ -158,7 +183,14 @@ check() {
     printf '  %-12s MISSING\n' "$1"; ok=0
   fi
 }
-check gcc; check g++; check cmake; check git; check pkg-config; check nasm; check ninja
+check gcc; check g++; check cmake; check git; check pkg-config
+check nasm; check yasm; check gperf; check ninja
+# autoconf-archive ships .m4 macros, not a binary; several ports need them.
+if ls /usr/share/aclocal/ax_cxx_compile_stdcxx.m4 >/dev/null 2>&1; then
+  printf '  %-12s OK\n' "aconf-arch"
+else
+  printf '  %-12s MISSING\n' "aconf-arch"; ok=0
+fi
 if command -v pkg-config >/dev/null 2>&1; then
   for pc in gtk+-3.0 x11 xcb wayland-client; do
     if pkg-config --exists "$pc" 2>/dev/null; then
