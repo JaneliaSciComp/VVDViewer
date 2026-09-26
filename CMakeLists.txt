@@ -960,29 +960,41 @@ set(na_ext ${PLUGIN_DIR}/stdwx.h ${PLUGIN_DIR}/stdwx.cpp)
 add_library(NeuronAnnotatorPlugin SHARED ${na_src} ${na_hdr} ${na_ext})
 target_link_libraries(NeuronAnnotatorPlugin VVDMainFrame wxGuiPluginBase ${wxWidgets_LIBRARIES})
 
-#target build-order dependencies (macOS / Xcode)
-if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-  add_dependencies(VVDMainFrame wxGuiPluginBase)
-  add_dependencies(FijiInterfacePlugin VVDMainFrame)
-  add_dependencies(NBLASTGuiPlugin VVDMainFrame)
-  add_dependencies(NeuronAnnotatorPlugin VVDMainFrame)
-  add_dependencies(VVDViewer FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin)
-endif()
+# Target build-order dependencies.
+#
+# VVDViewer's POST_BUILD step copies every library listed in ${vvd_dlls} and
+# ${vvd_gui_plugins} (VVDMainFrame, wxGuiPluginBase and the three plugins)
+# into place next to the executable.
+# Of those, only VVDMainFrame is reached through target_link_libraries, so
+# without these explicit edges a parallel build (make -j, ninja) is free to link
+# VVDViewer and run that copy before the plugins have been built:
+#     Error copying file ".../libFijiInterfacePlugin.so" ...: No such file
+# The ordering is therefore required on EVERY platform, not just macOS/Xcode.
+add_dependencies(VVDMainFrame wxGuiPluginBase)
+add_dependencies(FijiInterfacePlugin VVDMainFrame)
+add_dependencies(NBLASTGuiPlugin VVDMainFrame)
+add_dependencies(NeuronAnnotatorPlugin VVDMainFrame)
+add_dependencies(VVDViewer
+  VVDMainFrame wxGuiPluginBase
+  FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 #TODO
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 #TODO
 else()
+	# Deployed to <exedir>/plugins/gui/, while libVVDMainFrame.so and
+	# libwxGuiPluginBase.so live in <exedir>/lib/ — hence $ORIGIN/../../lib/.
+	# $ORIGIN/ is kept so the plugin also resolves from the build dir.
 	set_target_properties(FijiInterfacePlugin PROPERTIES
         BUILD_WITH_INSTALL_RPATH FALSE
-        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/:\\\$ORIGIN/../../lib/")
 	set_target_properties(NBLASTGuiPlugin PROPERTIES
         BUILD_WITH_INSTALL_RPATH FALSE
-        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/:\\\$ORIGIN/../../lib/")
 	set_target_properties(NeuronAnnotatorPlugin PROPERTIES
         BUILD_WITH_INSTALL_RPATH FALSE
-        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
+        LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/:\\\$ORIGIN/../../lib/")
 	set_target_properties(wxGuiPluginBase PROPERTIES
         BUILD_WITH_INSTALL_RPATH FALSE
         LINK_FLAGS "-Wl,-rpath,\\\$ORIGIN/")
@@ -1065,12 +1077,22 @@ endif()
 ]]
 
 #copy VVD DLLs
+# Two different destinations, so two lists:
+#   vvd_dlls        -> <exedir>/lib/, reached by the executable's $ORIGIN/lib rpath.
+#   vvd_gui_plugins -> <exedir>/plugins/gui/, which is where PluginManager looks.
+# PluginManager::LoadAllPlugins scans <exedir>/plugins/{nongui,gui} (see
+# PluginControllerBase::GetPluginsPath + PluginManager.cpp). All three plugins
+# derive from wxGuiPluginBase, so all three are "gui". Do NOT put them in
+# nongui/: LoadPlugins resolves the same symbol name (CreatePlugin) for both
+# kinds and only the return type differs, so a gui plugin loaded as nongui is
+# silently reinterpreted as the wrong base class.
 Set(vvd_dlls)
 LIST(APPEND vvd_dlls "libVVDMainFrame.so")
 LIST(APPEND vvd_dlls "libwxGuiPluginBase.so")
-LIST(APPEND vvd_dlls "libFijiInterfacePlugin.so")
-LIST(APPEND vvd_dlls "libNBLASTGuiPlugin.so")
-LIST(APPEND vvd_dlls "libNeuronAnnotatorPlugin.so")
+Set(vvd_gui_plugins)
+LIST(APPEND vvd_gui_plugins "libFijiInterfacePlugin.so")
+LIST(APPEND vvd_gui_plugins "libNBLASTGuiPlugin.so")
+LIST(APPEND vvd_gui_plugins "libNeuronAnnotatorPlugin.so")
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	# Write the bundle fix script (executed at build time as POST_BUILD).
 	# WX_OLD_PREFIX is detected at build time via otool, so it adapts
@@ -1265,6 +1287,18 @@ else()
 			COMMAND ${CMAKE_COMMAND} -E copy
 			"${CMAKE_BINARY_DIR}/${f}"
 			"$<TARGET_FILE_DIR:VVDViewer>/lib/")
+	endforeach()
+
+	# GUI plugins go to plugins/gui/ instead — PluginManager scans that path and
+	# ignores lib/, so plugins deployed to lib/ never load. Same make_directory
+	# caveat as above.
+	add_custom_command(TARGET VVDViewer POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:VVDViewer>/plugins/gui")
+	foreach (f ${vvd_gui_plugins})
+		add_custom_command(TARGET VVDViewer POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+			"${CMAKE_BINARY_DIR}/${f}"
+			"$<TARGET_FILE_DIR:VVDViewer>/plugins/gui/")
 	endforeach()
 endif()
 
