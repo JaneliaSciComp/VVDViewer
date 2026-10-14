@@ -147,7 +147,7 @@ bool VRenderFrame::GetKeyState(wxKeyCode key)
 CURLM *_g_curlm;//add by takashi
 CURL *_g_curl;//add by takashi
 
-wxCriticalSection VRenderFrame::ms_criticalSection;
+vvd::CriticalSection VRenderFrame::ms_criticalSection;
 
 VRenderFrame::VRenderFrame(
 	wxApp* app, wxFrame* frame,
@@ -2129,7 +2129,7 @@ void VRenderFrame::ConvertNML2SWC(wxString filename, VRenderView* vrv)
             }
             else
             {
-                double hue = (double)rand()/(RAND_MAX) * 360.0;
+                double hue = (double)MeshData::NextRandomColorValue()/(RAND_MAX) * 360.0;
                 col = Color(HSVColor(hue, 1.0, 1.0));
             }
             

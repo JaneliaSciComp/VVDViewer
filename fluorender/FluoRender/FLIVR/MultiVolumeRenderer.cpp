@@ -262,12 +262,8 @@ namespace FLIVR
 		if (get_vr_num() <= 0)
 			return;
 
-		if (TextureRenderer::get_streaming())
-		{
-			uint32_t rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-				return;
-		}
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 
 		vector<VolumeRenderer*> valid_vrs;
 		for (auto vr : vr_list_)
@@ -362,6 +358,10 @@ namespace FLIVR
 
 			vector<TextureBrick*>* brs = tex->get_bricks();
 			Ray view_ray = vr->compute_view();
+			//bricks that provably output nothing (VolumeRenderer::invisible_brick_max;
+			//the multi pass draws data only, like the per-volume data pass)
+			const int skip_max = (colormap_mode_ == 2 || vr->ml_mode_ != 0 || brs->empty()) ? -1 :
+				vr->invisible_brick_max((*brs)[0]->nb(0));
 			for (int j = 0; j < brs->size(); j++)
 			{
 				TextureBrick* b = (*brs)[j];
@@ -371,7 +371,17 @@ namespace FLIVR
 				bool disp = true;
 				if (updating) disp = b->get_disp();
 
-				if (b->compute_t_index_min_max(view_ray, vr_dt))
+				if (skip_max >= 0 && (!updating || !b->drawn(stmode)) && vr->brick_invisible(b, skip_max))
+				{
+					//counted like a brick outside the view
+					if (updating)
+					{
+						b->set_drawn(stmode, true);
+						if (disp)
+							TextureRenderer::cur_brick_num_++;
+					}
+				}
+				else if (b->compute_t_index_min_max(view_ray, vr_dt))
 				{
 					int tmp = b->timin();
 					all_timin = (all_timin > tmp) ? tmp : all_timin;
@@ -658,6 +668,23 @@ namespace FLIVR
 		VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
+		//clear the slice target up front (previously at the first drawn brick):
+		//a call that draws no brick (all skipped, or none in range) must not
+		//composite the previous call's slice buffer again
+		if (clear)
+		{
+			VkClearAttachment clearAttachment = {};
+			clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			clearAttachment.clearValue.color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+			clearAttachment.colorAttachment = 0;
+			VkClearRect clearRect = {};
+			clearRect.layerCount = 1;
+			clearRect.rect.offset = { 0, 0 };
+			clearRect.rect.extent = { w2, h2 };
+			vkCmdClearAttachments(cmdbuf, 1, &clearAttachment, 1, &clearRect);
+			clear = false;
+		}
+
 		//track the currently bound pipeline: bricks of the same volume share one,
 		//so most per-brick binds are redundant
 		VkPipeline last_pipeline = VK_NULL_HANDLE;
@@ -678,12 +705,8 @@ namespace FLIVR
 		cur_bid = 0;
 		for (i = start_i; order ? (i <= all_timax) : (i >= all_timin); i += order ? 1 : -1)
 		{
-			if (TextureRenderer::get_streaming())
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-					break;
-			}
+			if (TextureRenderer::frame_budget_exhausted())
+				break;
 
 			int32_t new_brs_num = 0;
 			bool fail = false;
@@ -862,14 +885,18 @@ namespace FLIVR
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
-							double trans_x = (ox_d - ox) / nx;
-							double trans_y = (oy_d - oy) / ny;
-							double trans_z = (oz_d - oz) / nz;
-							double scale_x = (endx_d - ox_d) / nx;
-							double scale_y = (endy_d - oy_d) / ny;
-							double scale_z = (endz_d - oz_d) / nz;
+							//the VRay shader maps the mask like the data (VRAY_MASK_RAY_*:
+							//position / mskbrkscale - mskbrktrans / mskbrkscale): the
+							//mask brick's box in the mask level, as VolumeRenderer::draw.
+							//w keeps 1/nz (gradient step of the data brick)
+							double trans_x = ox_d / sx;
+							double trans_y = oy_d / sy;
+							double trans_z = oz_d / sz;
+							double scale_x = (endx_d - ox_d) / sx;
+							double scale_y = (endy_d - oy_d) / sy;
+							double scale_z = (endz_d - oz_d) / sz;
 
-							cur_brs[j].frag_const.mask_b_scale_invnz = { (float)scale_x, (float)scale_y, (float)scale_z , 1.0f };
+							cur_brs[j].frag_const.mask_b_scale_invnz = { (float)scale_x, (float)scale_y, (float)scale_z, 1.0f / cnz };
 							cur_brs[j].frag_const.mask_b_trans = { (float)trans_x, (float)trans_y, (float)trans_z, 0.0f };
 
 							b->nx(cnx); b->ny(cny); b->nz(cnz);
@@ -890,8 +917,16 @@ namespace FLIVR
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
-							cur_brs[j].frag_const.mask_b_scale_invnz = { 1.0f, 1.0f, 1.0f, 1.0f };
-							cur_brs[j].frag_const.mask_b_trans = { 0.0f, 0.0f, 0.0f, 0.0f };
+							//same bricks: the mask maps like the data (the brick's dbox, as
+							//VolumeRenderer::draw); w keeps 1/nz. {1,1,1,1} was only right
+							//for single-brick volumes and replaced the gradient's z step by
+							//a whole brick (hide modes looked flat / dim in Depth mode)
+							BBox dbox = b->dbox();
+							cur_brs[j].frag_const.mask_b_scale_invnz = { float(dbox.max().x() - dbox.min().x()),
+																		 float(dbox.max().y() - dbox.min().y()),
+																		 float(dbox.max().z() - dbox.min().z()),
+																		 1.0f / b->nz() };
+							cur_brs[j].frag_const.mask_b_trans = { float(dbox.min().x()), float(dbox.min().y()), float(dbox.min().z()), 0.0f };
 						}
 					}
 
@@ -977,6 +1012,7 @@ namespace FLIVR
 					vkCmdBindVertexBuffers(cmdbuf, 0, 1, &valid_vrs[0]->m_vray_vbufs[prim_dev].vertexBuffer.buffer, offsets);
 					vkCmdBindIndexBuffer(cmdbuf, valid_vrs[0]->m_vray_vbufs[prim_dev].indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 					vkCmdDrawIndexed(cmdbuf, valid_vrs[0]->m_vray_vbufs[prim_dev].indexCount, 1, 0, 0, 0);
+					TextureRenderer::finished_bricks_++;
 
 				}//for (int j = 0; j < cur_brs.size(); j++)
 
@@ -1016,12 +1052,8 @@ namespace FLIVR
 				else ite++;
 			}
 
-			if (TextureRenderer::get_streaming() && fail)
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-					break;
-			}
+			if (fail && TextureRenderer::frame_budget_exhausted())
+				break;
 
 		}//for (i = start_i; order?(i <= all_timax):(i >= all_timin); i += order?1:-1)
 

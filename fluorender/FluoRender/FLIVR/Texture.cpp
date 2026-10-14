@@ -26,6 +26,10 @@
 //  DEALINGS IN THE SOFTWARE.
 //  
 
+#include <thread>
+#include <atomic>
+#include <vector>
+#include <algorithm>
 #include <FLIVR/ShaderProgram.h>
 #include <FLIVR/Texture.h>
 #include <FLIVR/TextureRenderer.h>
@@ -34,7 +38,8 @@
 #include <inttypes.h>
 #include <base_reader.h>
 
-#include <wx/progdlg.h>
+#include "../Core/UICallbacks.h"
+#include "../Core/FileUtil.h"
 
 #ifdef _WIN32
 #include <omp.h>
@@ -118,10 +123,10 @@ namespace FLIVR
 					for (int n=0; n<(int)filenames_[i][j][k].size(); n++){
 						if (filenames_[i][j][k][n] && !filenames_[i][j][k][n]->cache_filename.empty())
 						{
-							wxString fpath = filenames_[i][j][k][n]->cache_filename;
-							if(wxFileExists(fpath))
+							vvd::String fpath = filenames_[i][j][k][n]->cache_filename;
+							if(vvd::FileExists(fpath))
 							{
-								wxRemoveFile(fpath);
+								vvd::RemoveFile(fpath);
 								filenames_[i][j][k][n]->cached = false;
 								filenames_[i][j][k][n]->cache_filename = L"";
 							}
@@ -504,12 +509,25 @@ namespace FLIVR
 				TextureBrick *tb = (*bricks_)[i];
 				tb->set_nrrd(nv_vlnrrd, 0);
 				tb->set_nrrd(gm_vlnrrd, 1);
-				//			if (use_priority_)
-				//			{
-				//				if (!brkxml_) tb->set_priority();
-				//				else tb->set_priority_brk(&ifs_, filetype_);
-				//				n_p0_ += tb->get_priority()==0?1:0;
-				//			}
+			}
+			//"skip empty bricks" setting: scan every brick now (load time)
+			//instead of lazily during the first draw, and give the all-zero
+			//ones priority 1 (never drawn, legacy FluoRender behaviour)
+			if (use_priority_)
+			{
+				const size_t nb = (*bricks_).size();
+				unsigned hc = std::thread::hardware_concurrency();
+				size_t nth = std::min<size_t>(hc > 0 ? hc : 1, nb);
+				std::atomic<size_t> next(0);
+				std::vector<std::thread> ths;
+				for (size_t t = 0; t < nth; t++)
+					ths.emplace_back([&]() {
+						for (size_t i = next++; i < nb; i = next++)
+							(*bricks_)[i]->set_priority();
+					});
+				for (auto& th : ths) th.join();
+				for (size_t i = 0; i < nb; i++)
+					n_p0_ += (*bricks_)[i]->get_priority() == 0 ? 1 : 0;
 			}
 		}
 
@@ -1076,11 +1094,10 @@ namespace FLIVR
 		nrrdAxisInfoSet(data, nrrdAxisInfoMin, 0.0, 0.0, 0.0);
 		nrrdAxisInfoSet(data, nrrdAxisInfoSize, imageW, imageH, imageD);
 
-		wxProgressDialog *prog_diag = new wxProgressDialog(
-			"VVDViewer: Load Volume Data...",
-			"Loading... Please wait.",
-			100, 0,
-			wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		std::unique_ptr<vvd::Progress> prog_diag = vvd::UI::CreateProgress(
+			L"VVDViewer: Load Volume Data...",
+			L"Loading... Please wait.",
+			100, vvd::PROGRESS_DEFAULT);
 		int progress = 0;
 
 		for(int i = 0; i < bnum; i++)
@@ -1130,7 +1147,7 @@ namespace FLIVR
 			}
 		}
 
-		delete prog_diag;
+		prog_diag.reset();
 
 		lv = level;
 

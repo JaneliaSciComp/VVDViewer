@@ -34,7 +34,6 @@
 #include <FLIVR/palettes.h>
 
 #include "compatibility.h"
-#include <wx/utils.h>
 
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>

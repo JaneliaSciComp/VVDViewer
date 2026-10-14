@@ -27,6 +27,8 @@ DEALINGS IN THE SOFTWARE.
 */
 
 #include "Main.h"
+#include "WxUIBackend.h"
+#include "Core/FileUtil.h"
 #include <cstdio>
 #include <iostream>
 #include <wx/cmdline.h>
@@ -94,6 +96,9 @@ bool VRenderApp::OnInit()
    // call default behaviour (mandatory)
    if (!wxApp::OnInit())
       return false;
+   // route engine messages / progress reports to wx dialogs
+   WxUIBackend::Install();
+   vvd::SetAppName(FLUORENDER_TITLE);
    //add png handler
    wxImage::AddHandler(new wxPNGHandler);
    //the frame

@@ -26,7 +26,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "DataManager.h"
-#include <wx/progdlg.h>
+#include "Core/UICallbacks.h"
 //#include <boost/unordered_map.hpp>
 #include "DLLExport.h"
 
@@ -210,7 +210,7 @@ private:
 	Annotations* m_annotations;
 
 	//make progress
-	wxProgressDialog *m_prog_diag;
+	vvd::Progress *m_prog_diag;
 	int m_progress;
 	int m_total_pr;
 

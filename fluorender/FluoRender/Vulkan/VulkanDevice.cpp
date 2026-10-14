@@ -1,5 +1,6 @@
 #include "VulkanDevice.hpp"
 #include "vk_format_utils.h"
+#include "../Core/PaintTiming.h"
 #include <thread>
 #include <filesystem>
 #include <fstream>
@@ -182,6 +183,79 @@ namespace vks
 		return bd1.dist < bd2.dist;
 	}
 
+	void VulkanDevice::markTexUse(const std::shared_ptr<VTexture>& tex)
+	{
+		if (tex)
+			tex->gpu_use_serial = m_frame_serial;
+	}
+
+	//A texture last referenced by frame u is idle once frame u's slot fence has
+	//signaled: the frame-end submit carries the fence, and a fence signal covers
+	//all work submitted earlier to the queue (uploads go to the same queue here;
+	//with a separate transfer queue the uploads are chained into the render
+	//semaphore sequence that the frame end waits on).
+	bool VulkanDevice::isTexIdle(const std::shared_ptr<VTexture>& tex)
+	{
+		if (!tex)
+			return true;
+		const uint64_t u = tex->gpu_use_serial;
+		if (u == 0)
+			return true;
+		if (!m_frame_fences_used || u >= m_frame_serial)
+			return false;
+		if (u <= m_completed_serial)
+			return true;
+		//poll the in-flight slots without blocking
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (s == m_cur_frame || !slot.fence_pending || slot.fence == VK_NULL_HANDLE)
+				continue;
+			if (vkGetFenceStatus(logicalDevice, slot.fence) == VK_SUCCESS && slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
+		}
+		return u <= m_completed_serial;
+	}
+
+	void VulkanDevice::waitTexIdle(const std::shared_ptr<VTexture>& tex)
+	{
+		if (isTexIdle(tex))
+		{
+			m_texwait_stats[0]++;
+			return;
+		}
+		const uint64_t u = tex->gpu_use_serial;
+		if (m_frame_fences_used && u < m_frame_serial)
+		{
+			//used by an earlier, still executing frame: wait for that frame only
+			//(not for the work the current frame has already submitted)
+			bool waited = false;
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				FrameSlot& slot = m_frames[s];
+				if (s == m_cur_frame || !slot.fence_pending || slot.fence == VK_NULL_HANDLE || slot.serial < u)
+					continue;
+				//the fence stays pending: ResetMainRenderBuffers waits (no-op) and resets it
+				VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+				if (slot.serial > m_completed_serial)
+					m_completed_serial = slot.serial;
+				waited = true;
+			}
+			if (waited && u <= m_completed_serial)
+			{
+				m_texwait_stats[1]++;
+				if (transfer_queue != queue)
+					VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+				return;
+			}
+		}
+		//used by the current frame (or no frame fences on this device): drain
+		m_texwait_stats[2]++;
+		VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+		if (transfer_queue != queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+	}
+
 	int VulkanDevice::check_swap_memory(FLIVR::TextureBrick* brick, int c, bool *swapped)
 	{
 		unsigned int i;
@@ -207,6 +281,11 @@ namespace vks
 
 		if (swapped)
 			*swapped = true;
+
+		const bool ptm = vvd::ptime::On();
+		vvd::ptime::MaskPassStats& pst = vvd::ptime::Mask();
+		auto is_hot = [&pst](FLIVR::TextureBrick* b) { return pst.hot_tex && b && (const void*)b->get_nrrd_raw(0) == pst.hot_tex; };
+		if (ptm) pst.swaps++;
 
 		std::vector<BrickDist> bd_list;
 		BrickDist bd;
@@ -234,13 +313,44 @@ namespace vks
 			for (i=0; i<bd_list.size(); i++)
 			{
 				FLIVR::TextureBrick* b = bd_list[i].brick;
-				if (b->is_tex_deletion_prevented())
-					continue; //saved bricks are never touched
+				if (b->is_tex_deletion_prevented() || b->is_tex_pinned())
+					continue; //saved / pinned bricks are never touched
 				else if (!b->get_disp())
 					bd_undisp.push_back(bd_list[i]);
 				else
 					bd_others.push_back(bd_list[i]);
 			}
+
+			//a texture with exactly the new brick's properties, preferring one
+			//no GPU work can still access (no wait needed to overwrite it), else
+			//the least recently used one (waitTexIdle then waits for its frame only)
+			auto find_overwrite = [&](std::vector<BrickDist>& bucket) -> int
+			{
+				int first = -1;
+				uint64_t first_use = UINT64_MAX;
+				for (size_t k = 0; k < bucket.size(); k++)
+				{
+					TexParam &texp = tex_pool[bucket[k].index];
+					if( texp.tex
+						&& texp.comp == c
+						&& brick->nx() == texp.tex->w
+						&& brick->ny() == texp.tex->h
+						&& brick->nz() == texp.tex->d
+						&& brick->nb(c) == texp.tex->bytes
+						&& brick->tex_format(c) == texp.tex->format
+						&& !brick->dirty(c))
+					{
+						if (isTexIdle(texp.tex))
+							return (int)bucket[k].index;
+						if (first < 0 || texp.tex->gpu_use_serial < first_use)
+						{
+							first = (int)bucket[k].index;
+							first_use = texp.tex->gpu_use_serial;
+						}
+					}
+				}
+				return first;
+			};
 
 			//pop bricks farthest-first, marking them for delayed deletion until
 			//enough memory would be released
@@ -255,36 +365,20 @@ namespace vks
 					TexParam &texp = tex_pool[bucket[heap_end].index];
 					texp.delayed_del = true;
 					deleted.push_back(bucket[heap_end].index);
+					if (ptm) { pst.evictions++; if (is_hot(texp.brick)) pst.evict_hot++; }
 					est_avlb_mem += texp.tex->memsize / MEM_MB;
 				}
 			};
 
 			//overwrite or remove undisplayed bricks.
 			//try to overwrite (any exact-property match is valid; order-insensitive)
-			for (i=0; i<bd_undisp.size(); i++)
-			{
-				TexParam &texp = tex_pool[bd_undisp[i].index];
-				if( texp.tex
-					&& texp.comp == c
-					&& brick->nx() == texp.tex->w
-					&& brick->ny() == texp.tex->h
-					&& brick->nz() == texp.tex->d
-					&& brick->nb(c) == texp.tex->bytes
-					&& brick->tex_format(c) == texp.tex->format
-					&& !brick->dirty(c))
-				{
-					//over write a texture that has exact same properties.
-					overwrite = bd_undisp[i].index;
-					break;
-				}
-			}
+			overwrite = find_overwrite(bd_undisp);
+			if (overwrite >= 0 && ptm) { pst.overwrites++; if (is_hot(tex_pool[overwrite].brick)) pst.overwrite_hot++; }
 			if (overwrite >= 0)
 			{
 				//the texture is reused in place (a new upload overwrites it), so any
 				//in-flight reads of it must complete first
-				VK_CHECK_RESULT(vkQueueWaitIdle(queue));
-				if (transfer_queue != queue)
-					VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+				waitTexIdle(tex_pool[overwrite].tex);
 				//save before deletion
 				return_brick(tex_pool[overwrite]);
 				return overwrite;
@@ -297,29 +391,12 @@ namespace vks
 			if (est_avlb_mem < new_mem)
 			{
 				//try to overwrite
-				for (i=0; i<bd_others.size(); i++)
-				{
-					TexParam &texp = tex_pool[bd_others[i].index];
-					if( texp.tex
-						&& texp.comp == c
-						&& brick->nx() == texp.tex->w
-						&& brick->ny() == texp.tex->h
-						&& brick->nz() == texp.tex->d
-						&& brick->nb(c) == texp.tex->bytes
-						&& brick->tex_format(c) == texp.tex->format
-						&& !brick->dirty(c))
-					{
-						//over write a texture that has exact same properties.
-						overwrite = bd_others[i].index;
-						break;
-					}
-				}
+				overwrite = find_overwrite(bd_others);
+				if (overwrite >= 0 && ptm) { pst.overwrites++; if (is_hot(tex_pool[overwrite].brick)) pst.overwrite_hot++; }
 				if (overwrite >= 0)
 				{
 					//the texture is reused in place: wait for in-flight reads first
-					VK_CHECK_RESULT(vkQueueWaitIdle(queue));
-					if (transfer_queue != queue)
-						VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+					waitTexIdle(tex_pool[overwrite].tex);
 					//save before deletion
 					return_brick(tex_pool[overwrite]);
 				}
@@ -602,7 +679,11 @@ namespace vks
 			VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
 			VK_CHECK_RESULT(vkResetFences(logicalDevice, 1, &slot.fence));
 			slot.fence_pending = false;
+			if (slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
 		}
+		m_frame_serial++;
+		slot.serial = m_frame_serial;
 
 		//now everything this slot's frame referenced is safe to destroy
 		for (auto& fn : slot.deferred_destroys)
@@ -1922,6 +2003,7 @@ namespace vks
 		//queue completes, so it covers the whole frame, not just this empty submit
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &si, slot.fence));
 		slot.fence_pending = true;
+		m_frame_fences_used = true;
 	}
 
 	VulkanSemaphoreSettings VulkanDevice::GetNextRenderSemaphoreSettings()

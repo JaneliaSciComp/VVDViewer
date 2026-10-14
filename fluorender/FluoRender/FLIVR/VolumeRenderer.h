@@ -145,6 +145,15 @@ namespace FLIVR
 
 		//draw
 		void eval_ml_mode(Texture* ext_msk = NULL, Texture* ext_lbl = NULL);
+		//largest raw brick maximum (TextureBrick::get_data_max) for which the
+		//data pass of the current render state provably outputs exactly 0 for
+		//every sample of the brick, i.e. the brick can be skipped without
+		//changing a single output bit; -1 if no brick can be skipped.
+		//nbytes: bytes per voxel of the data (1 or 2). Call after eval_ml_mode.
+		int invisible_brick_max(int nbytes);
+		//true if brick b of this renderer's data pass can be skipped
+		//(computes the brick maximum on first use)
+		bool brick_invisible(TextureBrick* b, int skip_max);
 
 		//mask and label
 		int get_ml_mode() {return ml_mode_;}
@@ -223,6 +232,13 @@ namespace FLIVR
 		friend class MultiVolumeRenderer;
 
 	protected:
+		//prepare_2d_cull: summed-area table of the 2D mask texels that can
+		//contribute a value >= the cull threshold, (w + 1) x (h + 1)
+		std::vector<uint32_t> cull2d_sat_;
+		int cull2d_w_ = 0, cull2d_h_ = 0;
+		const vks::VTexture* cull2d_tex_ = nullptr;
+		bool brick_outside_2d_mask(TextureBrick* b, const glm::mat4& mv, const glm::mat4& proj) const;
+
 #ifdef _DARWIN
         bool slice_mode_;
 #endif
@@ -413,6 +429,17 @@ public:
 		//	double ini_thresh, double gm_falloff, double scl_falloff,
 		//	double scl_translate, double w2d, double bins, bool ortho, bool estimate);
 		void draw_mask_th(float thresh, bool orthographic_p, bool use_absolute_value = false);
+
+		//Brick skip for the diffusion passes (draw_mask type 1, paint mode 4):
+		//once the stroke buffer has been cleared (every pass after the first),
+		//the grow shader returns before any write for a voxel whose projection
+		//samples the 2D paint mask below 0.45 (SEG_BODY_DB_GROW_CULL). A brick
+		//whose projected box only covers 2D mask texels below that threshold is
+		//therefore left unchanged by the pass, and its dispatch is skipped.
+		//prepare_2d_cull reads the current 2D mask back once (VolumeSelector::
+		//Select, before the passes); release_2d_cull drops it.
+		bool prepare_2d_cull();
+		void release_2d_cull();
 		//void draw_mask_dslt(int type, int paint_mode, int hr_mode,
 		//	double ini_thresh, double gm_falloff, double scl_falloff,
 		//	double scl_translate, double w2d, double bins, bool ortho, bool estimate, int dslt_r, int dslt_q, double dslt_c);

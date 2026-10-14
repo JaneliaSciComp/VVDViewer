@@ -33,18 +33,21 @@
 #include <FLIVR/Utils.h>
 
 #include <utility>
+#include <algorithm>
+#include <thread>
+#include <vector>
+#include <type_traits>
 #include <cstdint>
 #include <climits>
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
-#include <wx/wx.h>
-#include <wx/url.h>
 #include <iostream>
 #include <jpeglib.h>
 #include "../compatibility.h"
 #include <setjmp.h>
 #include <zlib.h>
-#include <wx/stdpaths.h>
+#include "../Core/FileUtil.h"
+#include "../Core/Thread.h"
 #include <h5j_reader.h>
 //#include <lz4frame.h>
 #include <lz4.h>
@@ -122,12 +125,15 @@ namespace FLIVR
 
       //priority
       priority_ = 0;
+      data_max_ = -1;
+      data_max_src_ = nullptr;
 
 	  brkdata_ = NULL;
 	  loading_ = false;
 	  
 	  disp_ = true;
 	  prevent_tex_deletion_ = false;
+	  tex_pinned_ = false;
 	  lock_brickdata_ = false;
 
 	  compression_ = false;
@@ -1004,55 +1010,189 @@ z
 	   return ptr;
    }
    
+   //legacy "skip empty bricks" setting: bricks whose data are all zero get
+   //priority 1 and are never drawn (Texture::build with use_priority_)
    void TextureBrick::set_priority()
    {
-      if (!data_[0] || !data_[0]->getNrrd())
-      {
-         priority_ = 0;
-         return;
-      }
-      size_t vs = tex_format_size(tex_format(0));
-      size_t sx = data_[0]->getNrrd()->axis[0].size;
-      size_t sy = data_[0]->getNrrd()->axis[1].size;
-      if (vs == 1)
-      {
-         unsigned char max = 0;
-         unsigned char *ptr = (unsigned char *)(data_[0]->getNrrd()->data);
-         for (int i=0; i<nx_; i++)
-            for (int j=0; j<ny_; j++)
-               for (int k=0; k<nz_; k++)
-               {
-                  long long index = (long long)(sx)* (long long)(sy) *
-                     (long long)(oz_+k) + (long long)(sx) *
-                     (long long)(oy_+j) + (long long)(ox_+i);
-                  max = ptr[index]>max?ptr[index]:max;
-               }
-         if (max == 0)
-            priority_ = 1;
-         else
-            priority_ = 0;
-      }
-      else if (vs == 2)
-      {
-         unsigned short max = 0;
-         unsigned short *ptr = (unsigned short *)(data_[0]->getNrrd()->data);
-         for (int i=0; i<nx_; i++)
-            for (int j=0; j<ny_; j++)
-               for (int k=0; k<nz_; k++)
-               {
-                  long long index = (long long)(sx)* (long long)(sy) *
-                     (long long)(oz_+k) + (long long)(sx) *
-                     (long long)(oy_+j) + (long long)(ox_+i);
-                  max = ptr[index]>max?ptr[index]:max;
-               }
-         if (max == 0)
-            priority_ = 1;
-         else
-            priority_ = 0;
-	  }
+      int m = get_data_max();
+      if (m < 0)
+         m = compute_data_max(1);   //Texture::build runs one brick per thread
+      priority_ = (m == 0) ? 1 : 0;
    }
 
-   
+   namespace
+   {
+      template <typename T>
+      T brick_max_rows(const T* base, size_t ypitch, size_t zpitch, size_t nx, size_t ny, size_t z0, size_t z1)
+      {
+         T m = 0;
+         for (size_t z = z0; z < z1; z++)
+         {
+            const T* plane = base + z * zpitch;
+            for (size_t y = 0; y < ny; y++)
+            {
+               const T* row = plane + y * ypitch;
+               T rm = 0;
+               for (size_t x = 0; x < nx; x++)
+                  rm = row[x] > rm ? row[x] : rm;   //vectorizes
+               m = rm > m ? rm : m;
+            }
+         }
+         return m;
+      }
+   }
+
+   namespace
+   {
+      //per-cell maxima of z-slabs [z0, z1) of cells
+      template <typename T>
+      void block_max_slabs(const T* data, VL_Nrrd::BlockMax& g, size_t cz0, size_t cz1)
+      {
+         const size_t B = VL_Nrrd::BlockMax::BLOCK;
+         std::vector<T> rowmax(g.gx);
+         for (size_t cz = cz0; cz < cz1; cz++)
+         {
+            uint16_t* plane = g.v.data() + cz * g.gx * g.gy;
+            const size_t z1 = std::min(g.nz, (cz + 1) * B);
+            for (size_t z = cz * B; z < z1; z++)
+            {
+               for (size_t y = 0; y < g.ny; y++)
+               {
+                  const T* row = data + (z * g.ny + y) * g.nx;
+                  uint16_t* cells = plane + (y / B) * g.gx;
+                  size_t x = 0;
+                  for (size_t cx = 0; cx < g.gx; cx++)
+                  {
+                     const size_t xe = std::min(g.nx, x + B);
+                     T m = 0;
+                     for (; x < xe; x++)
+                        m = row[x] > m ? row[x] : m;
+                     if (m > cells[cx]) cells[cx] = m;
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   void VL_Nrrd::computeBlockMax(int threads)
+   {
+      m_blockmax.reset();
+      if (!m_nrrd || !m_nrrd->data)
+         return;
+      if (m_nrrd->type != nrrdTypeUChar && m_nrrd->type != nrrdTypeUShort)
+         return;
+      int off = 0;
+      if (m_nrrd->dim == 4)
+      {
+         if (m_nrrd->axis[0].size != 1)
+            return;
+         off = 1;
+      }
+      else if (m_nrrd->dim != 3)
+         return;
+      auto g = std::make_shared<BlockMax>();
+      g->src = m_nrrd->data;
+      g->nx = m_nrrd->axis[off].size;
+      g->ny = m_nrrd->axis[off + 1].size;
+      g->nz = m_nrrd->axis[off + 2].size;
+      const size_t B = BlockMax::BLOCK;
+      g->gx = (g->nx + B - 1) / B;
+      g->gy = (g->ny + B - 1) / B;
+      g->gz = (g->nz + B - 1) / B;
+      if (!g->gx || !g->gy || !g->gz)
+         return;
+      g->v.assign(g->gx * g->gy * g->gz, 0);
+
+      size_t nth = threads > 1 ? (size_t)threads : 1;
+      if (nth > g->gz) nth = g->gz;
+      auto run = [&](size_t t) {
+         const size_t c0 = g->gz * t / nth, c1 = g->gz * (t + 1) / nth;
+         if (m_nrrd->type == nrrdTypeUChar)
+            block_max_slabs<uint8_t>((const uint8_t*)m_nrrd->data, *g, c0, c1);
+         else
+            block_max_slabs<uint16_t>((const uint16_t*)m_nrrd->data, *g, c0, c1);
+      };
+      std::vector<std::thread> ths;
+      for (size_t t = 1; t < nth; t++)
+         ths.emplace_back(run, t);
+      run(0);
+      for (auto& th : ths) th.join();
+      m_blockmax = g;
+   }
+
+   int TextureBrick::compute_data_max(int max_threads)
+   {
+      Nrrd* n = data_[0] ? data_[0]->getNrrd() : nullptr;
+      if (!n || !n->data || brkdata_)
+         return -1;
+      if (n->type != nrrdTypeUChar && n->type != nrrdTypeUShort)
+         return -1;
+      const size_t sxv = (size_t)sx(), syv = (size_t)sy(), szv = (size_t)sz();
+      if (nx_ <= 0 || ny_ <= 0 || nz_ <= 0 ||
+         (size_t)ox_ + nx_ > sxv || (size_t)oy_ + ny_ > syv || (size_t)oz_ + nz_ > szv)
+         return -1;
+
+      //from the load-time block maxima: the cells covering the brick
+      if (auto g = data_[0]->getBlockMax())
+      {
+         if (g->nx == sxv && g->ny == syv && g->nz == szv)
+         {
+            const size_t B = VL_Nrrd::BlockMax::BLOCK;
+            const size_t x0 = ox_ / B, x1 = (ox_ + nx_ - 1) / B;
+            const size_t y0 = oy_ / B, y1 = (oy_ + ny_ - 1) / B;
+            const size_t z0 = oz_ / B, z1 = (oz_ + nz_ - 1) / B;
+            int m = 0;
+            for (size_t z = z0; z <= z1; z++)
+               for (size_t y = y0; y <= y1; y++)
+               {
+                  const uint16_t* c = g->v.data() + (z * g->gy + y) * g->gx;
+                  for (size_t x = x0; x <= x1; x++)
+                     m = c[x] > m ? c[x] : m;
+               }
+            data_max_ = m;
+            data_max_src_ = n->data;
+            return m;
+         }
+      }
+
+      const size_t ypitch = sxv, zpitch = sxv * syv;
+      const size_t off = (size_t)oz_ * zpitch + (size_t)oy_ * ypitch + (size_t)ox_;
+      const size_t nz = (size_t)nz_;
+      size_t nth = max_threads > 1 ? (size_t)max_threads : 1;
+      const size_t bytes = (size_t)nx_ * ny_ * nz * (n->type == nrrdTypeUChar ? 1 : 2);
+      if (bytes < (4u << 20)) nth = 1;
+      if (nth > nz) nth = nz;
+
+      int result = 0;
+      auto run = [&](auto* base) {
+         using T = std::remove_const_t<std::remove_pointer_t<decltype(base)>>;
+         std::vector<T> part(nth, 0);
+         std::vector<std::thread> ths;
+         const size_t grain = nz / nth;
+         for (size_t t = 0; t < nth; t++)
+         {
+            size_t z0 = t * grain, z1 = (t + 1 == nth) ? nz : z0 + grain;
+            if (t + 1 == nth)
+               part[t] = brick_max_rows<T>(base, ypitch, zpitch, nx_, ny_, z0, z1);
+            else
+               ths.emplace_back([&, t, z0, z1]() { part[t] = brick_max_rows<T>(base, ypitch, zpitch, nx_, ny_, z0, z1); });
+         }
+         for (auto& th : ths) th.join();
+         T m = 0;
+         for (T v : part) m = v > m ? v : m;
+         result = (int)m;
+      };
+      if (n->type == nrrdTypeUChar)
+         run((const uint8_t*)n->data + off);
+      else
+         run((const uint16_t*)n->data + off);
+
+      data_max_ = result;
+      data_max_src_ = n->data;
+      return result;
+   }
+
    void TextureBrick::set_priority_brk(ifstream* ifs, int filetype)
    {
 /*	   if (!data_[0])
@@ -1196,13 +1336,13 @@ z
 
    int TextureBrick::xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
    {
-	   wxThread *wxth = (wxThread *)p;
+	   vvd::Thread *wxth = (vvd::Thread *)p;
 	   if (wxth && wxth->TestDestroy())
 		   return 1;
 	   return 0;
    }
 
-   bool TextureBrick::read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, wxThread *th)
+   bool TextureBrick::read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, vvd::Thread *th)
    {
 	   readsize = -1;
 
@@ -1226,8 +1366,8 @@ z
 	   if (finfo->isurl)
 	   {
 		   bool found_cache = false;
-		   wxString wxcfname = finfo->cache_filename;
-		   if (finfo->cached && wxFileExists(wxcfname))
+		   vvd::String wxcfname = finfo->cache_filename;
+		   if (finfo->cached && vvd::FileExists(wxcfname))
 			   found_cache = true;
 		   else
 		   {
@@ -1237,7 +1377,7 @@ z
 			   if (itr != cache_table_.end())
 			   {
 				   wxcfname = itr->second;
-				   if (wxFileExists(wxcfname))
+				   if (vvd::FileExists(wxcfname))
 						found_cache = true;
 			   }
 
@@ -1250,7 +1390,7 @@ z
 
 		   if (!found_cache)
 		   {
-               std::cout << "downloading a brick: " << wxString(finfo->filename).ToStdString().c_str() << endl;
+               std::cout << "downloading a brick: " << ws2s(finfo->filename) << endl;
 
 			   CURLcode ret;
 
@@ -1259,7 +1399,8 @@ z
 				   return false;
 			   }
 			   curl_easy_reset(s_curl_);
-			   curl_easy_setopt(s_curl_, CURLOPT_URL, wxString(finfo->filename).ToStdString().c_str());
+			   std::string url_utf8 = ws2s(finfo->filename);
+			   curl_easy_setopt(s_curl_, CURLOPT_URL, url_utf8.c_str());
                curl_easy_setopt(s_curl_, CURLOPT_TIMEOUT, 10L);
 			   curl_easy_setopt(s_curl_, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 			   curl_easy_setopt(s_curl_, CURLOPT_WRITEFUNCTION, WriteFileCallback);
@@ -1271,26 +1412,25 @@ z
 			   curl_easy_setopt(s_curl_, CURLOPT_XFERINFODATA, th);
 			   curl_easy_setopt(s_curl_, CURLOPT_NOPROGRESS, 0L);
 
-			   wxString expath = wxStandardPaths::Get().GetExecutablePath();
-			   expath = expath.BeforeLast(GETSLASH(),NULL);
+			   vvd::String expath = vvd::GetExecutableDir();
 #ifdef _DARWIN
-			   wxString dft = expath + "/../Resources/vvd_cache";
-			   if (!wxDirExists(dft))
-				   wxMkdir(dft);
+			   vvd::String dft = expath + L"/../Resources/vvd_cache";
+			   if (!vvd::DirExists(dft))
+				   vvd::Mkdir(dft);
 			   dft += L"/";
 #else
-			   wxString dft = expath + GETSLASHS() + "vvd_cache";
-			   wxString dft2 = wxStandardPaths::Get().GetUserDataDir() + GETSLASHS() + "vvd_cache";
-			   if (!wxDirExists(dft) && wxDirExists(dft2))
+			   vvd::String dft = expath + GETSLASH() + L"vvd_cache";
+			   vvd::String dft2 = vvd::GetUserDataDir() + GETSLASH() + L"vvd_cache";
+			   if (!vvd::DirExists(dft) && vvd::DirExists(dft2))
 				   dft = dft2;
-			   else if (!wxDirExists(dft))
-				   wxMkdir(dft);
+			   else if (!vvd::DirExists(dft))
+				   vvd::Mkdir(dft);
 			   dft += GETSLASH();
 #endif
 			   wstring randname;
 			   int len = 16;
 			   char s[17];
-			   wxString test;
+			   vvd::String test;
 			   do {
 				   const char alphanum[] =
 					   "0123456789"
@@ -1303,10 +1443,10 @@ z
 				   s[len] = 0;
 				   test = dft;
 				   test += s;
-			   } while (wxFileExists(test));
+			   } while (vvd::FileExists(test));
 			   dft += s;
 
-			   wstring cfname = dft.ToStdWstring();
+			   wstring cfname = dft;
 			   ofstream ofs(ws2s(cfname), ios::binary);
 			   if (!ofs) return false;
 			   curl_easy_setopt(s_curl_, CURLOPT_WRITEDATA, &ofs);
@@ -1327,7 +1467,7 @@ z
 			   else
 			   {
                    cerr << "curl failed to load " << ws2s(finfo->filename) << endl;
-				   if(wxFileExists(cfname)) wxRemoveFile(cfname);
+				   if(vvd::FileExists(cfname)) vvd::RemoveFile(cfname);
                    cout << "faild" << endl;
 				   return false;
 			   }
@@ -2099,8 +2239,8 @@ z
    {
 	   for(auto itr = cache_table_.begin(); itr != cache_table_.end(); ++itr)
 	   {
-		   wxString tmp = itr->second;
-		   if(wxFileExists(tmp)) wxRemoveFile(tmp);
+		   vvd::String tmp = itr->second;
+		   if(vvd::FileExists(tmp)) vvd::RemoveFile(tmp);
 	   }
 	   if (!cache_table_.empty()) cache_table_.clear();
    }
@@ -2157,7 +2297,8 @@ z
 		   return false;
 	   }
 	   curl_easy_reset(s_curl_);
-	   curl_easy_setopt(s_curl_, CURLOPT_URL, wxString(finfo->filename).ToStdString().c_str());
+	   std::string url_utf8 = ws2s(finfo->filename);
+			   curl_easy_setopt(s_curl_, CURLOPT_URL, url_utf8.c_str());
        curl_easy_setopt(s_curl_, CURLOPT_TIMEOUT, 10L);
 	   curl_easy_setopt(s_curl_, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
@@ -2238,7 +2379,8 @@ z
 		   return false;
 	   }
 	   curl_easy_reset(s_curl_);
-	   curl_easy_setopt(s_curl_, CURLOPT_URL, wxString(finfo->filename).ToStdString().c_str());
+	   std::string url_utf8 = ws2s(finfo->filename);
+			   curl_easy_setopt(s_curl_, CURLOPT_URL, url_utf8.c_str());
        curl_easy_setopt(s_curl_, CURLOPT_TIMEOUT, 10L);
 	   curl_easy_setopt(s_curl_, CURLOPT_USERAGENT, "libcurl-agent/1.0");
 	   curl_easy_setopt(s_curl_, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);

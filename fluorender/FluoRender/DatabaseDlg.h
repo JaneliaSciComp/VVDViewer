@@ -18,17 +18,7 @@ class VRenderView;
 wxDECLARE_EVENT(wxEVT_MYTHREAD_COMPLETED, wxCommandEvent);
 wxDECLARE_EVENT(wxEVT_MYTHREAD_PAUSED, wxCommandEvent);
 
-class EXPORT_API AnnotationDB
-{
-public:
-	wxString url;
-	wxArrayString contents;
-
-	bool operator==(const AnnotationDB &rhs) const
-	{
-		return (url == rhs.url) && (contents == rhs.contents);
-	}
-};
+#include "AnnotationDB.h"
 
 //tree item data
 class EXPORT_API DBItemInfo : public wxTreeItemData

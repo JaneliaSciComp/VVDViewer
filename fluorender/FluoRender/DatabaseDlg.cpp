@@ -3,6 +3,7 @@
 #include <wx/valnum.h>
 #include <wx/tokenzr.h>
 #include <wx/msgdlg.h>
+#include <wx/progdlg.h>
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
 #include <curl/curl.h>

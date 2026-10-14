@@ -205,6 +205,23 @@ mark_as_advanced(CLEAR ZLIB_LIBRARY)
 find_package(ZLIB REQUIRED)
 add_definitions(-DTEEM_ZLIB=1)
 include_directories(${ZLIB_INCLUDE_DIRS})
+# libdeflate (vcpkg.json): teem decodes gzip-encoded NRRD data with it in one
+# whole-buffer call (Nrrd/encodingGzip.c, 3-5x faster than zlib's streaming
+# inflate). Optional: without it teem keeps using zlib.
+find_package(libdeflate CONFIG QUIET)
+if(TARGET libdeflate::libdeflate_static)
+	set(VVD_LIBDEFLATE libdeflate::libdeflate_static)
+elseif(TARGET libdeflate::libdeflate_shared)
+	set(VVD_LIBDEFLATE libdeflate::libdeflate_shared)
+endif()
+if(VVD_LIBDEFLATE)
+	message(STATUS "NRRD gzip decoding: libdeflate (${VVD_LIBDEFLATE})")
+	# every executable that links zlib also gets libdeflate (teem is
+	# compiled into each of them)
+	list(APPEND ZLIB_LIBRARIES ${VVD_LIBDEFLATE})
+else()
+	message(STATUS "NRRD gzip decoding: zlib (libdeflate not found)")
+endif()
 
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/teem)
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/teem/Biff)
@@ -222,6 +239,10 @@ file(GLOB nrrdhdr fluorender/teem/Nrrd/*.h)
 add_library(TEEM_OBJ OBJECT
       ${airsrc} ${hestsrc} ${nrrdsrc} ${biffsrc}
       ${airhdr} ${hesthdr} ${nrrdhdr} ${biffhdr})
+if(VVD_LIBDEFLATE)
+	target_compile_definitions(TEEM_OBJ PRIVATE TEEM_LIBDEFLATE=1)
+	target_link_libraries(TEEM_OBJ PRIVATE ${VVD_LIBDEFLATE})
+endif()
 
 #pole
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/pole)
@@ -290,6 +311,13 @@ add_library(NV_OBJ OBJECT
       ${nv_src} ${nv_hdr})
 
 #FLIVR
+# Toolkit-neutral core (strings, threads, file utils, UI callbacks) used by the
+# engine and data layer. Must never include a GUI toolkit header.
+include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Core)
+file(GLOB core_src fluorender/FluoRender/Core/*.cpp)
+file(GLOB core_hdr fluorender/FluoRender/Core/*.h)
+add_library(CORE_OBJ OBJECT ${core_src} ${core_hdr} ${VVDViewer_SOURCE_DIR}/external/miniz/miniz.c)
+
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/FLIVR)
 file(GLOB fli_src fluorender/FluoRender/FLIVR/*.cpp)
 file(GLOB fli_hdr fluorender/FluoRender/FLIVR/*.h)
@@ -560,6 +588,12 @@ foreach(f ${hdrall})
   endif()
 endforeach()
 file(GLOB rsc ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/img/*.xpm)
+# the cell warp (RigidCellsWarp.cpp) reproduces a Java plugin bit for bit:
+# no fused multiply-add contraction (also set by a pragma in the file)
+if(NOT MSVC)
+  set_source_files_properties(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/RigidCellsWarp.cpp
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     file(GLOB mac_src ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/*.m)
@@ -588,6 +622,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		$<TARGET_OBJECTS:POLE_OBJ>
 		$<TARGET_OBJECTS:TEEM_OBJ>
 		$<TARGET_OBJECTS:PLUGINS_OBJ>
+		$<TARGET_OBJECTS:CORE_OBJ>
 		$<TARGET_OBJECTS:WACUTILS_OBJ>)
 else()
 	add_library(VVDMainFrame SHARED
@@ -601,7 +636,8 @@ else()
 		$<TARGET_OBJECTS:TRACKING_OBJ>
 		$<TARGET_OBJECTS:POLE_OBJ>
 		$<TARGET_OBJECTS:TEEM_OBJ>
-		$<TARGET_OBJECTS:PLUGINS_OBJ>)
+		$<TARGET_OBJECTS:PLUGINS_OBJ>
+		$<TARGET_OBJECTS:CORE_OBJ>)
 endif()
 
 #platform specific rules
@@ -648,6 +684,7 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 					  POLE_OBJ
 					  TEEM_OBJ
 					  PLUGINS_OBJ
+					  CORE_OBJ
 					  PROPERTIES
 					  COMPILE_DEFINITIONS 
 					  nrrd_EXPORTS
@@ -1283,3 +1320,17 @@ else()
 			$<TARGET_FILE_DIR:VVDViewer>)
 	endforeach()
 endif()
+
+# ---------------------------------------------------------------------------
+# Toolkit interop for vvd::String (Core/VVDString.h). Only the wx GUI targets
+# get the wxString conversions; the engine object libraries stay neutral and
+# are shared with the Qt front end.
+foreach(_t VVDMainFrame VVDViewer wxGuiPluginBase FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin PLUGINS_OBJ IMAGES_OBJ WACUTILS_OBJ)
+	if(TARGET ${_t})
+		target_compile_definitions(${_t} PRIVATE VVD_WX_STRING_INTEROP=1)
+	endif()
+endforeach()
+
+# Optional Qt front end (phase 1 of the Qt port). See cmake/QtGui.cmake.
+option(ENABLE_QT_GUI "Build the Qt front end (VVDViewerQt) in addition to the wx app" OFF)
+include(${VVDViewer_SOURCE_DIR}/cmake/QtGui.cmake)
