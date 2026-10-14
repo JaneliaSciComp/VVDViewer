@@ -11,13 +11,18 @@
 # The Vulkan SDK is NOT managed here: install it separately
 # (https://vulkan.lunarg.com/) so that VULKAN_SDK is set.
 #
-# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--vcpkg <dir>]
+# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--enable-qt] [--vcpkg <dir>]
+#
+#   --enable-qt   also build the Qt front end (VVDViewerQt). Needs an installed
+#                 Qt 6: "brew install qt" on macOS, qt6-base-dev on Debian/Ubuntu,
+#                 or pass -DCMAKE_PREFIX_PATH=<Qt dir> through CMAKE_ARGS.
 
 set -euo pipefail
 
 CONFIG="Release"
 CLEAN=0
 ENABLE_ND2=0
+ENABLE_QT=0
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$REPO/build"
 VCPKG_ROOT="${VCPKG_ROOT:-$REPO/vcpkg}"
@@ -30,6 +35,7 @@ while [ $# -gt 0 ]; do
     --debug)      CONFIG=Debug ;;
     --clean)      CLEAN=1 ;;
     --enable-nd2) ENABLE_ND2=1 ;;
+    --enable-qt)  ENABLE_QT=1 ;;
     --vcpkg)      shift; VCPKG_ROOT="$1" ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
@@ -145,6 +151,18 @@ CMAKE_ARGS=(
 )
 [ ${#GEN_ARGS[@]} -gt 0 ] && CMAKE_ARGS+=("${GEN_ARGS[@]}")
 [ "$ENABLE_ND2" = "1" ]   && CMAKE_ARGS+=(-DENABLE_ND2=ON)
+if [ "$ENABLE_QT" = "1" ]; then
+  CMAKE_ARGS+=(-DENABLE_QT_GUI=ON)
+  if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    QT_PREFIX="$(brew --prefix qt 2>/dev/null || true)"
+    if [ -z "$QT_PREFIX" ] || [ ! -d "$QT_PREFIX" ]; then
+      echo "Qt 6 not found in Homebrew; installing (brew install qt) ..."
+      brew install qt
+      QT_PREFIX="$(brew --prefix qt)"
+    fi
+    CMAKE_ARGS+=(-DCMAKE_PREFIX_PATH="$QT_PREFIX")
+  fi
+fi
 
 echo "Configuring... first run downloads & builds ALL dependencies from source (can take 30-90 min)."
 cmake "${CMAKE_ARGS[@]}"
@@ -157,4 +175,6 @@ cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel
 echo ""
 echo "=== Build complete ==="
 nd2_state="disabled (default)"; [ "$ENABLE_ND2" = "1" ] && nd2_state="ENABLED"
+qt_state="disabled (default)"; [ "$ENABLE_QT" = "1" ] && qt_state="ENABLED (VVDViewerQt)"
+echo "Qt front end: $qt_state."
 echo "ND2 (Nikon) reader: $nd2_state.  libCZI: enabled (via vcpkg).  Vulkan SDK: external ($VULKAN_SDK)."
