@@ -460,7 +460,7 @@ package_macos() {
 
   # Verify: all Mach-O files are for the right architecture, run on the minimum
   # macOS version, and load only system libraries or libraries in the bundle.
-  local want_arch bad="" m dep mv min_os
+  local want_arch bad="" m dep mv min_os id
   case "$TRIPLET" in arm64-*) want_arch=arm64 ;; *) want_arch=x86_64 ;; esac
   # Minimum macOS: the build's deployment target (CMakeLists.txt sets it), else
   # whatever the executable was linked for.
@@ -477,13 +477,18 @@ package_macos() {
     elif ver_gt "$mv" "$min_os"; then
       bad="$bad\n  $(basename "$m") requires macOS $mv, newer than the app's minimum $min_os"
     fi
+    # Dependencies of the target architecture only (universal dylibs such as
+    # MoltenVK list one block per architecture), minus the dylib's own install
+    # name, which otool -L prints first and which is not a dependency.
+    id="$(otool -arch "$want_arch" -D "$m" 2>/dev/null | sed -n 2p)"
     while IFS= read -r dep; do
+      [ -n "$id" ] && [ "$dep" = "$id" ] && continue
       case "$dep" in
         /usr/lib/*|/System/*|@executable_path/*|@loader_path/*) ;;
         @rpath/*) bad="$bad\n  $(basename "$m") uses $dep (unresolved @rpath)" ;;
         *) bad="$bad\n  $(basename "$m") loads $dep from outside the bundle" ;;
       esac
-    done < <(otool -L "$m" | awk 'NR>1 {print $1}')
+    done < <(otool -arch "$want_arch" -L "$m" | awk 'NR>1 {print $1}')
   done
   [ -z "$bad" ] || fail "Bundle verification failed:$(printf '%b' "$bad")"
   log "Verified: all ${#machos[@]} Mach-O files are $want_arch, run on macOS $min_os or newer, and are self-contained."
