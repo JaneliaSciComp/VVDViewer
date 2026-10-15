@@ -141,6 +141,7 @@ set(qtplugin_res
 	${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/macros/vvd_run.txt
 	${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/macros/vvd_quit.txt
 	${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/plugins/vvd_listener.jar
+	${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/plugins/Apply_Bigwarp_Filter.jar
 	${VVDViewer_SOURCE_DIR}/plugin_nblast/r/nblast_search.R)
 if(APPLE)
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
@@ -165,7 +166,27 @@ if(APPLE)
 		add_custom_command(TARGET VVDViewerQt POST_BUILD
 			COMMAND ${MACDEPLOYQT} "$<TARGET_BUNDLE_DIR:VVDViewerQt>" -always-overwrite ${_macdeployqt_libpath}
 			COMMENT "macdeployqt VVDViewerQt.app")
+	else()
+		message(WARNING "macdeployqt not found: VVDViewerQt.app will not contain Qt and only runs on this machine")
 	endif()
+	# Last step: bundle MoltenVK + ICD manifest, rewrite every remaining
+	# non-system reference into Frameworks, strip build-machine LC_RPATHs
+	# (vcpkg_installed, /opt/homebrew/opt/qt/lib), re-sign. Also drops Qt
+	# plugins the app does not use, together with what only they pulled in:
+	#  - virtual keyboard input context (QtQuick/QtQml/...),
+	#  - glib network-information backend (macOS has its own),
+	#  - PDF image format (QtPdf, from qtwebengine),
+	#  - OpenSSL TLS backend (the app only uses plain QTcpSocket/QTcpServer;
+	#    SecureTransport stays. libssl/libcrypto remain: QtNetwork links them).
+	add_custom_command(TARGET VVDViewerQt POST_BUILD
+		COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_bundle_fixup.sh"
+			"$<TARGET_BUNDLE_DIR:VVDViewerQt>" "${MOLTENVK_LIBRARY}" "${MOLTENVK_ICD_JSON}"
+			"${Vulkan_LIBRARY}" "${VVD_CODESIGN_IDENTITY}"
+			platforminputcontexts/libqtvirtualkeyboardplugin.dylib
+			networkinformation/libqglib.dylib
+			imageformats/libqpdf.dylib
+			tls/libqopensslbackend.dylib
+		COMMENT "Making VVDViewerQt.app self-contained (MoltenVK, rpaths, codesign)")
 else()
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/CL_code"

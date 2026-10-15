@@ -7,11 +7,50 @@
 */
 
 #include "vulkanexamplebase.h"
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#endif
 
 std::vector<const char*> VulkanExampleBase::args;
 
+#if defined(__APPLE__)
+// The app bundle ships its own Vulkan driver (Contents/Frameworks/libMoltenVK
+// .dylib, manifest in Contents/Resources/vulkan/icd.d). The Vulkan loader
+// would also pick up any system-wide driver manifests (/usr/local/share/
+// vulkan/icd.d from a Vulkan SDK install, Homebrew, ...), which loads a second
+// MoltenVK copy into the process (duplicate Objective-C classes) and may hand
+// us that driver's device. Restrict the loader to the bundled driver unless
+// the user chose drivers explicitly (VK_DRIVER_FILES / VK_ICD_FILENAMES).
+static void UseBundledVulkanDriver()
+{
+	if (getenv("VK_DRIVER_FILES") || getenv("VK_ICD_FILENAMES") || getenv("VK_ADD_DRIVER_FILES"))
+		return;
+	char exe[PATH_MAX];
+	uint32_t size = sizeof(exe);
+	if (_NSGetExecutablePath(exe, &size) != 0)
+		return;
+	char real[PATH_MAX];
+	if (!realpath(exe, real))
+		return;
+	std::string icd(real);
+	const size_t slash = icd.rfind('/');
+	if (slash == std::string::npos)
+		return;
+	icd = icd.substr(0, slash) + "/../Resources/vulkan/icd.d/MoltenVK_icd.json";
+	struct stat st;
+	if (stat(icd.c_str(), &st) == 0)
+		setenv("VK_DRIVER_FILES", icd.c_str(), 0);
+}
+#endif
+
 VkResult VulkanExampleBase::createInstance(bool enableValidation)
 {
+#if defined(__APPLE__)
+	UseBundledVulkanDriver();
+#endif
 	this->settings.validation = enableValidation;
 
 	// Validation can also be forced via a define
