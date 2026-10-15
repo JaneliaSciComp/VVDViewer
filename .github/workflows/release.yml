@@ -32,6 +32,9 @@ on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+*'
+    # TEMPORARY: test runs from this branch - revert this commit before merging.
+    branches:
+      - ci/release-packaging
   workflow_dispatch:
     inputs:
       ffmpeg_license:
