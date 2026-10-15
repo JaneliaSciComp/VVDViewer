@@ -988,7 +988,16 @@ void RenderCanvas::DrawVolumesDP(int nx, int ny)
 					m_finished_peeling_layer++;
 					if (m_finished_peeling_layer <= peeling_layers)
 					{
+						// The next slab is drawn in this same call with the frame's
+						// matrices. wx StartLoopUpdate leaves m_mv_mat as the full
+						// (camera + object) matrix it computed; the Qt one restores
+						// the camera-only matrix at its end, which put the volume of
+						// every slab after the first at the wrong place (the slabs
+						// behind / inside a transparent mesh came out empty).
+						const glm::mat4 frame_mv = m_mv_mat, frame_proj = m_proj_mat;
 						StartLoopUpdate(false);
+						m_mv_mat = frame_mv;
+						m_proj_mat = frame_proj;
 						finished_bricks = TextureRenderer::get_finished_bricks();
 						TextureRenderer::reset_finished_bricks();
 
