@@ -42,7 +42,8 @@ VVDViewer is open source software licensed under the [BSD 3-Clause License](LICE
 VVDViewer ships with a one-command auto-build that **downloads and builds every
 third-party dependency from source** (via [vcpkg](https://github.com/microsoft/vcpkg))
 and then builds the application with CMake. All dependencies are linked
-**statically except wxWidgets**, which is built as a shared library (DLL/dylib/so).
+**statically except wxWidgets, ffmpeg and libCZI**, which are built as shared
+libraries (DLL/dylib/so); on Linux the GTK3/GLib stack is shared as well.
 
 The only dependency you must install yourself is the **Vulkan SDK**
 (https://vulkan.lunarg.com/), so that the `VULKAN_SDK` environment variable is set.
@@ -72,19 +73,74 @@ bash build.sh               # Release build
 bash build.sh --debug --clean
 ```
 
+**ffmpeg license (LGPL / GPL).** By default ffmpeg is built **without** the GPL
+x264/x265 encoders, so the binaries can be redistributed under the LGPL; movies are
+then exported as MPEG-4 Part 2. Add `-EnableGPL` (PowerShell) / `--enable-gpl` (shell)
+to build ffmpeg with x264/x265 and export H.264 movies instead — binaries built that way
+are covered by the **GPL**. Reading H5J files does not depend on this choice (it uses
+ffmpeg's built-in HEVC decoder). `-EnableGPL` cannot be combined with `-EnableND2`.
+
 On the **first run** this downloads and compiles all dependencies, which typically takes
 45–90 minutes; subsequent builds reuse the vcpkg binary cache and are incremental. vcpkg is
 cloned into `./vcpkg` automatically (or set `VCPKG_ROOT` to reuse an existing checkout).
 
 The finished application lands in `build/bin/<Config>/` (`VVDViewer.exe` on Windows, a
-`VVDViewer.app` bundle on macOS). On Windows the wxWidgets DLLs are deployed next to the
-executable automatically; every other dependency is linked statically into `VVDMainFrame`.
+`VVDViewer.app` bundle on macOS). On Windows the wxWidgets, ffmpeg and libCZI DLLs and the
+VC++ runtime are deployed next to the executable automatically; every other dependency is
+linked statically into `VVDMainFrame`.
 
 Notes:
  * The **Nikon ND2** reader depends on a proprietary, closed-source SDK and is therefore
    **disabled by default**. Pass `-EnableND2` (PowerShell) / `--enable-nd2` (shell) and
    provide the SDK via `-DND2_INCLUDE_DIR` / `-DND2_LIBRARY_DIR` to enable it.
  * The Zeiss **CZI** reader (libCZI) is built automatically by vcpkg and is enabled.
+
+### Release packages
+
+`package.ps1` (Windows) and `package.sh` (Linux / macOS) turn a Release build into the
+files published on the [releases page](https://github.com/JaneliaSciComp/VVDViewer/releases),
+named like the existing releases (`VVDViewer<MMDDYY>-<platform>-vulkan`, plus `-gpl` for a
+GPL build):
+
+| Platform | Package | Contents |
+|---|---|---|
+| Windows | `.zip` | one folder: `VVDViewer.exe`, exactly the DLLs it needs (incl. the app-local VC++ runtime), `plugins/gui/`, resources |
+| Linux | `.tar.xz` | `VVDViewer` launcher + `data/` with the bundled vcpkg / Vulkan-loader libraries (runs on the build distro release or newer) |
+| macOS | `.dmg` | `VVDViewer.app` + a link to `/Applications` (runs on macOS 14 or newer; set by `CMAKE_OSX_DEPLOYMENT_TARGET` / `VCPKG_OSX_DEPLOYMENT_TARGET`) |
+
+Each package carries `THIRD_PARTY_NOTICES.txt`, the license of every component
+(`licenses/`) and `BUILDINFO.txt`; a `-sources` archive with the source code of the
+GPL/LGPL components (as built, with the vcpkg patches) is written next to it, plus
+`.sha256` checksums.
+
+```powershell
+.\package.ps1                       # package the existing build
+.\package.ps1 -Build -EnableGPL     # build first, GPL variant
+```
+
+```bash
+bash package.sh                     # Linux: .tar.xz, macOS: .dmg
+bash package.sh --build --enable-gpl
+```
+
+Code signing is optional; without it the packages are created unsigned (macOS: ad-hoc).
+ * Windows: `-CertThumbprint <sha1>` (certificate store / hardware token), `-PfxPath <file>`
+   (password in `VVD_SIGN_PFX_PASSWORD`), or Azure Artifact Signing
+   (`-ArtifactSigningMetadata <json> -ArtifactSigningDlib <Azure.CodeSigning.Dlib.dll>`).
+   The Microsoft VC++ runtime DLLs are never re-signed.
+ * macOS: `--sign-identity "Developer ID Application: ... (TEAMID)"` signs with the hardened
+   runtime (`packaging/macos/VVDViewer.entitlements`); add `--notary-profile <profile>` or
+   `--notary-key <AuthKey.p8> --notary-key-id <id> --notary-issuer <uuid>` to notarize and
+   staple the DMG.
+ * Linux: `--gpg-key <id>` writes detached GPG signatures.
+
+The GitHub Actions workflow [`.github/workflows/release.yml`](.github/workflows/release.yml)
+runs the same scripts on GitHub-hosted runners (Windows, Ubuntu 24.04, macOS arm64): pushing
+a version tag such as `1.7.5` builds the LGPL packages, attaches build provenance
+attestations (`gh attestation verify <file> -R JaneliaSciComp/VVDViewer`) and creates a
+**draft** release; the workflow can also be started by hand (Actions tab) to build GPL
+packages or the macOS Intel package. The signing secrets/variables it understands are
+listed at the top of the workflow file.
 
 The manual, dependency-by-dependency instructions below remain available for advanced setups.
 

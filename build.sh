@@ -4,25 +4,42 @@
 #
 # Downloads and builds every third-party dependency (EXCEPT the Vulkan SDK)
 # from source via vcpkg, then configures and builds VVDViewer with CMake.
-# All dependencies are linked statically except wxWidgets (dynamic). On Linux,
-# the system display libraries (GTK3, X11, Wayland, libva) and the Vulkan loader
-# stay as dynamic system libraries and are NOT managed by vcpkg.
+# All dependencies are linked statically except wxWidgets, ffmpeg and libCZI
+# (dynamic; on Linux also the GTK3/GLib stack). On Linux, the system display
+# libraries (X11, Wayland, libva) and the Vulkan loader stay as dynamic system
+# libraries and are NOT managed by vcpkg.
+#
+# By default ffmpeg is built WITHOUT the GPL x264/x265 encoders, so the
+# binaries can be redistributed under the LGPL (movie export: MPEG-4 Part 2).
+# --enable-gpl adds them (movie export: H.264); such binaries are GPL-covered.
 #
 # The Vulkan SDK is NOT managed here: install it separately
 # (https://vulkan.lunarg.com/) so that VULKAN_SDK is set.
 #
-# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--vcpkg <dir>]
+# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--enable-gpl]
+#                      [--vcpkg <dir>] [--build-dir <dir>] [--triplet <name>]
+#                      [--cmake-arg <arg>]...
+#
+#   --enable-gpl       ffmpeg with x264/x265 (vcpkg manifest feature "gpl").
+#                      Cannot be combined with --enable-nd2.
+#   --triplet NAME     vcpkg triplet (default: auto). The *-vvd-release
+#                      triplets build release-only dependencies (used by CI).
+#   --cmake-arg ARG    extra CMake configure argument (repeatable), e.g.
+#                      --cmake-arg -DVCPKG_INSTALL_OPTIONS=--clean-buildtrees-after-build
 
 set -euo pipefail
 
 CONFIG="Release"
 CLEAN=0
 ENABLE_ND2=0
+ENABLE_GPL=0
+TRIPLET=""
+EXTRA_CMAKE_ARGS=()
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$REPO/build"
 VCPKG_ROOT="${VCPKG_ROOT:-$REPO/vcpkg}"
 
-usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 fail()  { echo "ERROR: $*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
@@ -30,7 +47,11 @@ while [ $# -gt 0 ]; do
     --debug)      CONFIG=Debug ;;
     --clean)      CLEAN=1 ;;
     --enable-nd2) ENABLE_ND2=1 ;;
-    --vcpkg)      shift; VCPKG_ROOT="$1" ;;
+    --enable-gpl) ENABLE_GPL=1 ;;
+    --vcpkg)      shift; VCPKG_ROOT="${1:?--vcpkg needs a directory}" ;;
+    --build-dir)  shift; BUILD_DIR="${1:?--build-dir needs a directory}" ;;
+    --triplet)    shift; TRIPLET="${1:?--triplet needs a name}" ;;
+    --cmake-arg)  shift; EXTRA_CMAKE_ARGS+=("${1:?--cmake-arg needs a value}") ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -38,6 +59,12 @@ while [ $# -gt 0 ]; do
 done
 
 echo "=== VVDViewer auto-build ($(uname -s)) ==="
+
+[ "$ENABLE_ND2" = "1" ] && [ "$ENABLE_GPL" = "1" ] && \
+  fail "--enable-nd2 and --enable-gpl cannot be combined: the proprietary Nikon ND2 SDK cannot be distributed together with GPL code."
+case "$TRIPLET" in
+  *-release) [ "$CONFIG" = "Debug" ] && fail "Triplet $TRIPLET builds release-only dependencies; it cannot be used for a Debug build." ;;
+esac
 
 # 1) Prerequisites ----------------------------------------------------------
 [ -n "${VULKAN_SDK:-}" ] || fail "VULKAN_SDK is not set. Install the Vulkan SDK (https://vulkan.lunarg.com/) and source its setup-env script."
@@ -53,10 +80,12 @@ GEN_ARGS=()
 case "$OS" in
   Darwin)
     GEN_ARGS=(-G Xcode)
-    if [ "$ARCH" = "arm64" ]; then TRIPLET="arm64-osx-vvd"; else TRIPLET="x64-osx-vvd"; fi
+    if [ -z "$TRIPLET" ]; then
+      if [ "$ARCH" = "arm64" ]; then TRIPLET="arm64-osx-vvd"; else TRIPLET="x64-osx-vvd"; fi
+    fi
     ;;
   Linux)
-    TRIPLET="x64-linux-vvd"
+    [ -n "$TRIPLET" ] || TRIPLET="x64-linux-vvd"
     # WSL: the Windows PATH is auto-imported (appendWindowsPath), and CMake
     # searches PATH-adjacent prefixes for packages. A Windows miniconda/MSYS/SDK
     # on PATH then gets discovered by vcpkg port builds (e.g. wxwidgets picked up
@@ -134,6 +163,10 @@ CMAKE_ARGS=(
 )
 [ ${#GEN_ARGS[@]} -gt 0 ] && CMAKE_ARGS+=("${GEN_ARGS[@]}")
 [ "$ENABLE_ND2" = "1" ]   && CMAKE_ARGS+=(-DENABLE_ND2=ON)
+# Always pass the feature list explicitly (empty = LGPL) so that switching an
+# existing build directory between LGPL and GPL takes effect.
+if [ "$ENABLE_GPL" = "1" ]; then CMAKE_ARGS+=(-DVCPKG_MANIFEST_FEATURES=gpl); else CMAKE_ARGS+=(-DVCPKG_MANIFEST_FEATURES=); fi
+[ ${#EXTRA_CMAKE_ARGS[@]} -gt 0 ] && CMAKE_ARGS+=("${EXTRA_CMAKE_ARGS[@]}")
 
 echo "Configuring... first run downloads & builds ALL dependencies from source (can take 30-90 min)."
 cmake "${CMAKE_ARGS[@]}"
@@ -147,3 +180,8 @@ echo ""
 echo "=== Build complete ==="
 nd2_state="disabled (default)"; [ "$ENABLE_ND2" = "1" ] && nd2_state="ENABLED"
 echo "ND2 (Nikon) reader: $nd2_state.  libCZI: enabled (via vcpkg).  Vulkan SDK: external ($VULKAN_SDK)."
+if [ "$ENABLE_GPL" = "1" ]; then
+  echo "ffmpeg: GPL (x264/x265 enabled; movie export H.264)."
+else
+  echo "ffmpeg: LGPL (default; movie export MPEG-4 Part 2)."
+fi

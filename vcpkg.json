@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
   "name": "vvdviewer",
   "version-string": "2.19.0",
-  "description": "VVDViewer dependencies, auto-built by vcpkg. All static except wxWidgets (dynamic). Vulkan SDK is provided externally and is NOT managed here.",
+  "description": "VVDViewer dependencies, auto-built by vcpkg. All static except wxWidgets, ffmpeg and libCZI (dynamic). Vulkan SDK is provided externally and is NOT managed here.",
   "dependencies": [
     "boost-system",
     "boost-chrono",
@@ -37,7 +37,7 @@
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": [ "avcodec", "avformat", "avdevice", "avfilter", "swscale", "swresample", "x264", "x265" ]
+      "features": [ "avcodec", "avformat", "avdevice", "avfilter", "swscale", "swresample" ]
     },
     "wxwidgets",
     "libczi",
@@ -46,5 +46,17 @@
       "features": [ "wayland" ],
       "platform": "linux"
     }
-  ]
+  ],
+  "features": {
+    "gpl": {
+      "description": "Build ffmpeg with the GPL x264/x265 encoders (movie export uses H.264 instead of MPEG-4 Part 2). Binary packages built with this feature are covered by the GPL. Enabled by build.ps1 -EnableGPL / build.sh --enable-gpl.",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [ "gpl", "x264", "x265" ]
+        }
+      ]
+    }
+  }
 }
