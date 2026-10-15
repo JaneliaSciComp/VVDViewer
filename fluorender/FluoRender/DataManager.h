@@ -831,8 +831,11 @@ public:
 	//calculation
 	void Calculate(int type, VolumeData* vd_a, VolumeData* vd_b, VolumeData* vd_c = NULL);
 
-	//thin plate spline warp: resample vd_in (moving) into this volume (fixed)
-	void Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp = 1);
+	//thin plate spline warp: resample vd_in (moving) into this volume (fixed);
+	//out_scale / out_off: this volume's grid differs from vd_in's (see
+	//VolumeRenderer::warp)
+	void Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp = 1,
+		const glm::dvec3* out_scale = nullptr, const glm::dvec3* out_off = nullptr);
 
 	//set 2d mask for segmentation
 	void Set2dMask(std::shared_ptr<vks::VTexture>& mask);
@@ -2117,8 +2120,28 @@ struct VolumePrefetch
 // to any DataManager or view, or nullptr; error then holds the message box
 // text (empty: silent failure). Shared by both GUIs so their results are
 // identical.
+//
+// target (Qt Measurement "Target:", BigWarp's output grid): null or src =
+// the result is on src's grid as above. Another volume: the result is on
+// the target's grid (its size, spacing and world placement; bit depth of
+// src), the same transform resampling src, so it overlaps the target in the
+// view. When every 2-point ruler starts on the target volume and ends on src
+// (WarpRulersReversed), the landmark roles are swapped (point 1 = moving,
+// point 0 = fixed): src is the volume the end points were placed on.
 EXPORT_API VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	int ttype, double lambda, int interp, VVDString* error = nullptr);
+	int ttype, double lambda, int interp, VVDString* error = nullptr, VolumeData* target = nullptr);
+// true when target is another volume and every 2-point ruler (at least one)
+// records point 0 on target and point 1 on src (Ruler::GetPointVolName)
+EXPORT_API bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<Ruler*>& rulers);
+// grid's normalized box in src's normalized coords: src_f = grid_f * scale +
+// off per axis. False (error set) when the two boxes are not axis-aligned in
+// world space (rotated / flipped BigDataViewer transforms).
+EXPORT_API bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3],
+	VVDString* error = nullptr);
+// the empty result volume of a warp: src's bit depth on src's grid (target
+// null or src) or on target's (size, spacing, additional transform); null
+// with *error set when it would need more than half of the installed memory
+EXPORT_API VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error = nullptr);
 // The display properties WarpVolumeByRulers copies from src to its result
 // (clipping planes, gamma, boundary, offset, thresholds, colour, alpha,
 // shading, material, shadow, sample rate, output adjustments, scalar scale).

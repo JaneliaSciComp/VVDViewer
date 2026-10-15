@@ -690,6 +690,7 @@ void SettingsDialog::SetDefaults()
 	m_ruler_auto_select = false;
 	m_cell_warp = rigidcells::Params();
 	m_cell_warp.device = -1;   // the plugin's default: the first GPU if there is one
+	m_warp_target = "auto";
 	m_pvxml_flip_x = false;
 	m_pvxml_flip_y = false;
 	m_red_bit = 8;
@@ -783,6 +784,7 @@ void SettingsDialog::LoadSettings()
 	if (!cfg.Read(L"/ruler time dep/value", m_ruler_time_dep))
 		cfg.Read(L"/ruler time dependent/value", m_ruler_time_dep);
 	cfg.Read(L"/ruler auto select/value", m_ruler_auto_select);
+	if (cfg.Read(L"/warp target/value", s)) m_warp_target = FromVVD(s);
 	cfg.Read(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Read(L"/rigid cells/per label", m_cell_warp.per_label);
 	cfg.Read(L"/rigid cells/beta", m_cell_warp.beta);
@@ -945,6 +947,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/ruler use transf/value", m_ruler_use_transf);
 	cfg.Write(L"/ruler time dependent/value", m_ruler_time_dep);   // same key as wx SaveSettings
 	cfg.Write(L"/ruler auto select/value", m_ruler_auto_select);   // Qt only
+	cfg.Write(L"/warp target/value", ToVVD(m_warp_target));   // Qt only
 	cfg.Write(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Write(L"/rigid cells/per label", m_cell_warp.per_label);
 	cfg.Write(L"/rigid cells/beta", m_cell_warp.beta);

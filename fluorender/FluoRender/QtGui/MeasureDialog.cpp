@@ -37,6 +37,7 @@
 #include <QPixmap>
 #include <QIcon>
 #include <climits>
+#include <functional>
 #include <algorithm>
 
 #include "DataManager.h"
@@ -140,6 +141,20 @@ private:
 	int m_dragging_row = -1;
 	bool m_drag_started = false;
 	QPoint m_press_pos;
+};
+
+// the Target combo refills itself before its list opens (the displayed
+// volumes and the current volume can change while the dialog is open)
+class WarpTargetCombo : public QComboBox
+{
+public:
+	explicit WarpTargetCombo(QWidget* parent) : QComboBox(parent) {}
+	std::function<void()> beforePopup;
+	void showPopup() override
+	{
+		if (beforePopup) beforePopup();
+		QComboBox::showPopup();
+	}
 };
 
 // ---------------------------------------------------------------------------
@@ -262,6 +277,28 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_warp_interp_combo->addItems({ "Nearest Neighbor", "Linear" });
 	m_warp_interp_combo->setCurrentIndex(0);
 	m_warp_interp_combo->setMinimumWidth(140);
+	//output grid (BigWarp: the target image's space)
+	auto* target_combo = new WarpTargetCombo(this);
+	target_combo->beforePopup = [this]() { UpdateTargetCombo(); };
+	m_warp_target_combo = target_combo;
+	m_warp_target_combo->setObjectName("warp_target");
+	m_warp_target_combo->setMinimumWidth(140);
+	m_warp_target_combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	m_warp_target_combo->setMinimumContentsLength(24);
+	m_warp_target_combo->setToolTip("Output grid of Apply Transform (BigWarp's target image).\n"
+		"Same as source: the result has the current volume's size, spacing and position "
+		"(the landmarks must lie inside it to show anything).\n"
+		"<volume>: the result has that volume's size, spacing and position (bit depth of the "
+		"current volume) and overlaps it in the view; the current volume is resampled with the "
+		"same transform.\n"
+		"Auto: the End Volume of the 2-point rulers when every one of them starts on the current "
+		"volume and they all end on the same other displayed volume; otherwise Same as source.\n"
+		"When every 2-point ruler starts on the chosen target and ends on the current volume, the "
+		"end points are used as the moving landmarks (the reverse transform).");
+	if (m_settings)
+		m_warp_target_pref = m_settings->GetWarpTarget();
+	if (m_warp_target_pref.isEmpty())
+		m_warp_target_pref = "auto";
 	auto* st3 = new QLabel("Stiffness:", this);
 	st3->setAlignment(Qt::AlignCenter);
 	m_warp_stiffness_sldr = new QSlider(Qt::Horizontal, this);
@@ -292,7 +329,15 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	sizer_3->addWidget(st5, 0, Qt::AlignVCenter);
 	sizer_3->addSpacing(5);
 	sizer_3->addWidget(m_warp_interp_combo, 0, Qt::AlignVCenter);
+	auto* st6 = new QLabel("Target:", this);
+	st6->setAlignment(Qt::AlignCenter);
+	st6->setToolTip(m_warp_target_combo->toolTip());
+	sizer_3->addSpacing(5);
+	sizer_3->addWidget(st6, 0, Qt::AlignVCenter);
+	sizer_3->addSpacing(5);
+	sizer_3->addWidget(m_warp_target_combo, 0, Qt::AlignVCenter);
 	sizer_3->addStretch(1);
+	connect(m_warp_target_combo, qOverload<int>(&QComboBox::activated), this, &MeasureDialog::OnWarpTarget);
 
 	//stiffness row (slider stretches to full width)
 	auto* sizer_3s = new QHBoxLayout();
@@ -393,9 +438,103 @@ int MeasureDialog::GetWarpInterpolation() const
 	return m_warp_interp_combo ? m_warp_interp_combo->currentIndex() : 0;
 }
 
+// the displayed volumes of the tool's view other than the current one
+static std::vector<VolumeData*> WarpTargetCandidates(RulerTool* tool)
+{
+	std::vector<VolumeData*> list;
+	RenderCanvas* cv = tool ? tool->Canvas() : nullptr;
+	VolumeData* cur = tool ? tool->CurrentVolume() : nullptr;
+	if (!cv)
+		return list;
+	for (VolumeData* v : cv->PopVolumeList())
+		if (v && v != cur && std::find(list.begin(), list.end(), v) == list.end())
+			list.push_back(v);
+	return list;
+}
+
+VolumeData* MeasureDialog::AutoWarpTarget() const
+{
+	if (!m_tool) return nullptr;
+	VolumeData* cur = m_tool->CurrentVolume();
+	std::vector<Ruler*>* rl = m_tool->GetRulerList();
+	if (!cur || !rl) return nullptr;
+	const std::wstring cn = cur->GetName().ToStdWstring();
+	std::wstring end;
+	int n = 0;
+	for (Ruler* r : *rl)
+	{
+		if (!r || r->GetRulerType() != 0 || r->GetNumPoint() < 2)
+			continue;
+		const std::wstring s0 = r->GetPointVolName(0).ToStdWstring();
+		const std::wstring s1 = r->GetPointVolName(1).ToStdWstring();
+		if (s0 != cn || s1.empty() || s1 == cn)
+			return nullptr;
+		if (n > 0 && s1 != end)
+			return nullptr;
+		end = s1;
+		n++;
+	}
+	if (n == 0)
+		return nullptr;
+	for (VolumeData* v : WarpTargetCandidates(m_tool))
+		if (v->GetName().ToStdWstring() == end)
+			return v;
+	return nullptr;
+}
+
+QString MeasureDialog::GetWarpTargetChoice() const
+{
+	if (!m_warp_target_combo || m_warp_target_combo->currentIndex() < 0)
+		return m_warp_target_pref;
+	return m_warp_target_combo->currentData().toString();
+}
+
+VolumeData* MeasureDialog::GetWarpTarget() const
+{
+	const QString c = GetWarpTargetChoice();
+	if (c == "same")
+		return nullptr;
+	if (c.startsWith("vol:"))
+	{
+		const QString name = c.mid(4);
+		for (VolumeData* v : WarpTargetCandidates(m_tool))
+			if (S2Q(v->GetName().ToStdWstring()) == name)
+				return v;
+		return nullptr;
+	}
+	return AutoWarpTarget();
+}
+
+void MeasureDialog::UpdateTargetCombo()
+{
+	if (!m_warp_target_combo) return;
+	QSignalBlocker block(m_warp_target_combo);
+	m_warp_target_combo->clear();
+	VolumeData* aut = AutoWarpTarget();
+	m_warp_target_combo->addItem(aut ? QString("Auto (%1)").arg(S2Q(aut->GetName().ToStdWstring())) :
+		QString("Auto (same as source)"), QString("auto"));
+	m_warp_target_combo->addItem("Same as source", QString("same"));
+	for (VolumeData* v : WarpTargetCandidates(m_tool))
+	{
+		const QString name = S2Q(v->GetName().ToStdWstring());
+		m_warp_target_combo->addItem(name, QString("vol:") + name);
+	}
+	int idx = m_warp_target_combo->findData(m_warp_target_pref);
+	m_warp_target_combo->setCurrentIndex(idx >= 0 ? idx : 0);
+}
+
+void MeasureDialog::OnWarpTarget(int)
+{
+	if (!m_warp_target_combo) return;
+	m_warp_target_pref = m_warp_target_combo->currentData().toString();
+	if (m_settings)
+		m_settings->SetWarpTarget(m_warp_target_pref);
+}
+
 void MeasureDialog::GetSettings()
 {
 	UpdateList();
+	UpdateTargetCombo();
 	if (!m_tool)
 		return;
 
@@ -1053,10 +1192,12 @@ void MeasureDialog::OnWarp()
 	if (!m_tool) return;
 	QString err;
 	const bool cells = GetWarpTransformType() == WarpCells;
+	UpdateTargetCombo();
+	VolumeData* target = GetWarpTarget();
 	rigidcells::Report report;
 	VolumeData* vd = cells ?
-		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err) :
-		m_tool->WarpCurrentVolume(GetWarpTransformType(), GetWarpLambda(), GetWarpInterpolation(), &err);
+		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err, target) :
+		m_tool->WarpCurrentVolume(GetWarpTransformType(), GetWarpLambda(), GetWarpInterpolation(), &err, target);
 	if (!vd)
 	{
 		if (!err.isEmpty())

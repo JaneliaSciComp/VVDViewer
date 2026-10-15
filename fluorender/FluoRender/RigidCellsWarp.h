@@ -172,8 +172,14 @@ namespace rigidcells
 // Shows an engine progress dialog (vvd::UI) that can cancel. Returns the new
 // volume (not added anywhere) or nullptr with *error set (empty: cancelled).
 #ifndef RIGIDCELLS_CORE_ONLY
+// target (Measurement "Target:"): null or src = src's grid as above; another
+// volume = the plugin's target grid tg is that volume's (size, spacing; its
+// origin in src's physical frame, so both boxes must be axis-aligned in world
+// space), the result overlaps it. Landmark roles swapped as WarpVolumeByRulers
+// (WarpRulersReversed).
 EXPORT_API VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	const rigidcells::Params& params, rigidcells::Report* report, VVDString* error = nullptr);
+	const rigidcells::Params& params, rigidcells::Report* report, VVDString* error = nullptr,
+	VolumeData* target = nullptr);
 #endif
 
 #endif // VVD_RIGIDCELLSWARP_H

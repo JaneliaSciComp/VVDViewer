@@ -128,6 +128,10 @@ public:
 	// Qt only, the stiffness is the dialog's shared slider and not stored)
 	const rigidcells::Params& GetCellWarpParams() const { return m_cell_warp; }
 	void SetCellWarpParams(const rigidcells::Params& p) { m_cell_warp = p; }
+	// Measurement "Target:" (/warp target; Qt only): "auto" (default),
+	// "same" or "vol:<volume name>"
+	QString GetWarpTarget() const { return m_warp_target; }
+	void SetWarpTarget(const QString& t) { m_warp_target = t; }
 	void SetRulerTimeDep(bool val) { m_ruler_time_dep = val; }
 	bool GetPvxmlFlipX() const { return m_pvxml_flip_x; }
 	void SetPvxmlFlipX(bool flip) { m_pvxml_flip_x = flip; }
@@ -223,6 +227,7 @@ private:
 	bool m_ruler_time_dep;
 	bool m_ruler_auto_select;
 	rigidcells::Params m_cell_warp;
+	QString m_warp_target;
 	bool m_pvxml_flip_x;
 	bool m_pvxml_flip_y;
 	int m_red_bit;

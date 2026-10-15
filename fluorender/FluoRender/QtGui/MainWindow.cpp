@@ -2289,7 +2289,10 @@ namespace
 
 // wx DnDFile::OnDropFiles (DragDrop.cpp). Dropped on the window or on the
 // render view (on_view: the wx DnDFile of a VRenderView). A .vrp as the first
-// file opens that project only; a .vrp dropped on the view is refused.
+// file opens that project only, also when dropped on a render view (wx
+// refuses a .vrp dropped on a view with "For project files, drag and drop to
+// regions other than render views."; the port opens it as a drop on the
+// frame does); a .vrp that is not the first file is ignored.
 // Files are sorted into volumes and meshes by suffix (others are ignored); a
 // folder is expanded: its files by suffix, or, when it has an "s<N>"
 // subfolder with attributes.json, the folder itself as an N5 dataset
@@ -2308,14 +2311,8 @@ void MainWindow::OpenDroppedUrls(const QList<QUrl>& urls, bool on_view, RenderCa
 		filenames << p;
 	}
 	if (filenames.isEmpty()) return;
-	auto refuse_project = [this]() {
-		const QString msg = tr("For project files, drag and drop to regions other than render views.");
-		if (VVDQtScriptedRun()) fprintf(stderr, "[drop] %s\n", msg.toLocal8Bit().constData());
-		else QMessageBox::information(this, QString(), msg);
-	};
 	if (DropSuffix(filenames.first()) == ".vrp")
 	{
-		if (on_view) { refuse_project(); return; }
 		const QString prj = filenames.first();
 		QTimer::singleShot(0, this, [this, prj]() { OpenProject(prj); });
 		return;
@@ -2338,7 +2335,6 @@ void MainWindow::OpenDroppedUrls(const QList<QUrl>& urls, bool on_view, RenderCa
 		const QFileInfo fi(filename);
 		if (suffix == ".vrp")
 		{
-			if (on_view) { refuse_project(); return; }
 			// wx: remembered, never opened (only a first .vrp is)
 		}
 		else if (DropVolumeSuffix(suffix))

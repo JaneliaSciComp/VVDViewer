@@ -38,6 +38,7 @@ class Ruler;
 class AnalysisContext;
 class SettingsDialog;
 class RulerListWidget;
+class VolumeData;
 class RigidCellsReportDialog;
 class QDoubleSpinBox;
 class QSpinBox;
@@ -70,6 +71,16 @@ public:
 	RigidCellsReportDialog* GetCellReportDialog() const { return m_cell_report; }
 	// 0=Nearest Neighbor, 1=Linear
 	int GetWarpInterpolation() const;
+	// "Target:" (BigWarp's output grid): the choice ("auto", "same" or
+	// "vol:<name>") and the volume it resolves to for the current volume
+	// (null = the source's own grid). Auto: the End Volume of the 2-point
+	// rulers when every one starts on the current volume and they all end on
+	// the same other displayed volume, else Same as source.
+	QString GetWarpTargetChoice() const;
+	VolumeData* GetWarpTarget() const;
+	VolumeData* AutoWarpTarget() const;
+	// refills the Target list (displayed volumes of the view but the current one)
+	void UpdateTargetCombo();
 	// RulerListCtrl::GetCount: rows of the rulers (ann null) or of one
 	// annotations layer (its texts above the Min Score threshold, counted by
 	// the last UpdateList)
@@ -112,6 +123,7 @@ private Q_SLOTS:
 	void OnWarp();
 	void OnWarpStiffness(int value);
 	void OnWarpType(int index);
+	void OnWarpTarget(int index);
 	void OnCellOptionChanged();
 	void OnItemDoubleClicked(QTreeWidgetItem* item, int column);
 	void OnItemChanged(QTreeWidgetItem* item, int column);
@@ -145,6 +157,8 @@ private:
 	QPushButton* m_warp_btn;
 	QComboBox* m_warp_type_combo;
 	QComboBox* m_warp_interp_combo;
+	QComboBox* m_warp_target_combo = nullptr;
+	QString m_warp_target_pref = "auto";   // the user's choice (kept while its volume is absent)
 	QSlider* m_warp_stiffness_sldr;
 	QLabel* m_warp_stiffness_text;
 	double m_warp_lambda = 0.0;

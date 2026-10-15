@@ -171,12 +171,17 @@ public:
 	// the new volume (not yet added to the DataManager / canvas / tree) or
 	// nullptr with *error set (the wx message box text). ttype: 0 TPS,
 	// 1 affine, 2 similarity, 3 rigid, 4 translation; interp: 0 NN, 1 linear.
-	VolumeData* WarpCurrentVolume(int ttype, double lambda, int interp, QString* error);
+	// target: the output grid (null = the current volume's own grid; see
+	// WarpVolumeByRulers in DataManager.h)
+	VolumeData* WarpCurrentVolume(int ttype, double lambda, int interp, QString* error, VolumeData* target = nullptr);
 	// The same with the "Cells: shape preserving" model (RigidCellsWarp.h,
 	// port of the ImageJ plugin Apply_BigWarp_RigidCells): returns the new
 	// volume or nullptr with *error set (empty when cancelled); *report gets
 	// the object / landmark tables and the log.
-	VolumeData* WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error);
+	VolumeData* WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error,
+		VolumeData* target = nullptr);
+	// the current volume (the warp source)
+	VolumeData* CurrentVolume() const { return CurVol(); }
 
 	// ---- CanvasTool
 	bool IsActive() const override { return m_int_mode == 5 || m_int_mode == 6; }

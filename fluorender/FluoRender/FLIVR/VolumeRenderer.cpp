@@ -4051,10 +4051,16 @@ namespace FLIVR
 	}
 
 	//thin plate spline warp: resample vr_in (moving) into this volume (fixed space)
-	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp)
+	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp,
+		const glm::dvec3* out_scale, const glm::dvec3* out_off)
 	{
 		if (!vr_in || !tex_ || !vr_in->tex_ || !m_vulkan || !tps.valid())
 			return;
+		//output grid != source grid: output-normalized f -> source-normalized
+		//f * dms + dmo (see the header)
+		const bool dmap = out_scale && out_off;
+		const glm::dvec3 dms = dmap ? *out_scale : glm::dvec3(1.0);
+		const glm::dvec3 dmo = dmap ? *out_off : glm::dvec3(0.0);
 
 		const int out_bytes = tex_->nb(0);
 		const int src_nb = vr_in->tex_->nb(0);
@@ -4123,8 +4129,17 @@ namespace FLIVR
 			ubo.G[1] = glm::vec4(glm::vec3(A[1] * svdim), 0.0f);
 			ubo.G[2] = glm::vec4(glm::vec3(A[2] * svdim), 0.0f);
 			ubo.G[3] = glm::vec4(glm::vec3(tps.translation() * svdim - 0.5), 1.0f);
-			ubo.gscale = glm::vec4(glm::vec3(tps.aspect() / (ovdim * R)), 0.0f);
-			ubo.goff = glm::vec4(glm::vec3((0.5 * tps.aspect() / ovdim - tps.center()) / R), 0.0f);
+			if (!dmap)
+			{
+				ubo.gscale = glm::vec4(glm::vec3(tps.aspect() / (ovdim * R)), 0.0f);
+				ubo.goff = glm::vec4(glm::vec3((0.5 * tps.aspect() / ovdim - tps.center()) / R), 0.0f);
+			}
+			else
+			{
+				//target grid: f = (o+0.5)/ovdim * dms + dmo, u = (f*aspect - c)/R
+				ubo.gscale = glm::vec4(glm::vec3(dms * tps.aspect() / (ovdim * R)), 0.0f);
+				ubo.goff = glm::vec4(glm::vec3(((0.5 * dms / ovdim + dmo) * tps.aspect() - tps.center()) / R), 0.0f);
+			}
 			ubo.srcDim = glm::ivec4(svx, svy, svz, 0);
 			ubo.cfg = glm::ivec4(N, interp == 0 ? 0 : 1, 0, 0);
 		}
@@ -4243,7 +4258,9 @@ namespace FLIVR
 				double fx = (gox + (double)kx / SS * nx) / ovx;
 				double fy = (goy + (double)ky / SS * ny) / ovy;
 				double fz = (goz + (double)kz / SS * nz) / ovz;
-				glm::dvec3 mm = tps.evaluate(glm::dvec3(fx, fy, fz));
+				glm::dvec3 mm = dmap ?
+					tps.evaluate(glm::dvec3(fx, fy, fz) * dms + dmo) :
+					tps.evaluate(glm::dvec3(fx, fy, fz));
 				if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
 				if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
 				if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;

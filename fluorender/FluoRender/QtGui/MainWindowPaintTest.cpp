@@ -2490,6 +2490,230 @@ void MainWindow::RunPaintTest(const QString& kind)
 		});
 	}
 
+	if (kind == "warptarget")
+	{
+		// Measurement "Target:" (output grid) with the rulers of the opened
+		// project. VVD_QT_WT_RUNS = "src,target,ttype,interp,stiffness,tag;..."
+		// (src: volume index or name; target: auto | same | index | name;
+		// ttype 0..4 as the Transform list, 5 = Cells with the saved / default
+		// options, VVD_QT_WT_CELLDEV = device index); VVD_QT_WT_GRAB=1:
+		// <tag>_before.png (source + target) and <tag>_after.png (target +
+		// result) of the 3D view; VVD_QT_WT_RAW=1: <tag>.raw. Logs the volumes'
+		// grids / world boxes, each result's grid, nonzero voxels and their
+		// bounding box, md5, and per ruler the distance from the end (fixed)
+		// point to the nearest nonzero result voxel next to the distance from
+		// the start (moving) point to the nearest nonzero source voxel.
+		struct WT { QStringList runs; int idx = 0; VolumeData* src = nullptr; VolumeData* res = nullptr; VolumeData* tgt = nullptr; };
+		auto wt = std::make_shared<WT>();
+		wt->runs = qEnvironmentVariable("VVD_QT_WT_RUNS").split(';', Qt::SkipEmptyParts);
+		const bool grab = qEnvironmentVariableIntValue("VVD_QT_WT_GRAB") != 0;
+		const bool raw = qEnvironmentVariableIntValue("VVD_QT_WT_RAW") != 0;
+		auto vol_of = [this](const QString& spec) -> VolumeData* {
+			bool ok = false;
+			int i = spec.toInt(&ok);
+			const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+			if (ok) return (i >= 0 && i < (int)vols.size()) ? vols[i] : nullptr;
+			for (VolumeData* v : vols) if (v->GetName().ToQt() == spec) return v;
+			return nullptr;
+		};
+		auto world_box = [](VolumeData* v) {
+			FLIVR::Transform* tf = v->GetTexture()->transform();
+			FLIVR::Point a = tf->project(FLIVR::Point(0, 0, 0)), b = tf->project(FLIVR::Point(1, 1, 1));
+			return QString::asprintf("world (%.4f, %.4f, %.4f) - (%.4f, %.4f, %.4f)", a.x(), a.y(), a.z(), b.x(), b.y(), b.z());
+		};
+		auto describe = [log, world_box](const char* what, VolumeData* v) {
+			int rx, ry, rz; double sx, sy, sz;
+			v->GetResolution(rx, ry, rz); v->GetSpacings(sx, sy, sz);
+			log("%s %ls: %dx%dx%d spacing %.6f %.6f %.6f bits %d, physical box %.4f x %.4f x %.4f, %s", what, v->GetName().c_str(),
+				rx, ry, rz, sx, sy, sz, v->GetTexture()->nb(0) * 8, rx * sx, ry * sy, rz * sz, world_box(v).toLocal8Bit().constData());
+		};
+		// distance (physical) from world point p to the nearest nonzero voxel
+		// of v (voxel centres at (i + 0.5) * spacing, as the GPU warp); -1:
+		// none within r voxels. inside: p's own voxel index lies in the grid
+		auto nearest = [](VolumeData* v, const FLIVR::Point& p, int r, bool* inside, double* val) -> double {
+			Nrrd* d = DataNrrd(v);
+			int rx, ry, rz; double sx, sy, sz;
+			v->GetResolution(rx, ry, rz); v->GetSpacings(sx, sy, sz);
+			FLIVR::Point n = v->GetTexture()->transform()->unproject(p);
+			const double fx = n.x() * rx - 0.5, fy = n.y() * ry - 0.5, fz = n.z() * rz - 0.5;
+			const int cx = (int)std::lround(fx), cy = (int)std::lround(fy), cz = (int)std::lround(fz);
+			if (inside) *inside = cx >= 0 && cy >= 0 && cz >= 0 && cx < rx && cy < ry && cz < rz;
+			if (val) *val = (*inside) ? Val(d, ((long long)cz * ry + cy) * rx + cx) : -1;
+			double best = -1;
+			for (int z = std::max(0, cz - r); z <= std::min(rz - 1, cz + r); z++)
+			for (int y = std::max(0, cy - r); y <= std::min(ry - 1, cy + r); y++)
+			for (int x = std::max(0, cx - r); x <= std::min(rx - 1, cx + r); x++)
+			{
+				if (Val(d, ((long long)z * ry + y) * rx + x) == 0.0) continue;
+				const double dx = (x - fx) * sx, dy = (y - fy) * sy, dz = (z - fz) * sz;
+				const double dd = std::sqrt(dx * dx + dy * dy + dz * dz);
+				if (best < 0 || dd < best) best = dd;
+			}
+			return best;
+		};
+		add("wt volumes", [=]() {
+			for (VolumeData* v : m_canvas->Volumes()) describe("volume", v);
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			log("rulers: %d", (int)rl->size());
+			for (Ruler* r : *rl)
+				for (int k = 0; k < r->GetNumPoint(); k++)
+				{
+					FLIVR::Point p = *r->GetPoint(k);
+					QString in;
+					for (VolumeData* v : m_canvas->Volumes())
+					{
+						FLIVR::Point n = v->GetTexture()->transform()->unproject(p);
+						const bool ins = n.x() >= 0 && n.x() <= 1 && n.y() >= 0 && n.y() <= 1 && n.z() >= 0 && n.z() <= 1;
+						in += QString(" | in %1: %2 (normalized %3, %4, %5)").arg(v->GetName().ToQt()).arg(ins ? "yes" : "NO")
+							.arg(n.x(), 0, 'f', 4).arg(n.y(), 0, 'f', 4).arg(n.z(), 0, 'f', 4);
+					}
+					log("  ruler %ls point %d world (%.4f, %.4f, %.4f) physical (%.4f, %.4f, %.4f) volume '%ls'%s", r->GetNameDisp().c_str(), k,
+						p.x(), p.y(), p.z(), p.x(), p.y(), -p.z(), r->GetPointVolName(k).c_str(), in.toLocal8Bit().constData());
+				}
+		});
+		for (int ri = 0; ri < wt->runs.size(); ri++)
+		{
+			const QStringList f = wt->runs[ri].split(',');
+			if (f.size() < 6) continue;
+			const QString tag = f[5];
+			add("wt setup " + tag, [=]() {
+				for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(false);
+				wt->src = vol_of(f[0]);
+				if (!wt->src) { check(false, "source " + f[0]); return; }
+				MeasureDialog* dlg = EnsureMeasureDialog();
+				dlg->show();
+				m_canvas->SetCurrentVolume(wt->src);
+				RefreshTree();
+				m_tree->SelectVolume(wt->src);
+				wt->src->SetDisp(true);
+				QComboBox* tc = dlg->findChild<QComboBox*>("warp_target");
+				// every volume of the project is shown for the Target list
+				for (VolumeData* v : m_canvas->Volumes())
+					if (!v->GetName().ToQt().contains("_WARPED") && !v->GetName().ToQt().contains("_CELLS") &&
+						!v->GetName().ToQt().contains("_AFFINE") && !v->GetName().ToQt().contains("_SIM") &&
+						!v->GetName().ToQt().contains("_RIGID") && !v->GetName().ToQt().contains("_TRANS"))
+						v->SetDisp(true);
+				dlg->UpdateTargetCombo();
+				if (!tc) { check(false, "Target combo found"); return; }
+				QStringList items;
+				for (int i = 0; i < tc->count(); i++) items << tc->itemText(i) + " [" + tc->itemData(i).toString() + "]";
+				log("run %s: source %ls, Target list: %s", tag.toLocal8Bit().constData(), wt->src->GetName().c_str(),
+					items.join(" | ").toLocal8Bit().constData());
+				QString data = f[1];
+				if (data != "auto" && data != "same")
+				{
+					VolumeData* t = vol_of(f[1]);
+					data = t ? "vol:" + t->GetName().ToQt() : "?";
+				}
+				const int ti = tc->findData(data);
+				check(ti >= 0, "target choice " + data);
+				if (ti >= 0) { tc->setCurrentIndex(ti); Q_EMIT tc->activated(ti); }
+				if (grab && ri == 0)
+				{
+					dlg->adjustSize();
+					dlg->grab().save(st->dir + "/measure_dialog_target.png");
+				}
+				wt->tgt = dlg->GetWarpTarget();
+				log("run %s: Target '%s' -> %ls%s", tag.toLocal8Bit().constData(), tc->currentText().toLocal8Bit().constData(),
+					wt->tgt ? wt->tgt->GetName().c_str() : L"(source grid)",
+					WarpRulersReversed(wt->src, wt->tgt, *m_ruler_tool->GetRulerList()) ? " (rulers reversed: end points = moving)" : "");
+				// before picture: source + target only
+				for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(v == wt->src || v == wt->tgt);
+				m_canvas->RefreshView();
+			});
+			if (grab) capture(tag + "_before");
+			add("wt apply " + tag, [=]() {
+				if (!wt->src) return;
+				MeasureDialog* dlg = EnsureMeasureDialog();
+				// the Target list needs the target shown
+				QComboBox* type = nullptr; QComboBox* interp = nullptr; QSlider* stiff = dlg->findChild<QSlider*>(); QPushButton* apply = nullptr;
+				for (QComboBox* c : dlg->findChildren<QComboBox*>())
+				{
+					if (c->findText("Thin Plate Spline") >= 0) type = c;
+					if (c->findText("Nearest Neighbor") >= 0) interp = c;
+				}
+				for (QPushButton* b : dlg->findChildren<QPushButton*>()) if (b->text() == "Apply Transform") apply = b;
+				if (!type || !interp || !stiff || !apply) { check(false, "warp controls found"); return; }
+				type->setCurrentIndex(f[2].toInt());
+				interp->setCurrentIndex(f[3].toInt());
+				stiff->setValue(int(std::lround(f[4].toDouble() * 1000.0)));
+				if (f[2].toInt() == MeasureDialog::WarpCells)
+				{
+					QComboBox* dev = dlg->findChild<QComboBox*>("cell_device");
+					if (dev) dev->setCurrentIndex(std::min(qEnvironmentVariableIntValue("VVD_QT_WT_CELLDEV"), dev->count() - 1));
+					log("cells device '%s'", dev ? dev->currentText().toLocal8Bit().constData() : "?");
+				}
+				const std::vector<VolumeData*> before = m_canvas->Volumes();
+				QElapsedTimer t; t.start();
+				apply->click();
+				const qint64 ms = t.elapsed();
+				wt->res = nullptr;
+				for (VolumeData* v : m_canvas->Volumes())
+					if (std::find(before.begin(), before.end(), v) == before.end()) wt->res = v;
+				check(wt->res != nullptr, "run " + tag + ": result volume added");
+				if (!wt->res) return;
+				VolumeData* res = wt->res;
+				describe("result", res);
+				Nrrd* d = DataNrrd(res);
+				int rx, ry, rz; double sx, sy, sz;
+				res->GetResolution(rx, ry, rz); res->GetSpacings(sx, sy, sz);
+				const int nb = res->GetTexture()->nb(0);
+				const size_t bytes = (size_t)rx * ry * rz * nb;
+				long long nz = 0;
+				int x0 = rx, y0 = ry, z0 = rz, x1 = -1, y1 = -1, z1 = -1;
+				for (int z = 0; z < rz; z++)
+				for (int y = 0; y < ry; y++)
+				{
+					const long long row = ((long long)z * ry + y) * rx;
+					for (int x = 0; x < rx; x++)
+					{
+						if (Val(d, row + x) == 0.0) continue;
+						nz++;
+						x0 = std::min(x0, x); x1 = std::max(x1, x);
+						y0 = std::min(y0, y); y1 = std::max(y1, y);
+						z0 = std::min(z0, z); z1 = std::max(z1, z);
+					}
+				}
+				QByteArray md5 = QCryptographicHash::hash(QByteArrayView((const char*)d->data, (qsizetype)bytes), QCryptographicHash::Md5).toHex();
+				log("RESULT %s %ls %dx%dx%d spacing %.6f bits %d max %g nonzero %lld md5 %s time %lld ms", tag.toLocal8Bit().constData(),
+					res->GetName().c_str(), rx, ry, rz, sx, nb * 8, res->GetMaxValue(), nz, md5.constData(), (long long)ms);
+				if (nz > 0)
+				{
+					FLIVR::Transform* tf = res->GetTexture()->transform();
+					FLIVR::Point a = tf->project(FLIVR::Point(x0 / double(rx), y0 / double(ry), z0 / double(rz)));
+					FLIVR::Point b = tf->project(FLIVR::Point((x1 + 1) / double(rx), (y1 + 1) / double(ry), (z1 + 1) / double(rz)));
+					log("  nonzero bbox voxels x %d-%d y %d-%d z %d-%d, physical (%.3f, %.3f, %.3f) - (%.3f, %.3f, %.3f)", x0, x1, y0, y1, z0, z1,
+						a.x(), a.y(), -a.z(), b.x(), b.y(), -b.z());
+				}
+				if (raw) { QFile fo(st->dir + "/" + tag + ".raw"); if (fo.open(QIODevice::WriteOnly)) { fo.write((const char*)d->data, (qint64)bytes); fo.close(); } }
+				// landmarks
+				const bool rev = WarpRulersReversed(wt->src, wt->tgt, *m_ruler_tool->GetRulerList());
+				int near_ok = 0, n_lm = 0;
+				for (Ruler* r : *m_ruler_tool->GetRulerList())
+				{
+					if (r->GetRulerType() != 0 || r->GetNumPoint() < 2) continue;
+					FLIVR::Point pm = *r->GetPoint(rev ? 1 : 0), pf = *r->GetPoint(rev ? 0 : 1);
+					bool in_s = false, in_r = false; double vs = -1, vr = -1;
+					const double ds = nearest(wt->src, pm, 30, &in_s, &vs);
+					const double dr = nearest(res, pf, 30, &in_r, &vr);
+					n_lm++;
+					// the fixed point lands as close to the warped object as the
+					// moving point is to the source object (+ one result voxel)
+					const bool ok = in_r && dr >= 0 && (ds < 0 || dr <= ds + 1.5 * sx);
+					near_ok += ok;
+					log("  ruler %ls: moving (%.3f, %.3f, %.3f) in source %s value %g nearest nonzero %.4f | fixed (%.3f, %.3f, %.3f) in result %s value %g nearest nonzero %.4f %s",
+						r->GetNameDisp().c_str(), pm.x(), pm.y(), -pm.z(), in_s ? "yes" : "NO", vs, ds, pf.x(), pf.y(), -pf.z(), in_r ? "yes" : "NO", vr, dr,
+						ok ? "ok" : "FAR");
+				}
+				log("run %s: %d of %d end points at the warped object", tag.toLocal8Bit().constData(), near_ok, n_lm);
+				// after picture: target + result
+				for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(v == res || v == wt->tgt || (!wt->tgt && v == res));
+				m_canvas->RefreshView();
+			});
+			if (grab) capture(tag + "_after");
+		}
+	}
+
 	add("done", [st, log]() {
 		log("done: %d failed checks", st->fails);
 		QTimer::singleShot(300, qApp, []() { QCoreApplication::quit(); });

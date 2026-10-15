@@ -1175,6 +1175,14 @@ void MainWindow::RunTestScript(const QString& name)
 			bool ok = m_canvas->SimulateDrop(urls);
 			fprintf(stderr, "drop on render view accepted: %d\n", int(ok));
 		});
+		// what the drop opened (a project loads synchronously after the drop;
+		// before the VVD_QT_GRAB picture 7 s after start-up, 3 s before this)
+		at(3500, [this]() {
+			fprintf(stderr, "drop: %d volume(s), %d ruler(s)\n",
+				(int)m_canvas->Volumes().size(), m_ruler_tool ? (int)m_ruler_tool->GetRulerList()->size() : -1);
+			for (VolumeData* v : m_canvas->Volumes())
+				fprintf(stderr, "drop:   volume %ls\n", v->GetName().c_str());
+		});
 	}
 	else if (name == "capturedlg")
 	{

@@ -1810,11 +1810,14 @@ namespace rigidcells
 #ifndef RIGIDCELLS_CORE_ONLY
 
 VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error)
+	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error, VolumeData* target)
 {
 	using namespace FLIVR;
 	if (error) error->clear();
 	if (!src) return nullptr;
+	if (target == src) target = nullptr;
+	const bool reversed = WarpRulersReversed(src, target, rulers);
+	const int im = reversed ? 1 : 0, ifx = reversed ? 0 : 1;
 	Texture* tex = src->GetTexture();
 	if (!tex) return nullptr;
 	if (src->isBrxml())
@@ -1869,8 +1872,8 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 		std::string name(wname.begin(), wname.end());
 		if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
 		{
-			Point* p0 = r->GetPoint(0);
-			Point* p1 = r->GetPoint(1);
+			Point* p0 = r->GetPoint(im);
+			Point* p1 = r->GetPoint(ifx);
 			if (!p0 || !p1) continue;
 			lm.names.push_back(name);
 			lm.moving.push_back(physical(*p0));
@@ -1893,9 +1896,41 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 
 	static const wchar_t* const suffixes[4] = { L"_CELLS_ADAPTIVE", L"_CELLS_TRANS", L"_CELLS_RIGID", L"_CELLS_SIM" };
 	int mode = std::min(3, std::max(0, params.local_mode));
-	VolumeData* vd = new VolumeData();
-	vd->AddEmptyData(nb * 8, resx, resy, resz, spcx, spcy, spcz);
-	vd->SetSpcFromFile(true);
+	VolumeData* vd = nullptr;
+	rigidcells::Grid tg = g;
+	if (!target)
+	{
+		vd = new VolumeData();
+		vd->AddEmptyData(nb * 8, resx, resy, resz, spcx, spcy, spcz);
+		vd->SetSpcFromFile(true);
+	}
+	else
+	{
+		//the target's grid, its origin in src's physical frame (the plugin's
+		//index * spacing + origin)
+		VVDString terr;
+		vd = NewWarpResultVolume(src, target, &terr);
+		if (!vd)
+		{
+			if (error) *error = terr.empty() ? VVDString(L"Not enough memory for the result volume.") : terr;
+			return nullptr;
+		}
+		double ms[3], mo[3];
+		if (!WarpTargetGridMap(src, vd, ms, mo, &terr))
+		{
+			delete vd;
+			if (error) *error = terr;
+			return nullptr;
+		}
+		int trx = 0, try_ = 0, trz = 0;
+		double tsx = 1, tsy = 1, tsz = 1;
+		vd->GetResolution(trx, try_, trz);
+		vd->GetSpacings(tsx, tsy, tsz);
+		tg.size[0] = trx; tg.size[1] = try_; tg.size[2] = trz;
+		tg.spacing[0] = tsx; tg.spacing[1] = tsy; tg.spacing[2] = tsz;
+		for (int d = 0; d < 3; d++)
+			tg.origin[d] = mo[d] * aspect[d];
+	}
 	vd->SetName(src->GetName() + suffixes[mode]);
 	Nrrd* onrrd = (vd->GetTexture() && vd->GetTexture()->get_nrrd(0)) ? vd->GetTexture()->get_nrrd(0)->getNrrd() : nullptr;
 	if (!onrrd || !onrrd->data)
@@ -1918,7 +1953,7 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 	rigidcells::Report local_report;
 	rigidcells::Report& rep = report_out ? *report_out : local_report;
 	std::string err;
-	bool ok = rigidcells::Apply(mv, g, g, onrrd->data, lm, params, rep, &err, pf);
+	bool ok = rigidcells::Apply(mv, g, tg, onrrd->data, lm, params, rep, &err, pf);
 	prog.reset();
 	for (const std::string& line : rep.log)
 		std::fprintf(stderr, "%s\n", line.c_str());
@@ -1930,7 +1965,7 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 	}
 
 	//maximum value (VolumeData::Warp)
-	unsigned long long count = (unsigned long long)resx * resy * resz;
+	unsigned long long count = (unsigned long long)tg.size[0] * tg.size[1] * tg.size[2];
 	double max_val = 255;
 	if (nb == 1) max_val = *std::max_element((uint8_t*)onrrd->data, (uint8_t*)onrrd->data + count);
 	else if (nb == 2) max_val = *std::max_element((uint16_t*)onrrd->data, (uint16_t*)onrrd->data + count);

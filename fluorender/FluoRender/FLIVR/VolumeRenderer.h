@@ -412,8 +412,15 @@ public:
 			Texture* ext_msk = NULL, Texture* ext_lbl = NULL);
 
 		//thin plate spline warp: resample vr_in (moving) into this volume (fixed)
-		//interp: 0=nearest, 1=linear
-		void warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp = 1);
+		//interp: 0=nearest, 1=linear. tps maps source-normalized [0,1] coords
+		//(of vr_in's box) to source-normalized coords. With out_scale /
+		//out_off (both or neither) this volume's grid differs from the
+		//source's (Measurement "Target:"): its normalized coords f map to the
+		//source-normalized coords f * out_scale + out_off before the map is
+		//evaluated (per axis: the two boxes are axis-aligned in world space).
+		//Without them the output box is the source box (unchanged behaviour).
+		void warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp = 1,
+			const glm::dvec3* out_scale = nullptr, const glm::dvec3* out_off = nullptr);
 
 		//double calc_hist_3d(GLuint, GLuint, size_t, size_t, size_t);
 		////return

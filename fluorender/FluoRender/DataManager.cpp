@@ -11,6 +11,12 @@
 #include <thread>
 #include <mutex>
 #include <random>
+#include <cmath>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -3396,11 +3402,12 @@ void VolumeData::Calculate(int type, VolumeData *vd_a, VolumeData *vd_b, VolumeD
 }
 
 //thin plate spline warp: resample vd_in (moving) into this volume (fixed)
-void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp)
+void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp,
+	const glm::dvec3* out_scale, const glm::dvec3* out_off)
 {
 	if (m_vr && vd_in && vd_in->GetVR())
 	{
-		m_vr->warp(vd_in->GetVR(), tps, interp);
+		m_vr->warp(vd_in->GetVR(), tps, interp, out_scale, out_off);
 		m_vr->return_volume();
 		if (m_tex && m_tex->get_nrrd(0))
 		{
@@ -3454,13 +3461,154 @@ void CopyWarpDisplayProperties(VolumeData* src, VolumeData* vd)
 	vd->SetScalarScale(src->GetScalarScale());
 }
 
+//installed physical memory in bytes (0: unknown)
+static unsigned long long WarpPhysicalMemory()
+{
+#if defined(__APPLE__)
+	unsigned long long mem = 0;
+	size_t len = sizeof(mem);
+	if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0)
+		return mem;
+	return 0;
+#elif defined(_WIN32)
+	MEMORYSTATUSEX st;
+	st.dwLength = sizeof(st);
+	if (GlobalMemoryStatusEx(&st))
+		return (unsigned long long)st.ullTotalPhys;
+	return 0;
+#else
+	long pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
+	return (pages > 0 && psize > 0) ? (unsigned long long)pages * (unsigned long long)psize : 0;
+#endif
+}
+
+bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<Ruler*>& rulers)
+{
+	if (!src || !target || src == target)
+		return false;
+	const VVDString sn = src->GetName(), tn = target->GetName();
+	int n = 0;
+	for (Ruler* r : rulers)
+	{
+		if (!r || r->GetRulerType() != 0 || r->GetNumPoint() < 2)
+			continue;
+		if (r->GetPointVolName(0) != tn || r->GetPointVolName(1) != sn)
+			return false;
+		n++;
+	}
+	return n > 0;
+}
+
+bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3], VVDString* error)
+{
+	if (error)
+		error->clear();
+	Texture* stex = src ? src->GetTexture() : nullptr;
+	Texture* gtex = grid ? grid->GetTexture() : nullptr;
+	Transform* stf = stex ? stex->transform() : nullptr;
+	Transform* gtf = gtex ? gtex->transform() : nullptr;
+	if (!stf || !gtf)
+		return false;
+	//source-normalized coords of the grid box's corner and unit axes
+	auto map = [&](double x, double y, double z) {
+		return stf->unproject(gtf->project(Point(x, y, z)));
+	};
+	Point o = map(0, 0, 0);
+	Point ex = map(1, 0, 0), ey = map(0, 1, 0), ez = map(0, 0, 1);
+	const double m[3][3] = {
+		{ ex.x() - o.x(), ey.x() - o.x(), ez.x() - o.x() },
+		{ ex.y() - o.y(), ey.y() - o.y(), ez.y() - o.y() },
+		{ ex.z() - o.z(), ey.z() - o.z(), ez.z() - o.z() } };
+	double dmax = 0.0;
+	for (int i = 0; i < 3; ++i)
+		dmax = (std::max)(dmax, std::fabs(m[i][i]));
+	bool ok = dmax > 0.0;
+	for (int i = 0; ok && i < 3; ++i)
+	{
+		if (!(m[i][i] > 0.0) || !std::isfinite(m[i][i]))
+			ok = false;
+		for (int j = 0; ok && j < 3; ++j)
+			if (i != j && std::fabs(m[i][j]) > 1e-9 * dmax)
+				ok = false;
+	}
+	if (!ok)
+	{
+		if (error) *error = L"The target volume is rotated or flipped relative to the source volume; "
+			L"the warp can only write to a target grid whose axes are aligned with the source's. "
+			L"Choose \"Same as source\" as the target.";
+		return false;
+	}
+	scale[0] = m[0][0]; scale[1] = m[1][1]; scale[2] = m[2][2];
+	off[0] = o.x(); off[1] = o.y(); off[2] = o.z();
+	return true;
+}
+
+VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error)
+{
+	if (error)
+		error->clear();
+	Texture* stex = src ? src->GetTexture() : nullptr;
+	if (!stex)
+		return nullptr;
+	int bits = stex->nb(0) * 8;
+	VolumeData* grid = (target && target != src) ? target : src;
+	int resx, resy, resz;
+	double spcx, spcy, spcz;
+	grid->GetResolution(resx, resy, resz);
+	grid->GetSpacings(spcx, spcy, spcz);
+	if (grid != src)
+	{
+		if (!grid->GetTexture() || resx <= 0 || resy <= 0 || resz <= 0)
+		{
+			if (error) *error = L"The target volume has no data.";
+			return nullptr;
+		}
+		//the result lives in main memory (and is streamed to the GPU in bricks):
+		//refuse what cannot fit instead of letting the system swap or fail
+		const unsigned long long bytes = (unsigned long long)resx * resy * resz * (unsigned long long)(bits / 8);
+		const unsigned long long phys = WarpPhysicalMemory();
+		if (phys > 0 && bytes > phys / 2)
+		{
+			if (error) *error = VVDString::Format(
+				"The result on the target grid (%d x %d x %d, %d-bit) needs %.1f GB, more than half of the "
+				"installed memory (%.1f GB).", resx, resy, resz, bits, bytes / 1073741824.0, phys / 1073741824.0);
+			return nullptr;
+		}
+	}
+	VolumeData* vd = new VolumeData();
+	vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
+	vd->SetSpcFromFile(true);
+	if (!vd->GetTexture())
+	{
+		delete vd;
+		return nullptr;
+	}
+	if (grid != src)
+	{
+		//the target's placement in world space (BigDataViewer transforms)
+		Transform* at = grid->GetTexture()->additional_transform();
+		if (at && !at->is_identity())
+		{
+			vd->GetTexture()->set_additional_transform(*at);
+			vd->SetSpacings(spcx, spcy, spcz);
+		}
+	}
+	return vd;
+}
+
 VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	int ttype, double lambda, int interp, VVDString* error)
+	int ttype, double lambda, int interp, VVDString* error, VolumeData* target)
 {
 	if (error)
 		error->clear();
 	if (!src)
 		return nullptr;
+	if (target == src)
+		target = nullptr;
+	//landmark roles: point 0 moving, point 1 fixed; swapped when every ruler
+	//goes from the target to the source volume (WarpRulersReversed)
+	const bool reversed = WarpRulersReversed(src, target, rulers);
+	const int im = reversed ? 1 : 0, ifx = reversed ? 0 : 1;
 
 	Texture* tex = src->GetTexture();
 	if (!tex)
@@ -3485,8 +3633,8 @@ VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& ruler
 		if (!r) continue;
 		if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
 		{
-			Point* p0 = r->GetPoint(0);
-			Point* p1 = r->GetPoint(1);
+			Point* p0 = r->GetPoint(im);
+			Point* p1 = r->GetPoint(ifx);
 			if (!p0 || !p1) continue;
 			Point pm = tf->unproject(*p0); //moving -> src
 			Point pf = tf->unproject(*p1); //fixed  -> tgt
@@ -3547,25 +3695,29 @@ VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& ruler
 		return nullptr;
 	}
 
-	//create the result volume (same resolution/spacing/bits as the source)
-	int resx, resy, resz;
-	double spcx, spcy, spcz;
-	src->GetResolution(resx, resy, resz);
-	src->GetSpacings(spcx, spcy, spcz);
-	int bits = src_nb * 8;
-
-	VolumeData* vd = new VolumeData();
-	vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
-	vd->SetSpcFromFile(true);
-	vd->SetName(src->GetName() + suffix);
-	if (!vd->GetTexture())
-	{
-		delete vd;
+	//create the result volume: the source's bits on the source's grid, or on
+	//the target's grid (size, spacing, world placement)
+	VolumeData* vd = NewWarpResultVolume(src, target, error);
+	if (!vd)
 		return nullptr;
-	}
+	vd->SetName(src->GetName() + suffix);
 
 	//GPU warp
-	vd->Warp(src, tps, interp);
+	if (!target)
+		vd->Warp(src, tps, interp);
+	else
+	{
+		//the map is fit in the source's normalized box; the output voxels are
+		//in the result's box: map one to the other first
+		double ms[3], mo[3];
+		if (!WarpTargetGridMap(src, vd, ms, mo, error))
+		{
+			delete vd;
+			return nullptr;
+		}
+		const glm::dvec3 dms(ms[0], ms[1], ms[2]), dmo(mo[0], mo[1], mo[2]);
+		vd->Warp(src, tps, interp, &dms, &dmo);
+	}
 
 	//copy display properties from the source
 	CopyWarpDisplayProperties(src, vd);
