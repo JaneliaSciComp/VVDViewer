@@ -70,7 +70,7 @@ if [ "$DO_APT" = "1" ]; then
   command -v apt-get >/dev/null 2>&1 || fail \
 "This script targets Debian/Ubuntu (apt). On Fedora install the equivalents:
   sudo dnf install gcc gcc-c++ make cmake ninja-build git curl zip unzip tar xz \\
-    pkgconf-pkg-config nasm yasm autoconf automake libtool bison flex gperf perl \\
+    pkgconf-pkg-config nasm yasm autoconf automake libtool libtool-ltdl-devel bison flex gperf perl \\
     python3-pip \\
     gtk3-devel mesa-libGL-devel mesa-libGLU-devel libX11-devel libxcb-devel \\
     libXext-devel libXrender-devel libXrandr-devel libXi-devel libXfixes-devel \\
@@ -84,8 +84,8 @@ then install the Vulkan SDK from https://vulkan.lunarg.com/ and re-run with --sk
   log "Installing toolchain + vcpkg build deps + display libraries (sudo)..."
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential cmake ninja-build git curl ca-certificates \
-    zip unzip tar xz-utils pkg-config \
-    nasm yasm autoconf automake libtool libtool-bin autoconf-archive \
+    zip unzip tar xz-utils patch pkg-config \
+    nasm yasm autoconf automake libtool libtool-bin libltdl-dev autoconf-archive \
     bison flex gperf python3 python3-venv python3-pip perl \
     libgtk-3-dev \
     libgl1-mesa-dev libglu1-mesa-dev \

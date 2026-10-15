@@ -131,8 +131,8 @@ case "$OS" in
     done
     if [ -n "$TOOLS_MISSING" ]; then
       echo "WARNING: missing build tools needed by vcpkg to compile dependencies:$TOOLS_MISSING"
-      echo "  Debian/Ubuntu: sudo apt install build-essential nasm autoconf automake libtool autoconf-archive"
-      echo "  Fedora:        sudo dnf install gcc gcc-c++ make nasm autoconf automake libtool autoconf-archive"
+      echo "  Debian/Ubuntu: sudo apt install build-essential nasm autoconf automake libtool libltdl-dev autoconf-archive"
+      echo "  Fedora:        sudo dnf install gcc gcc-c++ make nasm autoconf automake libtool libtool-ltdl-devel autoconf-archive"
     fi
     ;;
   *) fail "Unsupported OS: $OS" ;;
