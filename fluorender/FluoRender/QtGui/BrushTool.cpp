@@ -582,7 +582,7 @@ bool BrushTool::Wheel(QWheelEvent* e)
 {
 	if (!IsActive())
 		return false;
-	int wheel = e->angleDelta().y();
+	int wheel = RenderCanvas::WxWheelRotation(e);   // wx event.GetWheelRotation()
 	if (!wheel)
 		return true;
 	VolumeSelector* sel = Sel();

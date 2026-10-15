@@ -262,11 +262,17 @@ public:
 	// Testing: a synthetic key / wheel event on the render surface.
 	void SimulateKey(int type, int key, Qt::KeyboardModifiers mods = Qt::NoModifier, const QString& text = QString());
 	void SimulateWheel(const QPoint& pos, int delta_y);
+	// wxMouseEvent::GetWheelRotation() of the same scroll event (camera zoom,
+	// brush size; RenderCanvasCamera.cpp)
+	static int WxWheelRotation(const QWheelEvent* e);
 	// Interactive (low-res) rendering while dragging; tools may set it.
 	bool GetInteractive() const { return m_interactive; }
 	double GetScaleFactor() const { return m_scale_factor; }
 	void SetScaleFactor(double s);
 	void SetInteractive(bool b) { m_interactive = b; }
+	// wx VRenderView::RefreshGL(true): the next frame is an interactive one
+	// (adaptive sampling rate / resolution), then a full-quality redraw
+	void RefreshInteractive() { if (m_adaptive) m_interactive = true; if (m_adaptive_res) m_int_res = true; RequestRender(); }
 	double GetAov() const { return m_aov; }
 	void SetAov(double aov);       // degrees; <= 10 means orthographic
 

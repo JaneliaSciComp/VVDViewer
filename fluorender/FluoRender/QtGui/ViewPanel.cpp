@@ -624,6 +624,7 @@ void ViewPanel::OnZoomText()
 	if (!ok || val <= 0) return;
 	{ QSignalBlocker b(m_zoom_sldr); m_zoom_sldr->setValue(int(val)); }
 	m_canvas->SetScaleFactor(val / 100.0);
+	m_canvas->RefreshInteractive();   // wx RefreshGL(true)
 }
 
 // wx OnScaleFactorSpinUp / SpinDown

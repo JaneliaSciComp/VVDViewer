@@ -620,9 +620,29 @@ void RenderCanvas::OnCameraDrag(QMouseEvent* e)
 		m_last_pos = p;
 }
 
+// wxMouseEvent::GetWheelRotation() for the same scroll event. On macOS wx
+// (src/osx/cocoa/window.mm) reports (int)scrollingDeltaY for precise
+// (trackpad / Magic Mouse) deltas and (int)(scrollingDeltaY * 10) for line
+// deltas of a wheel mouse, while Qt's angleDelta is scrollingDeltaY * 2 for
+// precise deltas and a fixed +-120 per line event (qnsview_mouse.mm): the
+// view zoomed (and the slice count grew) 2x / 12x or more faster per scroll
+// than in wx. Qt's pixelDelta is scrollingDeltaY for precise deltas and
+// scrollingDeltaY * 20 for line deltas, which gives the wx value back. Other
+// platforms: wx and Qt both report 120 per notch.
+int RenderCanvas::WxWheelRotation(const QWheelEvent* e)
+{
+#ifdef __APPLE__
+	const QPoint pd = e->pixelDelta();
+	if (!pd.isNull())
+		return e->source() == Qt::MouseEventSynthesizedBySystem ? pd.y() : pd.y() / 2;
+#endif
+	return e->angleDelta().y();
+}
+
 void RenderCanvas::OnCameraWheel(QWheelEvent* e)
 {
-	const int wheel = e->angleDelta().y();
+	// wx OnMouse: event.GetWheelRotation()
+	const int wheel = WxWheelRotation(e);
 	if (!wheel) return;
 	double delta = wheel / 1000.0;
 	if (m_free)
