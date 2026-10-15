@@ -42,6 +42,9 @@
 #include <fstream>
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 //#include <boost/thread.hpp>
 //#include <boost/bind.hpp>
 
@@ -4034,6 +4037,19 @@ namespace FLIVR
 		return ret_pipeline;
 	}
 
+	//process physical footprint (includes Metal / GPU allocations on macOS);
+	//VVD_WARP_DEBUG statistics only
+	static unsigned long long physFootprint()
+	{
+#ifdef __APPLE__
+		task_vm_info_data_t info;
+		mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+		if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
+			return (unsigned long long)info.phys_footprint;
+#endif
+		return 0;
+	}
+
 	//thin plate spline warp: resample vr_in (moving) into this volume (fixed space)
 	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp)
 	{
@@ -4127,6 +4143,18 @@ namespace FLIVR
 		//this writes textures the in-flight frame may sample: wait it out first
 		for (auto dev : m_vulkan->devices)
 			dev->WaitIdleAllFrameSlots();
+		//the warp runs between frames and allocates / releases many large
+		//textures (source tiles, output bricks, pool evictions). Released
+		//objects normally wait for the next frame boundary, which never comes
+		//while the warp blocks the UI thread: free them as the warp goes.
+		//(2026-10-15: a 2953x625x625 TPS warp piled up its source tiles until
+		//~100 GB of GPU memory was wired and macOS panicked in IOGPUFamily.)
+		prim_dev->DrainDeferredDestroys();
+
+		const bool warp_dbg = std::getenv("VVD_WARP_DEBUG") != nullptr;
+		unsigned long long dbg_fp0 = warp_dbg ? physFootprint() : 0, dbg_fp_peak = dbg_fp0;
+		size_t dbg_tiles = 0, dbg_regions = 0, dbg_clamped = 0;
+		unsigned long long dbg_tile_bytes = 0, dbg_tile_max = 0;
 
 		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
 		tex_->set_sort_bricks();
@@ -4142,7 +4170,20 @@ namespace FLIVR
 		}
 
 		const int max3d = (int)prim_dev->properties.limits.maxImageDimension3D;
-		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d);
+		//byte budget of one source tile: a quarter of the graphics-memory limit,
+		//256 MB..1 GB (a tile is only bounded per axis by max3d otherwise:
+		//2048^3 x 2 bytes = 16 GB in a single allocation)
+		const unsigned long long MB = 1024ull * 1024ull;
+		unsigned long long tile_budget = 1024ull * MB;
+		if (prim_dev->use_mem_limit && prim_dev->mem_limit > 0.0)
+			tile_budget = (unsigned long long)(prim_dev->mem_limit / 4.0) * MB;
+		tile_budget = std::max(256ull * MB, std::min(1024ull * MB, tile_budget));
+		auto tileBytes = [src_nb](size_t w, size_t h, size_t d)
+		{
+			return (unsigned long long)w * h * d * (unsigned long long)src_nb;
+		};
+		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d) &&
+			tileBytes((size_t)svx, (size_t)svy, (size_t)svz) <= 2 * tile_budget;
 
 		vks::Buffer lm_buf;
 		prim_dev->createBuffer(
@@ -4262,7 +4303,7 @@ namespace FLIVR
 			}
 			else
 			{
-				const size_t max_regions = 512; //safety cap (degenerate inverses)
+				const size_t max_regions = 1024; //safety cap (degenerate inverses)
 				std::vector<OutRegion> work;
 				work.push_back({ 0, 0, 0, bmx, bmy, bmz, 0, 0, 0, 0, 0, 0 });
 				while (!work.empty())
@@ -4271,7 +4312,8 @@ namespace FLIVR
 					work.pop_back();
 					estimateTile(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz,
 						r.nx, r.ny, r.nz, r.stx, r.sty, r.stz, r.w, r.h, r.d);
-					bool oversized = r.w > (size_t)max3d || r.h > (size_t)max3d || r.d > (size_t)max3d;
+					bool oversized = r.w > (size_t)max3d || r.h > (size_t)max3d || r.d > (size_t)max3d ||
+						tileBytes(r.w, r.h, r.d) > tile_budget;
 					bool splittable = (r.nx > 1 || r.ny > 1 || r.nz > 1) &&
 						regions.size() + work.size() + 2 <= max_regions;
 					if (oversized && splittable)
@@ -4304,6 +4346,19 @@ namespace FLIVR
 						if (r.w > (size_t)max3d) r.w = (size_t)max3d;
 						if (r.h > (size_t)max3d) r.h = (size_t)max3d;
 						if (r.d > (size_t)max3d) r.d = (size_t)max3d;
+						//and never allocate more than 2x the tile budget: shrink
+						//the longest axis around its centre
+						while (tileBytes(r.w, r.h, r.d) > 2 * tile_budget)
+						{
+							size_t* ax = &r.w; long* st = &r.stx;
+							if (r.h > *ax) { ax = &r.h; st = &r.sty; }
+							if (r.d > *ax) { ax = &r.d; st = &r.stz; }
+							if (*ax <= 1) break;
+							const size_t nw = *ax / 2;
+							*st += (long)((*ax - nw) / 2);
+							*ax = nw;
+						}
+						dbg_clamped++;
 					}
 					regions.push_back(r);
 				}
@@ -4331,6 +4386,13 @@ namespace FLIVR
 				else
 				{
 					srctex = buildTile((size_t)r.stx, (size_t)r.sty, (size_t)r.stz, r.w, r.h, r.d);
+					if (srctex)
+					{
+						const unsigned long long tb = tileBytes(r.w, r.h, r.d);
+						dbg_tiles++;
+						dbg_tile_bytes += tb;
+						if (tb > dbg_tile_max) dbg_tile_max = tb;
+					}
 					tileOrigin = glm::ivec4((int)r.stx, (int)r.sty, (int)r.stz, 0);
 					tileSize = glm::ivec4((int)r.w, (int)r.h, (int)r.d, 0);
 				}
@@ -4409,15 +4471,27 @@ namespace FLIVR
 
 					written = true;
 				}
-				//per-sub-region temp source texture (srctex) is released here (after the fences)
+				//per-sub-region temp source texture: free it now (after the
+				//fences) instead of at the next frame boundary
+				if (!wholeFits)
+				{
+					srctex.reset();
+					prim_dev->DrainDeferredDestroys();
+				}
+				if (warp_dbg)
+					dbg_fp_peak = std::max(dbg_fp_peak, physFootprint());
 			}
+			dbg_regions += regions.size();
 
 			if (written)
 			{
 				b->set_dirty(0, true);
 				b->set_modified(0, true);
 			}
+			//pool textures evicted by load_brick (check_swap_memory) above
+			prim_dev->DrainDeferredDestroys();
 		}
+		wholeTex.reset();
 
 		if (tex_->isBrxml())
 			tex_->SetModifiedAllLevels(true, 0);
@@ -4432,6 +4506,19 @@ namespace FLIVR
 			m_vulkan->eraseBricksFromTexpools(bricks, 0);
 			compression_ = compression_this;
 		}
+
+		prim_dev->DrainDeferredDestroys();
+		//the tile uploads grew the staging ring to the largest tile
+		prim_dev->TrimUploadStaging(256ull * MB);
+
+		if (warp_dbg)
+			fprintf(stderr, "[warp] src %dx%dx%d (%d B) out %dx%dx%d bricks %zu whole %d max3d %d "
+				"tile budget %llu MB regions %zu tiles %zu (sum %llu MB, max %llu MB) clamped %zu, "
+				"pool %zu textures, avail %.0f / %.0f MB; footprint start %llu MB peak %llu MB end %llu MB\n",
+				svx, svy, svz, src_nb, ovx, ovy, ovz, bricks->size(), wholeFits ? 1 : 0, max3d,
+				tile_budget / MB, dbg_regions, dbg_tiles, dbg_tile_bytes / MB, dbg_tile_max / MB, dbg_clamped,
+				prim_dev->tex_pool.size(), prim_dev->available_mem, prim_dev->mem_limit,
+				dbg_fp0 / MB, dbg_fp_peak / MB, physFootprint() / MB);
 	}
 
 	void VolumeRenderer::return_component(int c)

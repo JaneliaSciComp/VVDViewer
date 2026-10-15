@@ -193,6 +193,19 @@ namespace vks
 		void retireBuffer(vks::Buffer& buf);
 		//wait until every slot's in-flight frame has completed
 		void WaitIdleAllFrameSlots();
+		//for long synchronous GPU jobs run BETWEEN frames (e.g. the TPS warp):
+		//drain this device's queues and run every slot's deferred destruction
+		//now. Without this, everything released during the job (temporary
+		//textures, evicted pool textures) stays allocated until the next frame,
+		//and a job that allocates and releases many large textures grows the
+		//GPU footprint without bound (macOS: wired memory exhaustion can panic
+		//the kernel in IOGPUFamily). Must not be called while a frame is being
+		//recorded (its command buffers may reference retired objects).
+		void DrainDeferredDestroys();
+		//destroy upload staging buffers larger than keep_bytes (they are
+		//grow-only; a job with huge uploads would otherwise pin that much
+		//host-visible memory for the rest of the session)
+		void TrimUploadStaging(VkDeviceSize keep_bytes);
 		//reset every slot after a vkDeviceWaitIdle (e.g. on window resize): clears
 		//fences, runs deferred destructions and recreates the semaphore chains
 		//(binary semaphores can be left signaled with no waiter after an

@@ -906,6 +906,66 @@ namespace vks
 		}
 	}
 
+	void VulkanDevice::DrainDeferredDestroys()
+	{
+		if (m_in_shutdown)
+			return;
+		VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+		if (compute_queue != VK_NULL_HANDLE && compute_queue != queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(compute_queue));
+		if (transfer_queue != VK_NULL_HANDLE && transfer_queue != queue && transfer_queue != compute_queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+		//every submitted frame has executed (the queues are idle)
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (slot.fence_pending && slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
+		}
+		//releasing a retired texture queues its handles on the current slot, so
+		//drop the textures first, then run the destructions (loop: a destruction
+		//could release further objects)
+		for (int pass = 0; pass < 4; pass++)
+		{
+			bool any = false;
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				std::vector<std::shared_ptr<VTexture>> texs;
+				texs.swap(m_frames[s].retired_texs);
+				any = any || !texs.empty();
+				texs.clear();
+			}
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				std::vector<std::function<void()>> fns;
+				fns.swap(m_frames[s].deferred_destroys);
+				any = any || !fns.empty();
+				for (auto& fn : fns)
+					fn();
+			}
+			if (!any)
+				break;
+		}
+	}
+
+	void VulkanDevice::TrimUploadStaging(VkDeviceSize keep_bytes)
+	{
+		for (uint32_t i = 0; i < STAGING_RING_SIZE; i++)
+		{
+			StagingRingSlot& slot = m_staging_ring[i];
+			if (slot.buf.buffer == VK_NULL_HANDLE || slot.buf.size <= keep_bytes)
+				continue;
+			if (slot.pending && slot.fence != VK_NULL_HANDLE)
+			{
+				VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+				slot.pending = false;
+			}
+			slot.buf.unmap();
+			slot.buf.destroy();
+			slot.buf.size = 0;
+		}
+	}
+
 	void VulkanDevice::prepareSamplers()
 	{
 		// Create samplers

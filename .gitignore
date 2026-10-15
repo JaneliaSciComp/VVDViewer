@@ -180,3 +180,4 @@ Claude outputs/
 qt-port-*.patch
 review-fixes.bundle
 build-qt-port.log
+build_tps/
