@@ -255,6 +255,7 @@ private:
 	std::vector<std::map<QString, VisState>> m_v_undo, m_v_redo;
 	std::function<void(bool&, bool&)> m_mesh_sync;
 	void SaveExpState();
+	void RestoreScroll(int value);   // keep the list position across rebuilds
 	void SaveExpState(QTreeWidgetItem* item, const QString& prefix);
 	void LoadExpState(QTreeWidgetItem* item, const QString& prefix, bool expand_newitem);
 	static void TraversalExpand(QTreeWidgetItem* item);

@@ -33,6 +33,8 @@
 
 #include <algorithm>
 #include <QTimer>
+#include <memory>
+#include <QScrollBar>
 #include <QLocale>
 #include "VolumePropPanel.h"
 #include <cmath>
@@ -1118,6 +1120,35 @@ void MainWindow::RunTestScript(const QString& name)
 			fprintf(stderr, "measuretop: tool=%d visible=%d mainActive=%d\n",
 				int((m_measure_dlg->windowFlags() & Qt::WindowType_Mask) == Qt::Tool),
 				int(m_measure_dlg->isVisible()), int(isActiveWindow()));
+		});
+	}
+	else if (name == "treescroll")
+	{
+		// delete a volume in the middle of a long tree; the list must not jump
+		QTreeWidget* tw = m_tree->Tree();
+		auto sb = [tw]() { return tw->verticalScrollBar()->value(); };
+		auto pick = std::make_shared<QString>();
+		auto before = std::make_shared<int>(0);
+		at(300, [this, tw, sb, pick, before]() {
+			tw->expandAll();
+			tw->doItemsLayout();
+			QScrollBar* v = tw->verticalScrollBar();
+			v->setValue(v->maximum() / 2);
+			// a volume row near the middle of the viewport
+			QTreeWidgetItem* it = tw->itemAt(QPoint(40, tw->viewport()->height() / 2));
+			while (it && it->childCount() > 0) it = tw->itemBelow(it);
+			if (!it) { fprintf(stderr, "treescroll: no item\n"); return; }
+			tw->setCurrentItem(it);
+			*pick = it->text(0);
+			*before = sb();
+			fprintf(stderr, "treescroll: max=%d before=%d delete '%s'\n", v->maximum(), *before, pick->toUtf8().constData());
+			m_tree->DeleteSelection();
+		});
+		at(1200, [tw, sb, pick, before]() {
+			QTreeWidgetItem* cur = tw->currentItem();
+			const QRect r = cur ? tw->visualItemRect(cur) : QRect();
+			fprintf(stderr, "treescroll: after=%d (before %d) current='%s' visible=%d\n", sb(), *before,
+				cur ? cur->text(0).toUtf8().constData() : "", int(cur && tw->viewport()->rect().intersects(r)));
 		});
 	}
 	else if (name == "drop")

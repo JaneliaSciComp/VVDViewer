@@ -1,4 +1,5 @@
 #include "TreePanel.h"
+#include <QPointer>
 
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -568,8 +569,6 @@ void TreePanel::UpdateTree(const QString& name_in, int type)
 	// wx LoadExpState(expand_newitem); the root is always expanded
 	LoadExpState(root, QString(), expand_newitem);
 	root->setExpanded(true);
-	if (m_tree->verticalScrollBar())
-		m_tree->verticalScrollBar()->setValue(scroll);
 	m_updating = false;
 	if (sel_item)
 	{
@@ -579,9 +578,24 @@ void TreePanel::UpdateTree(const QString& name_in, int type)
 	}
 	else
 		UpdateSelection();   // nothing selected any more (wx: OnSelection of the null item)
+	// Keep the list where it was (delete, toggle, rename, ... rebuild the
+	// whole tree). The scroll range is only known after the rows are laid
+	// out, and selecting an item may scroll on its own, so restore the
+	// position after both -- now and once more after the pending layout.
+	RestoreScroll(scroll);
 	UpdateToolbar();
 	// wx UpdateTree end: m_plugin_manager->OnTreeUpdate()
 	Q_EMIT treeUpdated();
+}
+
+void TreePanel::RestoreScroll(int value)
+{
+	QScrollBar* vsb = m_tree->verticalScrollBar();
+	if (!vsb) return;
+	m_tree->doItemsLayout();
+	vsb->setValue(value);
+	QPointer<QScrollBar> guard(vsb);
+	QTimer::singleShot(0, this, [guard, value]() { if (guard) guard->setValue(value); });
 }
 
 // wx SaveExpState: "<prefix><name>#<type>" -> expanded
@@ -1194,6 +1208,7 @@ void TreePanel::DeleteSelection()
 	{
 		int idx = par_item->indexOfChild(sel_item);
 		if (idx + 1 < par_item->childCount()) next_item = par_item->child(idx + 1);
+		else if (idx > 0) next_item = par_item->child(idx - 1);   // last in its group: stay nearby
 	}
 	const QString next_name = next_item ? next_item->text(0) : QString();
 	const int next_type = next_item ? ItemType(next_item) : -1;
