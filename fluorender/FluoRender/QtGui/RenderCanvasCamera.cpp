@@ -547,7 +547,9 @@ void RenderCanvas::OnCameraDrag(QMouseEvent* e)
 	{
 		if (left && !ctrl)
 		{
-			FLIVR::Quaternion q_delta = Trackball(old.x(), p.y(), p.x(), old.y());
+			FLIVR::Quaternion q_delta = m_sphere_rot && !m_rot_lock ?
+				SphereTrackball(old, p, w, h) :
+				Trackball(old.x(), p.y(), p.x(), old.y());
 			if (m_rot_lock && q_delta.IsIdentity())
 				hold_old = true;
 			m_q *= q_delta;
@@ -557,8 +559,7 @@ void RenderCanvas::OnCameraDrag(QMouseEvent* e)
 			Q2ASync();
 			Q_EMIT rotationChanged(m_rotx, m_roty, m_rotz);
 
-			m_interactive = m_adaptive;
-			m_int_res = m_adaptive_res;
+			NoteInteraction();
 
 			if (m_linked_rot)
 				PropagateLinkedRotation();
@@ -580,8 +581,7 @@ void RenderCanvas::OnCameraDrag(QMouseEvent* e)
 			m_obj_transy += trans.y();
 			m_obj_transz += trans.z();
 
-			m_interactive = m_adaptive;
-			m_int_res = m_adaptive_res;
+			NoteInteraction();
 
 			Q2ASync();
 			RequestRender();
@@ -609,8 +609,7 @@ void RenderCanvas::OnCameraDrag(QMouseEvent* e)
 				m_scale_factor += m_scale_factor * delta;
 			Q_EMIT zoomChanged(m_scale_factor);
 
-			m_interactive = m_adaptive;
-			m_int_res = m_adaptive_res;
+			NoteInteraction();
 			RequestRender();
 		}
 	}

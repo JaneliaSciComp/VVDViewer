@@ -865,15 +865,7 @@ void VRenderVulkanView::InitVulkan()
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
-#else
-	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
-#endif
+	wxString dft = vvd::SettingsReadPath(L"" SETTING_FILE_NAME);
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -3706,15 +3698,7 @@ string VRenderVulkanView::EVEAnalysis(int min_radius, int max_radius, double thr
 //load default
 void VRenderVulkanView::LoadDefaultBrushSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_brush_settings.dft");
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -23159,16 +23143,7 @@ void VRenderView::SaveDefault(unsigned int mask)
 	str = wxString::Format("%f %f %f", x, y, z);
 	fconfig.Write("center", str);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_view_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 
@@ -23182,15 +23157,7 @@ void VRenderView::OnSaveDefault(wxCommandEvent &event)
 
 void VRenderView::LoadSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_view_settings.dft");
 
 	wxFileInputStream is(dft);
 

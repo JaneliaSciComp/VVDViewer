@@ -155,6 +155,7 @@ void MainWindow::ApplyViewSettings(RenderCanvas* c)
 	m_settings->GetShadowDir(sx, sy);
 	c->SetShadowDir(sx, sy);
 	c->SetGradBg(m_settings->GetGradBg());
+	c->SetSphereRot(m_settings->GetSphereRot());
 }
 
 // The per-view part of the VRenderFrame ctor / CreateView: tools, overlays,

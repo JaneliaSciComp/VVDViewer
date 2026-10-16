@@ -691,15 +691,7 @@ m_view(0)
 	m_dbtree = new DBTreeCtrl(frame, this, wxID_ANY);
 	m_searchResult = new DBTreeCtrl(frame, this, wxID_ANY);
 
-    wxString expath = wxStandardPaths::Get().GetExecutablePath();
-    expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/" + "catalog_list.set";
-#else
-    wxString dft = expath + GETSLASHS() + "catalog_list.set";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "catalog_list.set";
-#endif
+    wxString dft = vvd::SettingsReadPath(L"catalog_list.set");
     wxFileInputStream is(dft);
 	if (is.IsOk())
 	{
@@ -769,16 +761,7 @@ void DatabaseDlg::SaveDefault()
 {	
 	if (!m_dbtree) return;
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/" + "catalog_list.set";
-#else
-	wxString dft = expath + GETSLASHS() + "catalog_list.set";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "catalog_list.set";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"catalog_list.set");
 	wxFileOutputStream os(dft);
 	if (os.IsOk())
 	{

@@ -280,6 +280,11 @@ QWidget* SettingsDialog::CreateRenderingPage()
 	QVBoxLayout* g5 = new QVBoxLayout(group5);
 	m_rot_link_chk = new QCheckBox(tr("Link all rendering views' rotations."));
 	g5->addWidget(m_rot_link_chk);
+	// Qt only: drag on a virtual sphere; near the edge of the
+	// view a drag around the centre spins the data about the view axis
+	m_sphere_rot_chk = new QCheckBox(tr("Virtual sphere: drag near the edge to roll (Z)."));
+	m_sphere_rot_chk->setObjectName("sphere_rot");
+	g5->addWidget(m_sphere_rot_chk);
 	QHBoxLayout* g4_5 = new QHBoxLayout;
 	g4_5->addWidget(group4);
 	g4_5->addStretch(1);
@@ -344,6 +349,10 @@ QWidget* SettingsDialog::CreateRenderingPage()
 	});
 	connect(m_rot_link_chk, &QCheckBox::toggled, this, [this](bool on) {
 		Q_EMIT rotationLinkChanged(on);
+	});
+	connect(m_sphere_rot_chk, &QCheckBox::toggled, this, [this](bool on) {
+		m_sphere_rot = on;
+		Q_EMIT settingsChanged();
 	});
 
 	return page;
@@ -618,22 +627,7 @@ void SettingsDialog::SetDataManager(DataManager* mgr)
 QString SettingsDialog::SettingsFilePath(bool forSave)
 {
 	const VVDString name(SETTING_FILE_NAME_QT);
-	const VVDString expath = vvd::GetExecutableDir();
-#if defined(__APPLE__)
-	(void)forSave;
-	return FromVVD(expath + L"/../Resources/" + name);
-#else
-	VVDString dft = vvd::JoinPath(expath, name);
-	const VVDString dft2 = vvd::JoinPath(vvd::GetUserConfigDir(), name);
-	if (forSave)
-	{
-		if (!vvd::FileExists(dft) && vvd::FileExists(dft2))
-			dft = dft2;
-	}
-	else if (!vvd::FileExists(dft))
-		dft = dft2;
-	return FromVVD(dft);
-#endif
+	return FromVVD(forSave ? vvd::SettingsWritePath(name) : vvd::SettingsReadPath(name));
 }
 
 QString SettingsDialog::FontsDir()
@@ -688,6 +682,7 @@ void SettingsDialog::SetDefaults()
 	m_ruler_use_transf = false;
 	m_ruler_time_dep = true;
 	m_ruler_auto_select = false;
+	m_sphere_rot = true;
 	m_cell_warp = rigidcells::Params();
 	m_cell_warp.device = -1;   // the plugin's default: the first GPU if there is one
 	m_warp_target = "auto";
@@ -784,6 +779,7 @@ void SettingsDialog::LoadSettings()
 	if (!cfg.Read(L"/ruler time dep/value", m_ruler_time_dep))
 		cfg.Read(L"/ruler time dependent/value", m_ruler_time_dep);
 	cfg.Read(L"/ruler auto select/value", m_ruler_auto_select);
+	cfg.Read(L"/sphere rotation/value", m_sphere_rot);
 	if (cfg.Read(L"/warp target/value", s)) m_warp_target = FromVVD(s);
 	cfg.Read(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Read(L"/rigid cells/per label", m_cell_warp.per_label);
@@ -818,7 +814,7 @@ void SettingsDialog::UpdateUI()
 		m_prj_save_chk, m_realtime_cmp_chk, m_font_cmb, m_font_size_cmb, m_text_color_cmb,
 		m_run_script_chk, m_script_file_text, m_paint_hist_depth_sldr, m_paint_hist_depth_text,
 		m_micro_blend_chk, m_use_fog_mesh_chk, m_peeling_layers_sldr, m_peeling_layers_text,
-		m_shadow_dir_chk, m_shadow_dir_sldr, m_shadow_dir_text, m_grad_bg_chk, m_rot_link_chk,
+		m_shadow_dir_chk, m_shadow_dir_sldr, m_shadow_dir_text, m_grad_bg_chk, m_rot_link_chk, m_sphere_rot_chk,
 		m_mouse_int_chk, m_mouse_lv_chk, m_streaming_chk,
 		m_graphics_mem_sldr, m_graphics_mem_text, m_large_data_sldr, m_large_data_text,
 		m_block_size_sldr, m_block_size_text, m_response_time_sldr, m_response_time_text,
@@ -848,6 +844,7 @@ void SettingsDialog::UpdateUI()
 	m_shadow_dir_sldr->setValue(int(deg + 0.5));
 	m_shadow_dir_text->setText(QString::asprintf("%.2f", deg));
 	m_grad_bg_chk->setChecked(m_grad_bg);
+	m_sphere_rot_chk->setChecked(m_sphere_rot);
 	m_override_vox_chk->setChecked(m_override_vox);
 	// wavelength to color
 	m_wav_color1_cmb->setCurrentIndex(m_wav_color1 - 1);
@@ -900,7 +897,14 @@ void SettingsDialog::UpdateUI()
 
 void SettingsDialog::SaveSettings()
 {
+	// start from the current file so keys this app does not write (other
+	// versions / the wx app) survive a save; the values below overwrite
 	vvd::IniFile cfg;
+	{
+		const VVDString prev = ToVVD(SettingsFilePath(false));
+		if (vvd::FileExists(prev) && !cfg.Load(prev))
+			cfg.Clear();
+	}
 
 	cfg.Write(L"ver_major", VVDString(VERSION_MAJOR_TAG));
 	cfg.Write(L"ver_minor", VVDString(VERSION_MINOR_TAG));
@@ -947,6 +951,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/ruler use transf/value", m_ruler_use_transf);
 	cfg.Write(L"/ruler time dependent/value", m_ruler_time_dep);   // same key as wx SaveSettings
 	cfg.Write(L"/ruler auto select/value", m_ruler_auto_select);   // Qt only
+	cfg.Write(L"/sphere rotation/value", m_sphere_rot);   // Qt only
 	cfg.Write(L"/warp target/value", ToVVD(m_warp_target));   // Qt only
 	cfg.Write(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Write(L"/rigid cells/per label", m_cell_warp.per_label);

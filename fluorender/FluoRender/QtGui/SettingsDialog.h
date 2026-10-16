@@ -8,9 +8,10 @@
 // file.
 //
 // Settings file: "fluorender.set" in the wxFileConfig text format, read and
-// written with vvd::IniFile at the same location the wx app uses:
-//   macOS:  <exe dir>/../Resources/fluorender.set  (the bundle's Resources)
-//   other:  <exe dir>/fluorender.set, falling back to <user config dir>/
+// written with vvd::IniFile at the same location the wx app uses: written to
+// vvd::GetUserSettingsDir() (macOS ~/Library/Application Support/VVDViewer),
+// read from there with the bundle / install copy as the factory default
+// (vvd::SettingsReadPath / SettingsWritePath, Core/FileUtil.h).
 //
 // Engine-static settings (TextureRenderer, VolumeRenderer, MultiVolumeRenderer,
 // TreeLayer, VolumeMeshConv, Texture::mask_undo_num_, DataManager) are applied
@@ -79,6 +80,8 @@ public:
 	QString GetTimeId() const { return m_time_id; }
 	void SetTimeId(const QString& id) { m_time_id = id; }
 	bool GetGradBg() const { return m_grad_bg; }
+	// Qt only (/sphere rotation, default on): virtual sphere rotation
+	bool GetSphereRot() const { return m_sphere_rot; }
 	void SetGradBg(bool val) { m_grad_bg = val; }
 	bool GetRotLink() const;                               // view OnRotLink()
 	bool GetOverrideVox() const { return m_override_vox; }
@@ -208,6 +211,7 @@ private:
 	int m_wav_color4;
 	QString m_time_id;
 	bool m_grad_bg;
+	bool m_sphere_rot = true;
 	bool m_override_vox;
 	double m_soft_threshold;
 	bool m_run_script;
@@ -267,6 +271,7 @@ private:
 	QLineEdit* m_shadow_dir_text = nullptr;
 	QCheckBox* m_grad_bg_chk = nullptr;
 	QCheckBox* m_rot_link_chk = nullptr;
+	QCheckBox* m_sphere_rot_chk = nullptr;
 	// performance
 	QCheckBox* m_mouse_int_chk = nullptr;
 	QCheckBox* m_mouse_lv_chk = nullptr;

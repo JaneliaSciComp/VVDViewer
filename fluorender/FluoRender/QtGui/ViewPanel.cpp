@@ -76,22 +76,7 @@ namespace
 	VVDString ViewDefaultFile(bool for_save)
 	{
 		const VVDString name(L"default_view_settings.dft");
-		const VVDString expath = vvd::GetExecutableDir();
-#if defined(__APPLE__)
-		(void)for_save;
-		return expath + L"/../Resources/" + name;
-#else
-		VVDString dft = vvd::JoinPath(expath, name);
-		const VVDString dft2 = vvd::JoinPath(vvd::GetUserConfigDir(), name);
-		if (for_save)
-		{
-			if (!vvd::FileExists(dft) && vvd::FileExists(dft2))
-				dft = dft2;
-		}
-		else if (!vvd::FileExists(dft))
-			dft = dft2;
-		return dft;
-#endif
+		return for_save ? vvd::SettingsWritePath(name) : vvd::SettingsReadPath(name);
 	}
 }
 

@@ -52,9 +52,9 @@ public:
 	// wx VPropView::m_vrv: Shadow / Smoothing / Sample Rate go to every
 	// volume of the view in Depth (VOL_METHOD_MULTI) mode, MIP is refused there
 	void SetRenderCanvas(RenderCanvas* canvas) { m_canvas = canvas; }
-	// wx default_volume_settings.dft (next to the executable / in the app
-	// bundle's Resources, else the user config dir); VVD_QT_VOLUME_DFT
-	// overrides the path (tests)
+	// wx default_volume_settings.dft, the path to SAVE to (the per-user
+	// settings dir, vvd::SettingsWritePath); VVD_QT_VOLUME_DFT overrides the
+	// path (tests)
 	static QString DefaultSettingsPath();
 	// testing aids: the wx handlers behind the buttons / check boxes
 	void SaveDefault() { OnSaveDefault(); }

@@ -1412,21 +1412,11 @@ z
 			   curl_easy_setopt(s_curl_, CURLOPT_XFERINFODATA, th);
 			   curl_easy_setopt(s_curl_, CURLOPT_NOPROGRESS, 0L);
 
-			   vvd::String expath = vvd::GetExecutableDir();
-#ifdef _DARWIN
-			   vvd::String dft = expath + L"/../Resources/vvd_cache";
+			   // per-user cache (never inside the app bundle / install dir)
+			   vvd::String dft = vvd::JoinPath(vvd::GetUserCacheDir(), L"vvd_cache");
 			   if (!vvd::DirExists(dft))
-				   vvd::Mkdir(dft);
-			   dft += L"/";
-#else
-			   vvd::String dft = expath + GETSLASH() + L"vvd_cache";
-			   vvd::String dft2 = vvd::GetUserDataDir() + GETSLASH() + L"vvd_cache";
-			   if (!vvd::DirExists(dft) && vvd::DirExists(dft2))
-				   dft = dft2;
-			   else if (!vvd::DirExists(dft))
-				   vvd::Mkdir(dft);
+				   vvd::MkdirRecursive(dft);
 			   dft += GETSLASH();
-#endif
 			   wstring randname;
 			   int len = 16;
 			   char s[17];

@@ -42,22 +42,7 @@ namespace
 	// same lookup as the wx CountingDlg / BrushToolDlg::LoadDefault
 	QString DefaultBrushSettingsPath()
 	{
-		const QString expath = QCoreApplication::applicationDirPath();
-#ifdef __APPLE__
-		return expath + "/../Resources/default_brush_settings.dft";
-#else
-		QString dft = expath + "/default_brush_settings.dft";
-		if (!QFileInfo::exists(dft))
-		{
-#ifdef _WIN32
-			QString cfg = qEnvironmentVariable("APPDATA");
-#else
-			QString cfg = QDir::homePath();
-#endif
-			dft = cfg + "/default_brush_settings.dft";
-		}
-		return dft;
-#endif
+		return QString::fromStdWString(vvd::SettingsReadPath(L"default_brush_settings.dft"));
 	}
 }
 

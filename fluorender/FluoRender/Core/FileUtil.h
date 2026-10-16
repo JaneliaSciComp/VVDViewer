@@ -41,6 +41,26 @@ namespace vvd
 	EXPORT_API String GetUserDataDir();
 	EXPORT_API String GetUserConfigDir();
 	EXPORT_API String GetTempDir();
+	EXPORT_API String GetUserCacheDir();     // ~/Library/Caches/VVDViewer on macOS, GetUserDataDir() elsewhere
+
+	// ---- settings files (fluorender.set, default_*.dft, plugin .dft) -------
+	// One per-user directory shared by the wx app (VVDViewer) and the Qt app
+	// (VVDViewerQt); the name is fixed ("VVDViewer"), independent of
+	// SetAppName():
+	//   macOS   ~/Library/Application Support/VVDViewer
+	//   Windows %APPDATA%\VVDViewer
+	//   Linux   $XDG_CONFIG_HOME/VVDViewer (default ~/.config/VVDViewer)
+	// The environment variable VVD_SETTINGS_DIR overrides it (tests).
+	// The install copies (macOS <bundle>/Contents/Resources, elsewhere the exe
+	// dir) are read-only factory defaults: settings are never written there.
+	EXPORT_API String GetUserSettingsDir();
+	EXPORT_API String GetFactorySettingsDir();
+	// The file to read: <user dir>/name if it exists, else the factory copy,
+	// else (Windows / Linux) the legacy GetUserConfigDir()/name the old code
+	// wrote when the exe dir was read-only; else <user dir>/name (missing).
+	EXPORT_API String SettingsReadPath(const String& name);
+	// The file to write: <user dir>/name (the directory is created).
+	EXPORT_API String SettingsWritePath(const String& name);
 	EXPORT_API String GetDocumentsDir();
 	// A new, unique file name in the temp directory (the file is NOT created).
 	EXPORT_API String CreateTempFileName(const String& prefix = String(L"vvd"));

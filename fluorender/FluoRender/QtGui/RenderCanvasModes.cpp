@@ -1044,13 +1044,16 @@ void RenderCanvas::DrawVolumesDP(int nx, int ny)
 		present = DrawDPMeshPreview(nx, ny, peeling_layers);
 	DrawFinalBuffer(true, present);
 
-	if (m_interactive)
+	// still interacting: stay at the reduced rate; the settle timer
+	// (RenderCanvas::OnInteractionSettleTimer) starts the full-quality pass
+	const bool int_settled = InteractionSettled();
+	if (m_interactive && int_settled)
 	{
 		m_interactive = false;
 		m_refresh_start_loop = true;
 	}
 
-	if (m_int_res)
+	if (m_int_res && int_settled)
 	{
 		m_int_res = false;
 		m_refresh_start_loop = true;

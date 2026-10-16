@@ -225,6 +225,56 @@ namespace vvd
 		return s;
 	}
 
+	String GetUserCacheDir()
+	{
+#if defined(__APPLE__)
+		return JoinPath(JoinPath(JoinPath(HomeDir(), L"Library"), L"Caches"), L"VVDViewer");
+#else
+		return GetUserDataDir();
+#endif
+	}
+
+	String GetUserSettingsDir()
+	{
+		if (const char* env = std::getenv("VVD_SETTINGS_DIR"))
+			if (*env) return String(std::string(env));
+		const String app(L"VVDViewer");
+#if defined(_WIN32)
+		wchar_t buf[MAX_PATH];
+		if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, buf)))
+			return JoinPath(String(buf), app);
+		return JoinPath(HomeDir(), app);
+#elif defined(__APPLE__)
+		return JoinPath(JoinPath(JoinPath(HomeDir(), L"Library"), L"Application Support"), app);
+#else
+		const char* xdg = std::getenv("XDG_CONFIG_HOME");
+		if (xdg && *xdg && xdg[0] == '/') return JoinPath(String(std::string(xdg)), app);
+		return JoinPath(JoinPath(HomeDir(), L".config"), app);
+#endif
+	}
+
+	String GetFactorySettingsDir() { return GetResourcesDir(); }
+
+	String SettingsReadPath(const String& name)
+	{
+		const String user = JoinPath(GetUserSettingsDir(), name);
+		if (FileExists(user)) return user;
+		const String factory = JoinPath(GetFactorySettingsDir(), name);
+		if (FileExists(factory)) return factory;
+#if !defined(__APPLE__)
+		const String legacy = JoinPath(GetUserConfigDir(), name);
+		if (FileExists(legacy)) return legacy;
+#endif
+		return user;
+	}
+
+	String SettingsWritePath(const String& name)
+	{
+		const String dir = GetUserSettingsDir();
+		MkdirRecursive(dir);
+		return JoinPath(dir, name);
+	}
+
 	String GetDocumentsDir()
 	{
 #if defined(_WIN32)

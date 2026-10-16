@@ -155,21 +155,13 @@ QWidget* NBLASTPluginQt::CreatePanel(QWidget* parent)
 	return new NBLASTPanel(this, parent);
 }
 
-// <bundle>/Contents/Resources/<name> on macOS, else next to the executable
-// or in the user config dir (wx Load/SaveConfigFile, LoadList / SaveList)
+// settings / list files: written to the per-user settings dir, read from
+// there or the bundle / install copy (vvd::SettingsRead/WritePath; same files
+// as the wx Load/SaveConfigFile, LoadList / SaveList)
 QString NBLASTPluginQt::ResourcePath(const QString& name, bool for_save)
 {
-	const QString expath = QCoreApplication::applicationDirPath();
-#ifdef __APPLE__
-	(void)for_save;
-	return expath + "/../Resources/" + name;
-#else
-	QString dft = expath + "/" + name;
-	const QString dft2 = QString::fromStdWString(vvd::GetUserConfigDir()) + "/" + name;
-	if (for_save) { if (!QFileInfo::exists(dft) && QFileInfo::exists(dft2)) dft = dft2; }
-	else if (!QFileInfo::exists(dft)) dft = dft2;
-	return dft;
-#endif
+	const VVDString n(name.toStdWString());
+	return QString::fromStdWString(for_save ? vvd::SettingsWritePath(n) : vvd::SettingsReadPath(n));
 }
 
 QString NBLASTPluginQt::RScriptPath()
@@ -727,9 +719,8 @@ void NBDBListDialog::SaveList()
 {
 	if (VVDQtScriptedRun() && qEnvironmentVariable("VVD_QT_NBLAST_DBLIST_SAVE").isEmpty())
 		return;   // TestRun.h (a test names its own file)
-	QString listpath = ListPath(true);
 	const QString test = qEnvironmentVariable("VVD_QT_NBLAST_DBLIST_SAVE");
-	if (!test.isEmpty()) listpath = test;
+	const QString listpath = test.isEmpty() ? ListPath(true) : test;
 	QFile f(listpath);
 	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
 	QByteArray out;

@@ -1223,14 +1223,7 @@ void BrushTool::LoadDefaultBrushSettings()
 	if (!sel)
 		return;
 	const VVDString name(L"default_brush_settings.dft");
-	const VVDString expath = vvd::GetExecutableDir();
-#if defined(__APPLE__)
-	VVDString dft = expath + L"/../Resources/" + name;
-#else
-	VVDString dft = vvd::JoinPath(expath, name);
-	if (!vvd::FileExists(dft))
-		dft = vvd::JoinPath(vvd::GetUserConfigDir(), name);
-#endif
+	const VVDString dft = vvd::SettingsReadPath(name);
 	vvd::IniFile fconfig;
 	if (!vvd::FileExists(dft) || !fconfig.Load(dft))
 		return;

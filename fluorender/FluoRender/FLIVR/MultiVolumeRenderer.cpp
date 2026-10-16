@@ -403,7 +403,47 @@ namespace FLIVR
 		}
 		bs_size = bs.size();
 
-		if (TextureRenderer::get_mem_swap() && remain_brk == 0) return;
+		if (TextureRenderer::get_mem_swap() && remain_brk == 0)
+		{
+			//every brick left was culled or skipped above (e.g. a capture tile
+			//that shows no data): the loop is complete without a draw, or it
+			//would never be marked done
+			if (updating &&
+				TextureRenderer::get_cur_brick_num() == TextureRenderer::get_total_brick_num())
+			{
+				for (i = 0; i < (int)vr_list_.size(); i++)
+					if (vr_list_[i]) vr_list_[i]->done_loop_[stmode] = true;
+				TextureRenderer::set_done_update_loop(true);
+
+				//nothing is drawn: clear the target as requested (as
+				//VolumeRenderer::draw_volume_ray), or the caller composites
+				//what it held before (the previous capture tile)
+				if (clear_framebuf && framebuf)
+				{
+					Vulkan2dRender::V2DRenderParams params;
+					if (!framebuf->renderPass)
+					{
+						params.pipeline =
+							VolumeRenderer::m_v2drender->preparePipeline(
+								IMG_SHADER_TEXTURE_LOOKUP,
+								V2DRENDER_BLEND_OVER_INV,
+								framebuf->attachments[0]->format,
+								framebuf->attachments.size(),
+								0,
+								framebuf->attachments[0]->is_swapchain_images);
+						framebuf->replaceRenderPass(params.pipeline.pass);
+					}
+					vks::VulkanSemaphoreSettings sem = VolumeRenderer::m_vulkan->devices[0]->GetNextRenderSemaphoreSettings();
+					params.waitSemaphoreCount = sem.waitSemaphoreCount;
+					params.waitSemaphores = sem.waitSemaphores;
+					params.signalSemaphoreCount = sem.signalSemaphoreCount;
+					params.signalSemaphores = sem.signalSemaphores;
+					params.clearColor = clearColor;
+					VolumeRenderer::m_v2drender->clear(framebuf, params);
+				}
+			}
+			return;
+		}
 
 
 		vks::VulkanDevice* prim_dev = VolumeRenderer::m_vulkan->devices[0];

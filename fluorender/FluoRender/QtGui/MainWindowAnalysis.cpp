@@ -1,3 +1,4 @@
+#include <QFileInfo>
 // MainWindow's AnalysisContext implementation and the "Analyze" menu.
 //
 // In the wx build these live on VRenderVulkanView (m_selector, m_calculator,
@@ -1111,7 +1112,7 @@ void MainWindow::RunTestScript(const QString& name)
 	{
 		// Measurement stays above the main window while the view is clicked
 		at(300, [this]() { EnsureMeasureDialog()->GetSettings(); ShowTool(m_measure_dlg); });
-		at(900, [this, cv, w, h]() {
+		at(300, [this, cv, w, h]() {
 			activateWindow(); raise();
 			cv->SimulateMouse(QEvent::MouseButtonPress, QPoint(w / 2, h / 2), Qt::LeftButton, Qt::LeftButton);
 			cv->SimulateMouse(QEvent::MouseButtonRelease, QPoint(w / 2, h / 2), Qt::LeftButton, Qt::NoButton);
@@ -1121,6 +1122,42 @@ void MainWindow::RunTestScript(const QString& name)
 				int((m_measure_dlg->windowFlags() & Qt::WindowType_Mask) == Qt::Tool),
 				int(m_measure_dlg->isVisible()), int(isActiveWindow()));
 		});
+	}
+	else if (name == "sphererot")
+	{
+		// Settings "Virtual sphere": a centre drag turns like the wx
+		// trackball; a drag around the centre outside the sphere only rolls.
+		// "[sphere]" lines; view captures sph_<n>.png (VVD_QT_TEST_DIR).
+		RenderCanvas* cv = m_canvas;
+		const QString dir = QFileInfo(qEnvironmentVariable("VVD_QT_GRAB")).absolutePath();
+		auto drag = [cv](const std::vector<QPoint>& pts) {
+			cv->SimulateMouse(QEvent::MouseMove, pts[0], Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, pts[0], Qt::LeftButton, Qt::LeftButton);
+			for (size_t i = 1; i < pts.size(); i++)
+				cv->SimulateMouse(QEvent::MouseMove, pts[i], Qt::NoButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, pts.back(), Qt::LeftButton, Qt::NoButton);
+		};
+		auto rot = [cv](const char* tag) {
+			double x, y, z; cv->GetRotations(x, y, z);
+			fprintf(stderr, "[sphere] %s: rot %.3f %.3f %.3f\n", tag, x, y, z);
+		};
+		const int w = cv->width(), h = cv->height();
+		const QPoint c(w / 2, h / 2);
+		std::vector<QPoint> line, vline, arc;
+		for (int i = 0; i <= 10; i++) line.push_back(c + QPoint(3 * i, 0));
+		for (int i = 0; i <= 10; i++) vline.push_back(c + QPoint(0, 3 * i));
+		const double r = 0.48 * std::min(w, h);
+		for (int i = 0; i <= 45; i++)   // 0 -> 45 degrees, clockwise on screen
+			arc.push_back(c + QPoint(int(std::lround(r * std::cos(i * M_PI / 180.0))), int(std::lround(r * std::sin(i * M_PI / 180.0)))));
+		at(100, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(false); drag(line); rot("wx trackball, centre drag right 30 px"); });
+		at(200, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(true); drag(line); rot("sphere, centre drag right 30 px"); });
+		at(900, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(false); drag(vline); rot("wx trackball, centre drag down 30 px"); });
+		at(400, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(true); drag(vline); rot("sphere, centre drag down 30 px"); });
+		at(500, [=]() { cv->SetRotations(0, 0, 0); cv->RefreshView(); });
+		at(1300, [=]() { cv->CaptureToFile(dir + "/sph_0.png"); });
+		at(1900, [=]() { cv->SetSphereRot(true); drag(arc); rot("sphere, arc 45 deg clockwise outside the sphere"); cv->RefreshView(); });
+		at(2700, [=]() { cv->CaptureToFile(dir + "/sph_1.png"); });
+		// (QtMain grabs the window and quits 4 s after the test starts)
 	}
 	else if (name == "treescroll")
 	{

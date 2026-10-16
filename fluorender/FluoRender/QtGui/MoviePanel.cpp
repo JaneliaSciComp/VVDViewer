@@ -1448,24 +1448,17 @@ void MoviePanel::WriteFrameToFile(int total_frames)
 // ---------------------------------------------------------------- settings
 
 namespace {
-QString MovieSettingsPath()
+QString MovieSettingsPath(bool for_save)
 {
-	const VVDString expath = vvd::GetExecutableDir();
-#if defined(__APPLE__)
-	return QString::fromStdWString(expath + L"/../Resources/default_movie_settings.dft");
-#else
-	VVDString dft = vvd::JoinPath(expath, VVDString(L"default_movie_settings.dft"));
-	if (!vvd::FileExists(dft))
-		dft = vvd::JoinPath(vvd::GetUserConfigDir(), VVDString(L"default_movie_settings.dft"));
-	return QString::fromStdWString(dft);
-#endif
+	const VVDString name(L"default_movie_settings.dft");
+	return QString::fromStdWString(for_save ? vvd::SettingsWritePath(name) : vvd::SettingsReadPath(name));
 }
 }
 
 void MoviePanel::LoadSettings()
 {
 	vvd::IniFile fconfig;
-	if (!fconfig.Load(VVDString(MovieSettingsPath().toStdWString())))
+	if (!fconfig.Load(VVDString(MovieSettingsPath(false).toStdWString())))
 		return;
 	double dVal;
 	if (fconfig.Read(VVDString(L"/recorder_bitrate"), dVal))
@@ -1481,7 +1474,7 @@ void MoviePanel::SaveDefault()
 		return;
 	vvd::IniFile fconfig;
 	fconfig.Write(VVDString(L"/recorder_bitrate"), m_Mbitrate);
-	fconfig.Save(VVDString(MovieSettingsPath().toStdWString()));
+	fconfig.Save(VVDString(MovieSettingsPath(true).toStdWString()));
 }
 
 // ---------------------------------------------------------------- project

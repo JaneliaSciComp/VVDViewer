@@ -540,22 +540,14 @@ bool FijiInterfacePluginQt::isReady()
 	return m_initialized;
 }
 
-// fiji_interface_settings.dft: <bundle>/Contents/Resources on macOS, else
-// next to the executable or in the user config dir (wx Load/SaveConfigFile)
+// fiji_interface_settings.dft: written to the per-user settings dir, read
+// from there or the bundle / install copy (vvd::SettingsRead/WritePath; same
+// file as the wx Load/SaveConfigFile)
 QString FijiInterfacePluginQt::ConfigFilePath(bool for_save)
 {
 	const QString name = "fiji_interface_settings.dft";
-	const QString expath = QCoreApplication::applicationDirPath();
-#ifdef __APPLE__
-	(void)for_save;
-	return expath + "/../Resources/" + name;
-#else
-	QString dft = expath + "/" + name;
-	const QString dft2 = QString::fromStdWString(vvd::GetUserConfigDir()) + "/" + name;
-	if (for_save) { if (!QFileInfo::exists(dft) && QFileInfo::exists(dft2)) dft = dft2; }
-	else if (!QFileInfo::exists(dft)) dft = dft2;
-	return dft;
-#endif
+	const VVDString n(name.toStdWString());
+	return QString::fromStdWString(for_save ? vvd::SettingsWritePath(n) : vvd::SettingsReadPath(n));
 }
 
 void FijiInterfacePluginQt::LoadConfigFile()

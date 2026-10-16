@@ -1725,16 +1725,7 @@ void BrushToolDlg::SaveDefault()
    //eve radius
    fconfig.Write("eve_min_radius", m_dft_eve_min_radius);
    fconfig.Write("eve_max_radius", m_dft_eve_max_radius);
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_brush_settings.dft");
    wxFileOutputStream os(dft);
    fconfig.Save(os);
 }
@@ -1742,15 +1733,7 @@ void BrushToolDlg::SaveDefault()
 //load default
 void BrushToolDlg::LoadDefault()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_brush_settings.dft");
    wxFileInputStream is(dft);
    if (!is.IsOk())
       return;

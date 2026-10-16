@@ -851,17 +851,8 @@ void NAPluginQt::RefreshRenderViews()
 QString NAPluginQt::ConfigFilePath(bool for_save)
 {
 	const QString name = "NA_plugin_settings.dft";
-	const QString expath = QCoreApplication::applicationDirPath();
-#ifdef __APPLE__
-	(void)for_save;
-	return expath + "/../Resources/" + name;
-#else
-	QString dft = expath + "/" + name;
-	const QString dft2 = QString::fromStdWString(vvd::GetUserConfigDir()) + "/" + name;
-	if (for_save) { if (!QFileInfo::exists(dft) && QFileInfo::exists(dft2)) dft = dft2; }
-	else if (!QFileInfo::exists(dft)) dft = dft2;
-	return dft;
-#endif
+	const VVDString n(name.toStdWString());
+	return QString::fromStdWString(for_save ? vvd::SettingsWritePath(n) : vvd::SettingsReadPath(n));
 }
 
 void NAPluginQt::LoadConfigFile()

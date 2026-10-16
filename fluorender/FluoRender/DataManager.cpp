@@ -9313,15 +9313,7 @@ m_vol_exb(0.0),
 	m_use_defaults(true),
 	m_override_vox(true)
 {
-	VVDString expath = vvd::GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH());
-#ifdef _DARWIN
-	VVDString dft = expath + "/../Resources/default_volume_settings.dft";
-#else
-	VVDString dft = expath + GETSLASHS() + "default_volume_settings.dft";
-	if (!vvd::FileExists(dft))
-		dft = vvd::GetUserConfigDir() + GETSLASHS() + "default_volume_settings.dft";
-#endif
+	VVDString dft = vvd::SettingsReadPath(L"default_volume_settings.dft");
 	if (!vvd::FileExists(dft))
 		return;
 	vvd::IniFile fconfig(dft);

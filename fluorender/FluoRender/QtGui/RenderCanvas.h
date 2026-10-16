@@ -272,7 +272,14 @@ public:
 	void SetInteractive(bool b) { m_interactive = b; }
 	// wx VRenderView::RefreshGL(true): the next frame is an interactive one
 	// (adaptive sampling rate / resolution), then a full-quality redraw
-	void RefreshInteractive() { if (m_adaptive) m_interactive = true; if (m_adaptive_res) m_int_res = true; RequestRender(); }
+	void RefreshInteractive() { NoteInteraction(); RequestRender(); }
+	// Start or extend an interactive (reduced sampling rate / resolution)
+	// period. Full quality returns only once the input has been still for
+	// IntSettleMs (wx dropped back after a single frame, so every short pause
+	// in a drag started a full-quality pass and the drag stuttered).
+	void NoteInteraction();
+	bool InteractionSettled() const;
+	static int IntSettleMs();
 	double GetAov() const { return m_aov; }
 	void SetAov(double aov);       // degrees; <= 10 means orthographic
 
@@ -398,6 +405,11 @@ public:
 	bool GetFree() const { return m_free; }
 	// wx m_rot_lock ("45 Increments"): trackball snaps to 45 degrees
 	void SetRotLock(bool b) { m_rot_lock = b; }
+	// Settings "Virtual sphere" (Qt only): left drag rotates a virtual
+	// sphere instead of the wx screen-plane trackball (SphereTrackball)
+	void SetSphereRot(bool b) { m_sphere_rot = b; }
+	bool GetSphereRot() const { return m_sphere_rot; }
+	FLIVR::Quaternion SphereTrackball(const QPoint& from, const QPoint& to, int w, int h);
 	bool GetRotLock() const { return m_rot_lock; }
 	// wx m_linked_rot (rotation "Link"): every linked canvas follows
 	void SetLinkedRot(bool b);
@@ -796,6 +808,10 @@ private:
 	double m_ortho_left = -1, m_ortho_right = 1, m_ortho_bottom = -1, m_ortho_top = 1;
 	bool m_persp = false;
 	bool m_interactive = false;
+	bool m_sphere_rot = true;
+	qint64 m_last_interaction_ms = -1;      // QDateTime::currentMSecsSinceEpoch
+	class QTimer* m_int_settle_timer = nullptr;
+	void OnInteractionSettleTimer();
 	FLIVR::Color m_bg_color{ 0.0, 0.0, 0.0 };
 	glm::mat4 m_mv_mat{ 1.0f };
 	glm::mat4 m_proj_mat{ 1.0f };

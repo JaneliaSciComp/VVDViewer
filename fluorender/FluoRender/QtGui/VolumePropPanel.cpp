@@ -1,6 +1,7 @@
 #include "VolumePropPanel.h"
 
 #include <QGridLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSlider>
@@ -206,9 +207,24 @@ VolumePropPanel::VolumePropPanel(QWidget* parent)
 	right->addWidget(m_roi_row);
 	right->addStretch(1);
 
+	// separator lines between the parameter groups
+	auto vline = [this]() {
+		auto* f = new QFrame(this);
+		f->setFrameShape(QFrame::VLine);
+		f->setFrameShadow(QFrame::Sunken);
+		return f;
+	};
+	auto hline = [this]() {
+		auto* f = new QFrame(this);
+		f->setFrameShape(QFrame::HLine);
+		f->setFrameShadow(QFrame::Sunken);
+		return f;
+	};
+	// left and right parameter columns, with a separator line between them
 	auto* sliders = new QHBoxLayout();
 	sliders->setSpacing(10);
 	sliders->addLayout(left, 4);
+	sliders->addWidget(vline());
 	sliders->addLayout(right, 5);
 
 	// ---- bottom row: Max Value, Color, spacing, scale bar, mask, group, depth
@@ -325,6 +341,7 @@ VolumePropPanel::VolumePropPanel(QWidget* parent)
 	auto* sl_b = new QVBoxLayout();
 	sl_b->setSpacing(4);
 	sl_b->addLayout(sliders);
+	sl_b->addWidget(hline());
 	sl_b->addLayout(bottom);
 
 	// ---- right: check boxes and buttons (as in VPropView)
@@ -347,8 +364,10 @@ VolumePropPanel::VolumePropPanel(QWidget* parent)
 
 	auto* outer = new QHBoxLayout(this);
 	outer->setContentsMargins(6, 4, 6, 4);
-	outer->setSpacing(20);
+	// narrow gaps around the line: the pane must still fit small screens
+	outer->setSpacing(6);
 	outer->addLayout(sl_b, 1);
+	outer->addWidget(vline());
 	outer->addLayout(checks, 0);
 
 	connect(m_alpha_chk, &QCheckBox::toggled, this, [this](bool) { if (!m_updating && m_vd) OnAlphaCheck(); });
@@ -1271,16 +1290,7 @@ QString VolumePropPanel::DefaultSettingsPath()
 	if (!env.isEmpty())
 		return env;
 	const VVDString name(L"default_volume_settings.dft");
-	const VVDString expath = vvd::GetExecutableDir();
-#if defined(__APPLE__)
-	return QString::fromStdWString(expath + L"/../Resources/" + name);
-#else
-	VVDString dft = vvd::JoinPath(expath, name);
-	VVDString dft2 = vvd::JoinPath(vvd::GetUserConfigDir(), name);
-	if (!vvd::FileExists(dft) && vvd::FileExists(dft2))
-		dft = dft2;
-	return QString::fromStdWString(dft);
-#endif
+	return QString::fromStdWString(vvd::SettingsWritePath(name));   // save only (loads: DataManager)
 }
 
 // wx VPropView::OnSaveDefault: the shown values -> default_volume_settings.dft

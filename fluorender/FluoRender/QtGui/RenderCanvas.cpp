@@ -21,6 +21,7 @@
 #include <QWindow>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <QDateTime>
 #include <QDebug>
 #include <cmath>
 #include <stdexcept>
@@ -178,6 +179,58 @@ RenderCanvas::RenderCanvas(QWidget* parent)
 	setMinimumSize(64, 64);
 	RegisterCanvas(this, true);   // linked rotations (RenderCanvasCamera.cpp)
 	CreateViewKeyFilter();        // wx OnIdle key polling (RenderCanvasCamera.cpp)
+}
+
+// ---------------------------------------------------------------------------
+// interactive (reduced quality) period
+// ---------------------------------------------------------------------------
+int RenderCanvas::IntSettleMs()
+{
+	static const int ms = [] {
+		bool ok = false;
+		const int v = qEnvironmentVariableIntValue("VVD_INT_SETTLE_MS", &ok);
+		return ok && v >= 0 ? v : 300;
+	}();
+	return ms;
+}
+
+void RenderCanvas::NoteInteraction()
+{
+	if (m_adaptive) m_interactive = true;
+	if (m_adaptive_res) m_int_res = true;
+	if (!m_interactive && !m_int_res)
+		return;
+	m_last_interaction_ms = QDateTime::currentMSecsSinceEpoch();
+	if (!m_int_settle_timer)
+	{
+		m_int_settle_timer = new QTimer(this);
+		m_int_settle_timer->setSingleShot(true);
+		connect(m_int_settle_timer, &QTimer::timeout, this, &RenderCanvas::OnInteractionSettleTimer);
+	}
+	m_int_settle_timer->start(IntSettleMs());
+}
+
+bool RenderCanvas::InteractionSettled() const
+{
+	return m_last_interaction_ms < 0 ||
+		QDateTime::currentMSecsSinceEpoch() - m_last_interaction_ms >= IntSettleMs();
+}
+
+// the input has been still for IntSettleMs: draw at full quality
+void RenderCanvas::OnInteractionSettleTimer()
+{
+	if (!InteractionSettled())
+	{
+		const qint64 left = IntSettleMs() - (QDateTime::currentMSecsSinceEpoch() - m_last_interaction_ms);
+		m_int_settle_timer->start(int(std::max<qint64>(1, left)));
+		return;
+	}
+	if (!m_interactive && !m_int_res)
+		return;
+	m_interactive = false;
+	m_int_res = false;
+	m_refresh_start_loop = true;
+	RequestRender();
 }
 
 RenderCanvas* RenderCanvas::s_loop_owner = nullptr;
@@ -632,6 +685,53 @@ FLIVR::Quaternion RenderCanvas::Trackball(int p1x, int p1y, int p2x, int p2y)
 		rotz = int(rotz / 45.0) * 45.0;
 		q.FromEuler(rotx, roty, rotz);
 	}
+	return q;
+}
+
+// Virtual sphere rotation (Settings "Virtual sphere"). The drag
+// points are put on a sphere of radius R centred in the view (y down, z to
+// the viewer, the frame Trackball uses); outside the sphere they lie on its
+// rim, so a drag around the centre there turns the data about the view axis
+// only. The in-plane part runs at the Trackball speed (len / 3 degrees per
+// pixel at the centre); the roll follows the mouse angle 1:1, like a knob.
+FLIVR::Quaternion RenderCanvas::SphereTrackball(const QPoint& from, const QPoint& to, int w, int h)
+{
+	FLIVR::Quaternion q;
+	if (from == to)
+		return q;
+	const double R = 0.45 * std::max(1, std::min(w, h));
+	auto on_sphere = [&](const QPoint& p) {
+		const double x = (p.x() - 0.5 * w) / R, y = (p.y() - 0.5 * h) / R;
+		const double d2 = x * x + y * y;
+		if (d2 >= 1.0)
+		{
+			const double d = std::sqrt(d2);
+			return Vector(x / d, y / d, 0.0);
+		}
+		return Vector(x, y, std::sqrt(1.0 - d2));
+	};
+	const Vector v1 = on_sphere(from), v2 = on_sphere(to);
+	Vector axis = Cross(v1, v2);
+	const double s = axis.length();
+	if (s < 1e-12)
+		return q;
+	const double theta = std::atan2(s, std::max(-1.0, std::min(1.0, Dot(v1, v2))));
+	axis /= s;
+	// rotation vector (degrees): in-plane part scaled to the wx speed
+	const double g = R / 3.0;   // = (R * pi/180) / 3 per radian, in degrees
+	const double deg = 180.0 / PI;
+	Vector rv(axis.x() * theta * g, axis.y() * theta * g, axis.z() * theta * deg);
+	const double phi = rv.length();
+	if (phi < 1e-9)
+		return q;
+	Vector a = rv / phi;
+	// view frame -> object frame (as in Trackball)
+	FLIVR::Quaternion q_a(a);
+	FLIVR::Quaternion q_a2 = (-m_q) * q_a * m_q;
+	a = Vector(q_a2.x, q_a2.y, q_a2.z);
+	a.normalize();
+	q = FLIVR::Quaternion(phi, a);
+	q.Normalize();
 	return q;
 }
 
@@ -1485,9 +1585,13 @@ void RenderCanvas::mouseReleaseEvent(QMouseEvent* e)
 		m_pick = false;
 		Q_EMIT pickRequested(m_pick_pos);
 	}
-	if (m_drag_buttons == Qt::NoButton && m_interactive)
+	// full quality after the release only once the drag has settled
+	// (OnInteractionSettleTimer otherwise)
+	if (m_drag_buttons == Qt::NoButton && (m_interactive || m_int_res) && InteractionSettled())
 	{
 		m_interactive = false;
+		m_int_res = false;
+		m_refresh_start_loop = true;
 		RequestRender();   // one full-quality frame after interaction
 	}
 }
