@@ -52,7 +52,18 @@ ARCH="$(uname -m)"
 GEN_ARGS=()
 case "$OS" in
   Darwin)
-    GEN_ARGS=(-G Xcode)
+    # Full Xcode gives the Xcode generator; with only the Command Line Tools
+    # installed (xcode-select -p -> /Library/Developer/CommandLineTools) fall
+    # back to Ninja (or Unix Makefiles) so no App Store download is needed.
+    if xcodebuild -version >/dev/null 2>&1; then
+      GEN_ARGS=(-G Xcode)
+    elif command -v ninja >/dev/null 2>&1; then
+      GEN_ARGS=(-G Ninja)
+      echo "Note: full Xcode not found; using Ninja generator with Command Line Tools."
+    else
+      GEN_ARGS=(-G "Unix Makefiles")
+      echo "Note: full Xcode not found; using Unix Makefiles generator with Command Line Tools (brew install ninja for faster builds)."
+    fi
     if [ "$ARCH" = "arm64" ]; then TRIPLET="arm64-osx-vvd"; else TRIPLET="x64-osx-vvd"; fi
     ;;
   Linux)
