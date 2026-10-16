@@ -16,12 +16,16 @@
 # The Vulkan SDK is NOT managed here: install it separately
 # (https://vulkan.lunarg.com/) so that VULKAN_SDK is set.
 #
-# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--enable-gpl]
+# Usage: bash build.sh [--debug] [--clean] [--enable-nd2] [--enable-gpl] [--enable-qt]
 #                      [--vcpkg <dir>] [--build-dir <dir>] [--triplet <name>]
 #                      [--cmake-arg <arg>]...
 #
 #   --enable-gpl       ffmpeg with x264/x265 (vcpkg manifest feature "gpl").
 #                      Cannot be combined with --enable-nd2.
+#   --enable-qt        also build the Qt front end (VVDViewerQt). Needs an
+#                      installed Qt 6: "brew install qt" on macOS, qt6-base-dev
+#                      on Debian/Ubuntu, or pass -DCMAKE_PREFIX_PATH=<Qt dir>
+#                      with --cmake-arg.
 #   --triplet NAME     vcpkg triplet (default: auto). The *-vvd-release
 #                      triplets build release-only dependencies (used by CI).
 #   --cmake-arg ARG    extra CMake configure argument (repeatable), e.g.
@@ -32,6 +36,7 @@ set -euo pipefail
 CONFIG="Release"
 CLEAN=0
 ENABLE_ND2=0
+ENABLE_QT=0
 ENABLE_GPL=0
 TRIPLET=""
 EXTRA_CMAKE_ARGS=()
@@ -47,6 +52,7 @@ while [ $# -gt 0 ]; do
     --debug)      CONFIG=Debug ;;
     --clean)      CLEAN=1 ;;
     --enable-nd2) ENABLE_ND2=1 ;;
+    --enable-qt)  ENABLE_QT=1 ;;
     --enable-gpl) ENABLE_GPL=1 ;;
     --vcpkg)      shift; VCPKG_ROOT="${1:?--vcpkg needs a directory}" ;;
     --build-dir)  shift; BUILD_DIR="${1:?--build-dir needs a directory}" ;;
@@ -79,7 +85,18 @@ ARCH="$(uname -m)"
 GEN_ARGS=()
 case "$OS" in
   Darwin)
-    GEN_ARGS=(-G Xcode)
+    # Full Xcode gives the Xcode generator; with only the Command Line Tools
+    # installed (xcode-select -p -> /Library/Developer/CommandLineTools) fall
+    # back to Ninja (or Unix Makefiles) so no App Store download is needed.
+    if xcodebuild -version >/dev/null 2>&1; then
+      GEN_ARGS=(-G Xcode)
+    elif command -v ninja >/dev/null 2>&1; then
+      GEN_ARGS=(-G Ninja)
+      echo "Note: full Xcode not found; using Ninja generator with Command Line Tools."
+    else
+      GEN_ARGS=(-G "Unix Makefiles")
+      echo "Note: full Xcode not found; using Unix Makefiles generator with Command Line Tools (brew install ninja for faster builds)."
+    fi
     if [ -z "$TRIPLET" ]; then
       if [ "$ARCH" = "arm64" ]; then TRIPLET="arm64-osx-vvd"; else TRIPLET="x64-osx-vvd"; fi
     fi
@@ -163,6 +180,18 @@ CMAKE_ARGS=(
 )
 [ ${#GEN_ARGS[@]} -gt 0 ] && CMAKE_ARGS+=("${GEN_ARGS[@]}")
 [ "$ENABLE_ND2" = "1" ]   && CMAKE_ARGS+=(-DENABLE_ND2=ON)
+if [ "$ENABLE_QT" = "1" ]; then
+  CMAKE_ARGS+=(-DENABLE_QT_GUI=ON)
+  if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    QT_PREFIX="$(brew --prefix qt 2>/dev/null || true)"
+    if [ -z "$QT_PREFIX" ] || [ ! -d "$QT_PREFIX" ]; then
+      echo "Qt 6 not found in Homebrew; installing (brew install qt) ..."
+      brew install qt
+      QT_PREFIX="$(brew --prefix qt)"
+    fi
+    CMAKE_ARGS+=(-DCMAKE_PREFIX_PATH="$QT_PREFIX")
+  fi
+fi
 # Always pass the feature list explicitly (empty = LGPL) so that switching an
 # existing build directory between LGPL and GPL takes effect.
 if [ "$ENABLE_GPL" = "1" ]; then CMAKE_ARGS+=(-DVCPKG_MANIFEST_FEATURES=gpl); else CMAKE_ARGS+=(-DVCPKG_MANIFEST_FEATURES=); fi
@@ -183,6 +212,8 @@ cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel "$JOBS"
 echo ""
 echo "=== Build complete ==="
 nd2_state="disabled (default)"; [ "$ENABLE_ND2" = "1" ] && nd2_state="ENABLED"
+qt_state="disabled (default)"; [ "$ENABLE_QT" = "1" ] && qt_state="ENABLED (VVDViewerQt)"
+echo "Qt front end: $qt_state."
 echo "ND2 (Nikon) reader: $nd2_state.  libCZI: enabled (via vcpkg).  Vulkan SDK: external ($VULKAN_SDK)."
 if [ "$ENABLE_GPL" = "1" ]; then
   echo "ffmpeg: GPL (x264/x265 enabled; movie export H.264)."

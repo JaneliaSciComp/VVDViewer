@@ -32,8 +32,8 @@ DEALINGS IN THE SOFTWARE.
 #include <base_reader.h>
 
 using namespace std;
-class wxXmlNode;
-class wxString;
+namespace tinyxml2 { class XMLElement; }
+#include "../Core/VVDString.h"
 
 class EXPORT_API PVXMLReader : public BaseReader
 {
@@ -207,12 +207,12 @@ private:
 private:
 	bool ConvertS(int c, TimeDataInfo* time_data_info, unsigned short *val);
 	bool ConvertN(int c, TimeDataInfo* time_data_info, unsigned short *val);
-	void ReadSystemConfig(wxXmlNode *systemNode);
-	void UpdateStateShard(wxXmlNode *stateNode);
-	void ReadKey(wxXmlNode *keyNode);
-	void ReadIndexedKey(wxXmlNode *keyNode, wxString &key);
-	void ReadSequence(wxXmlNode *seqNode);
-	void ReadFrame(wxXmlNode *frameNode);
+	void ReadSystemConfig(tinyxml2::XMLElement *systemNode);
+	void UpdateStateShard(tinyxml2::XMLElement *stateNode);
+	void ReadKey(tinyxml2::XMLElement *keyNode);
+	void ReadIndexedKey(tinyxml2::XMLElement *keyNode, vvd::String &key);
+	void ReadSequence(tinyxml2::XMLElement *seqNode);
+	void ReadFrame(tinyxml2::XMLElement *frameNode);
 	void ReadTiff(char* pbyData, unsigned short *val);
 };
 

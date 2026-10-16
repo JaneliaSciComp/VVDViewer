@@ -39,14 +39,14 @@ DEALINGS IN THE SOFTWARE.
 //	KernelExecutor();
 //	~KernelExecutor();
 //
-//	void SetCode(wxString &code);
-//	void LoadCode(wxString &filename);
+//	void SetCode(VVDString &code);
+//	void LoadCode(VVDString &filename);
 //	void SetVolume(VolumeData *vd);
 //	void SetDuplicate(bool dup);
 //	VolumeData* GetVolume();
 //	VolumeData* GetResult();
 //	void DeleteResult();
-//	bool GetMessage(wxString &msg);
+//	bool GetMessage(VVDString &msg);
 //
 //	bool Execute();
 //
@@ -55,8 +55,8 @@ DEALINGS IN THE SOFTWARE.
 //	VolumeData *m_vd_r;//result
 //	bool m_duplicate;//whether duplicate the input volume
 //
-//	wxString m_code;
-//	wxString m_message;
+//	VVDString m_code;
+//	VVDString m_message;
 //
 //	bool ExecuteKernel(KernelProgram* kernel,
 //		GLuint data_id, void* result,

@@ -424,7 +424,7 @@ void LMSeacher::OnMouse(wxMouseEvent& event)
 
 //////////////////////////////////////////////////////////////////////////
 
-wxCriticalSection* VRenderVulkanView::ms_pThreadCS = nullptr;
+vvd::CriticalSection* VRenderVulkanView::ms_pThreadCS = nullptr;
 
 BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
 	EVT_MENU(ID_CTXMENU_SHOW_ALL, VRenderVulkanView::OnShowAllDatasets)
@@ -865,15 +865,7 @@ void VRenderVulkanView::InitVulkan()
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
-#else
-	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
-#endif
+	wxString dft = vvd::SettingsReadPath(L"" SETTING_FILE_NAME);
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -3706,15 +3698,7 @@ string VRenderVulkanView::EVEAnalysis(int min_radius, int max_radius, double thr
 //load default
 void VRenderVulkanView::LoadDefaultBrushSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_brush_settings.dft");
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -5025,13 +5009,9 @@ void VRenderVulkanView::DrawOVER(VolumeData* vd, std::unique_ptr<vks::VFrameBuff
 			}
 		}
 
-		if (TextureRenderer::get_streaming())
-		{
-			unsigned int rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() >
-				TextureRenderer::get_up_time()/* && vd->GetMaskMode() != 1*/)
-				return;
-		}
+		//time budget used up (a frame that has drawn nothing yet still draws one brick)
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 	}
 
 	if (do_over)
@@ -5207,13 +5187,9 @@ void VRenderVulkanView::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffe
 			}
 		}
 
-		if (TextureRenderer::get_streaming())
-		{
-			unsigned int rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() >
-				TextureRenderer::get_up_time())
-				return;
-		}
+		//time budget used up (a frame that has drawn nothing yet still draws one brick)
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 	}
 
 	int nx, ny;
@@ -20521,46 +20497,6 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
     if (!m_cur_vol)
         return;
 
-    Texture* tex = m_cur_vol->GetTexture();
-    if (!tex)
-        return;
-
-    //single-channel scalar only (1/2/4 bytes per voxel)
-    int src_nb = tex->nb(0);
-    if (tex->nc() > 1 || (src_nb != 1 && src_nb != 2 && src_nb != 4))
-    {
-        wxMessageBox("GPU warp supports single-channel scalar volumes only.", "Warp");
-        return;
-    }
-
-    //collect landmark pairs in normalized [0,1] coords (src=moving p1, tgt=fixed p2)
-    Transform* tf = tex->transform();
-    if (!tf)
-        return;
-    std::vector<glm::dvec3> srcPts, tgtPts;
-    for (size_t i = 0; i < m_ruler_list.size(); ++i)
-    {
-        Ruler* r = m_ruler_list[i];
-        if (!r) continue;
-        if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
-        {
-            Point* p0 = r->GetPoint(0);
-            Point* p1 = r->GetPoint(1);
-            if (!p0 || !p1) continue;
-            Point pm = tf->unproject(*p0); //moving -> src
-            Point pf = tf->unproject(*p1); //fixed  -> tgt
-            srcPts.push_back(glm::dvec3(pm.x(), pm.y(), pm.z()));
-            tgtPts.push_back(glm::dvec3(pf.x(), pf.y(), pf.z()));
-        }
-        else if (r->GetRulerType() == 2 && r->GetNumPoint() >= 1)
-        {
-            Point* p0 = r->GetPoint(0);
-            if (!p0) continue;
-            Point pp = tf->unproject(*p0); //locator = zero-displacement anchor
-            srcPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
-            tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
-        }
-    }
     //transform type, stiffness and interpolation from the measure dialog
     //(ttype: 0=Thin Plate Spline, 1=Affine, 2=Similarity, 3=Rigid, 4=Translation)
     //(interp: 0=Nearest Neighbor, 1=Linear)
@@ -20575,99 +20511,16 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
         interp = vframe->GetMeasureDlg()->GetWarpInterpolation();
     }
 
-    //minimum landmark pairs required by the chosen model
-    size_t minpts = (ttype == 4) ? 1 : (ttype == 2 || ttype == 3) ? 3 : 4;
-    if (srcPts.size() < minpts)
+    //landmarks, fit, GPU warp and the result volume: shared with the Qt GUI
+    //(DataManager.cpp WarpVolumeByRulers)
+    VVDString error;
+    VolumeData* vd = WarpVolumeByRulers(m_cur_vol, m_ruler_list, ttype, lambda, interp, &error);
+    if (!vd)
     {
-        wxMessageBox(wxString::Format(
-            "Need at least %d landmark pair(s) (2-point rulers) for this transform.",
-            (int)minpts), "Warp");
+        if (!error.empty())
+            wxMessageBox(wxString(error), "Warp");
         return;
     }
-
-    //landmarks are in grid-normalized [0,1] coords whose axes are physically
-    //anisotropic (each axis length = res*spacing). TPS (radial kernel) and
-    //Rigid/Similarity must be fit in isotropic physical space, like BigWarp,
-    //so pass the per-axis physical length as the aspect.
-    int arx = 0, ary = 0, arz = 0;
-    double aspx = 1.0, aspy = 1.0, aspz = 1.0;
-    m_cur_vol->GetResolution(arx, ary, arz);
-    m_cur_vol->GetSpacings(aspx, aspy, aspz);
-    glm::dvec3 aspect(
-        (arx > 0 ? arx : 1) * (aspx > 0.0 ? aspx : 1.0),
-        (ary > 0 ? ary : 1) * (aspy > 0.0 ? aspy : 1.0),
-        (arz > 0 ? arz : 1) * (aspz > 0.0 ? aspz : 1.0));
-
-    //the TPS is fit fixed -> moving and evaluated directly per output voxel
-    //(BigWarp); lambda is the dimensionless stiffness of the ImageJ "Apply
-    //BigWarp with Stiffness" plugin (0 = exact interpolation, as BigWarp)
-    FLIVR::ThinPlateSpline tps;
-    bool ok = false;
-    wxString suffix;
-    switch (ttype)
-    {
-    case 1: ok = tps.solveAffine(srcPts, tgtPts);              suffix = "_AFFINE"; break;
-    case 2: ok = tps.solveSimilarity(srcPts, tgtPts, aspect);  suffix = "_SIM";    break;
-    case 3: ok = tps.solveRigid(srcPts, tgtPts, aspect);       suffix = "_RIGID";  break;
-    case 4: ok = tps.solveTranslation(srcPts, tgtPts);         suffix = "_TRANS";  break;
-    default: ok = tps.solve(srcPts, tgtPts, lambda, aspect);   suffix = "_WARPED"; break;
-    }
-    if (!ok)
-    {
-        wxMessageBox("Transform solve failed (duplicate fixed-point landmarks, or "
-            "degenerate, collinear or coplanar landmarks).", "Warp");
-        return;
-    }
-
-    //create the result volume (same resolution/spacing/bits as the source)
-    int resx, resy, resz;
-    double spcx, spcy, spcz;
-    m_cur_vol->GetResolution(resx, resy, resz);
-    m_cur_vol->GetSpacings(spcx, spcy, spcz);
-    int bits = src_nb * 8;
-
-    VolumeData* vd = new VolumeData();
-    vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
-    vd->SetSpcFromFile(true);
-    vd->SetName(m_cur_vol->GetName() + suffix);
-    if (!vd->GetTexture())
-    {
-        delete vd;
-        return;
-    }
-
-    //GPU warp
-    vd->Warp(m_cur_vol, tps, interp);
-
-    //copy display properties from the source
-    vector<Plane*>* planes = m_cur_vol->GetVR() ? m_cur_vol->GetVR()->get_planes() : 0;
-    if (planes && vd->GetVR())
-        vd->GetVR()->set_planes(planes);
-    vd->Set3DGamma(m_cur_vol->Get3DGamma());
-    vd->SetBoundary(m_cur_vol->GetBoundary());
-    vd->SetOffset(m_cur_vol->GetOffset());
-    vd->SetLeftThresh(m_cur_vol->GetLeftThresh());
-    vd->SetRightThresh(m_cur_vol->GetRightThresh());
-    FLIVR::Color col = m_cur_vol->GetColor();
-    vd->SetColor(col);
-    vd->SetAlpha(m_cur_vol->GetAlpha());
-    vd->SetShading(m_cur_vol->GetShading());
-    double amb, diff, spec, shine;
-    m_cur_vol->GetMaterial(amb, diff, spec, shine);
-    vd->SetMaterial(amb, diff, spec, shine);
-    vd->SetShadow(m_cur_vol->GetShadow());
-    double shadow_int;
-    m_cur_vol->GetShadowParams(shadow_int);
-    vd->SetShadowParams(shadow_int);
-    vd->SetSampleRate(m_cur_vol->GetSampleRate());
-    col = m_cur_vol->GetGamma(); vd->SetGamma(col);
-    col = m_cur_vol->GetBrightness(); vd->SetBrightness(col);
-    col = m_cur_vol->GetHdr(); vd->SetHdr(col);
-    col = m_cur_vol->GetLevels(); vd->SetLevels(col);
-    vd->SetSyncR(m_cur_vol->GetSyncR());
-    vd->SetSyncG(m_cur_vol->GetSyncG());
-    vd->SetSyncB(m_cur_vol->GetSyncB());
-    vd->SetScalarScale(m_cur_vol->GetScalarScale());
 
     //add as a new layer (in the current volume's group)
     if (vframe)
@@ -23290,16 +23143,7 @@ void VRenderView::SaveDefault(unsigned int mask)
 	str = wxString::Format("%f %f %f", x, y, z);
 	fconfig.Write("center", str);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_view_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 
@@ -23313,15 +23157,7 @@ void VRenderView::OnSaveDefault(wxCommandEvent &event)
 
 void VRenderView::LoadSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_view_settings.dft");
 
 	wxFileInputStream is(dft);
 

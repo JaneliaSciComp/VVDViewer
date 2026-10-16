@@ -1649,31 +1649,14 @@ void AdjustView::OnSaveDefault(wxCommandEvent &event)
 	m_dft_brightness = Color(dft_r_brightness, dft_g_brightness, dft_b_brightness);
 	m_dft_hdr = Color(dft_r_hdr, dft_g_hdr, dft_b_hdr);
     m_dft_level = Color(dft_r_level, dft_g_level, dft_b_level);
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/default_2d_adjustment_settings.dft";
-#else
-    wxString dft = expath + GETSLASHS() + "default_2d_adjustment_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_2d_adjustment_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_2d_adjustment_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 }
 
 void AdjustView::LoadSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/default_2d_adjustment_settings.dft";
-#else
-    wxString dft = expath + GETSLASHS() + "default_2d_adjustment_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_2d_adjustment_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_2d_adjustment_settings.dft");
     
 	wxFileInputStream is(dft);
 	if (!is.IsOk())

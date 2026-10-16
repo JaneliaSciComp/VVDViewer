@@ -106,6 +106,10 @@ public:
 	uint32_t destHeight;
 
 	bool prepared = false;
+	// set when a swapchain recreated for a SUBOPTIMAL acquire is suboptimal
+	// again right away: prepareFrame then stops recreating it every frame until
+	// an acquire succeeds or setSize() asks for a new size
+	bool suboptimalPersists = false;
 	uint32_t width = 1280;
 	uint32_t height = 720;
 

@@ -147,7 +147,7 @@ bool VRenderFrame::GetKeyState(wxKeyCode key)
 CURLM *_g_curlm;//add by takashi
 CURL *_g_curl;//add by takashi
 
-wxCriticalSection VRenderFrame::ms_criticalSection;
+vvd::CriticalSection VRenderFrame::ms_criticalSection;
 
 VRenderFrame::VRenderFrame(
 	wxApp* app, wxFrame* frame,
@@ -611,10 +611,23 @@ VRenderFrame::VRenderFrame(
         Name("m_measure_dlg").Caption(UITEXT_MEASUREMENT).
         Left().CloseButton(true).BestSize(wxSize(320, 400)).
         FloatingSize(wxSize(700, 500)).Layer(3).Dockable(false));
+	// The Properties pane hosts one of several property views; size it from
+	// the tallest view's sizer rather than a fixed pixel height. Native control
+	// heights differ per platform/toolkit version (e.g. wx 3.3 on macOS), and a
+	// hard-coded value clipped the bottom row of VPropView.
+	{
+		wxWindow* prop_views[] = { m_volume_prop, m_mesh_prop, m_mesh_manip, m_annotation_prop };
+		for (wxWindow* w : prop_views)
+		{
+			if (w && w->GetSizer())
+				prop_h = wxMax(prop_h, w->GetSizer()->GetMinSize().GetHeight() + 8);
+		}
+	}
 	m_aui_mgr.AddPane(m_prop_panel, wxAuiPaneInfo().
 		Name("m_prop_panel").Caption(UITEXT_PROPERTIES).
 		Bottom().CloseButton(true).MinSize(wxSize(300, prop_h)).
-		FloatingSize(wxSize(1100, 150)).Layer(2));
+		BestSize(wxSize(1100, prop_h)).
+		FloatingSize(wxSize(1100, prop_h)).Layer(2));
 	m_aui_mgr.AddPane(m_adjust_view, wxAuiPaneInfo().
 		Name("m_adjust_view").Caption(UITEXT_ADJUST).
 		Left().CloseButton(true).MinSize(wxSize(adjust_w, 700)).
@@ -2116,7 +2129,7 @@ void VRenderFrame::ConvertNML2SWC(wxString filename, VRenderView* vrv)
             }
             else
             {
-                double hue = (double)rand()/(RAND_MAX) * 360.0;
+                double hue = (double)MeshData::NextRandomColorValue()/(RAND_MAX) * 360.0;
                 col = Color(HSVColor(hue, 1.0, 1.0));
             }
             

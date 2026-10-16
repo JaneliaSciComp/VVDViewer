@@ -35,14 +35,16 @@
 //#include <FLIVR/VolKernel.h>
 #include "utility.h"
 #include "../compatibility.h"
+#include "../Core/PaintTiming.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
-#include <wx/wfstream.h>
-#include <wx/txtstrm.h>
-#include <wx/stdpaths.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 //#include <boost/thread.hpp>
 //#include <boost/bind.hpp>
 
@@ -961,6 +963,86 @@ namespace FLIVR
 		return fence;
 	}
 
+	//Exact-invisibility test for empty bricks (see VRayShader.cpp).
+	//For the data pass (no mask/label blend) of the alpha (non-solid) normal or
+	//colormap transfer function, a sample's colour is exactly vec4(0) when
+	//  (A) v < lo - sw  or  v > hi + sw   (v = t*s, or 1 - t*s when inverted;
+	//      t = texel/255 or /65535, s = scalar scale), or
+	//  (B) v == 0 and tf_alp == pow(clamp(0/offset, 0, ..), 1/gamma) == 0,
+	//      which needs 1/gamma >= 1 (the lower clamp is then 0) and offset > 0.
+	//Linear filtering never leaves [0, brick max], so if every texel of the
+	//brick texture satisfies (A) or (B), every sample does. Fog mixes towards
+	//fog_col*alpha*tf_alp == 0, the raster blend multiplies by alpha, the
+	//NOMASK blend by (1 - mask): the fragment output stays 0, and the OVER
+	//(1-dst_a, 1), MIP (max) and SLICE (add) blends leave the destination
+	//unchanged bit for bit. Excluded: solid mode (opaque black), depth map and
+	//indexed colour modes, mask/label blends, NA label highlighting, highlight
+	//mode, pyramid data.
+	int VolumeRenderer::invisible_brick_max(int nbytes)
+	{
+		//A/B testing aid: VVD_NO_BRICK_SKIP=1 disables the skip
+		static const bool disabled = std::getenv("VVD_NO_BRICK_SKIP") != nullptr;
+		if (disabled)
+			return -1;
+		if (!tex_ || tex_->isBrxml())
+			return -1;
+		if (mask_ || label_ || solid_ || m_na_mode || m_highlight)
+			return -1;
+#ifdef _DARWIN
+		if (slice_mode_)
+			return -1;
+#endif
+		if (colormap_mode_ != 0 && colormap_mode_ != 1)
+			return -1;
+		if (nbytes != 1 && nbytes != 2)
+			return -1;
+		//degenerate fog range: the fog factor may be NaN, and mix(0, 0, NaN) is NaN
+		if (m_use_fog && !(fabs(m_fog_end - m_fog_start) > 0.0))
+			return -1;
+		const double maxraw = nbytes == 1 ? 255.0 : 65535.0;
+		const double s = scalar_scale_;
+		if (!(s > 0.0) || !std::isfinite(s))
+			return -1;
+		//margin in transfer-function units for the GPU's float arithmetic
+		const double eps = 1e-4;
+		//largest integer m with m/maxraw*s < lim
+		auto below = [&](double lim) -> int {
+			if (!(lim > 0.0))
+				return -1;
+			double m = ceil(lim / s * maxraw) - 1.0;
+			if (m > maxraw) m = maxraw;
+			return m < 0.0 ? -1 : (int)m;
+		};
+		int best = -1;
+		if (!inv_)
+		{
+			//(A) every v = t*s below the low threshold ramp
+			best = below(lo_thresh_ - sw_ - eps);
+			//(B) all-zero brick
+			if (best < 0 && gamma3d_ > 0.0 && (float)(1.0 / gamma3d_) >= 1.0f && offset_ > 0.0)
+				best = 0;
+		}
+		else
+		{
+			//(A) every v = 1 - t*s above the high threshold ramp
+			best = below(1.0 - hi_thresh_ - sw_ - eps);
+			//(A) every v <= 1 below the low threshold ramp
+			if (1.0 < lo_thresh_ - sw_ - eps)
+				best = (int)maxraw;
+		}
+		return best;
+	}
+
+	bool VolumeRenderer::brick_invisible(TextureBrick* b, int skip_max)
+	{
+		if (skip_max < 0 || !b)
+			return false;
+		int m = b->get_data_max();
+		if (m < 0)
+			m = b->compute_data_max();
+		return m >= 0 && m <= skip_max;
+	}
+
 	void VolumeRenderer::eval_ml_mode(Texture* ext_msk, Texture* ext_lbl)
 	{
 		//reassess the mask/label mode
@@ -1629,12 +1711,8 @@ namespace FLIVR
 			return;
 
 		//comment off when debug_ds
-		if (streaming_)
-		{
-			uint32_t rn_time = GET_TICK_COUNT();
-			if (rn_time - st_time_ > get_up_time())
-				return;
-		}
+		if (frame_budget_exhausted())
+			return;
 
 		Ray view_ray = compute_view();
 
@@ -1909,6 +1987,9 @@ namespace FLIVR
             vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkpipeline);
 		}
 
+		//bricks whose data cannot produce any output in this pass (exact test)
+		const int skip_max = invisible_brick_max((*bricks)[0]->nb(0));
+
 		int count = 0;
 		int que = 1;
 		int cur_finished_bricks = finished_bricks_;
@@ -1920,15 +2001,12 @@ namespace FLIVR
 		for (unsigned int i = 0; i < bricks->size(); i++)
 		{
 			//comment off when debug_ds
-			if (streaming_/* && !mask_ && !label_*/ && count == 0)
+			//(no queue drain here: the frame slots' fences already keep the CPU
+			//at most one frame ahead of the GPU)
+			if (count == 0 && frame_budget_exhausted())
 			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - st_time_ > get_up_time())
-				{
-					VK_CHECK_RESULT(vkQueueWaitIdle(prim_dev->queue));
-                    time_out = true;
-					break;
-				}
+				time_out = true;
+				break;
 			}
 
 			TextureBrick* b = (*bricks)[i];
@@ -1954,8 +2032,10 @@ namespace FLIVR
 				continue;
 			}
             
-            if (b->skip(0) || (b->skip(tex_->nmask()) && m_mask_hide_mode != VOL_MASK_HIDE_NONE)
-                || (b->skip(tex_->nmask()) && bmode == TEXTURE_RENDER_MODE_MASK && m_mask_hide_mode == VOL_MASK_HIDE_NONE) )
+            //an empty mask brick hides the brick only when the outside is hidden
+            if (b->skip(0) || (b->skip(tex_->nmask()) && m_mask_hide_mode == VOL_MASK_HIDE_OUTSIDE)
+                || (b->skip(tex_->nmask()) && bmode == TEXTURE_RENDER_MODE_MASK && m_mask_hide_mode == VOL_MASK_HIDE_NONE)
+                || brick_invisible(b, skip_max) )
             {
                 if (mem_swap_ && start_update_loop_ && !done_update_loop_)
                 {
@@ -2084,12 +2164,8 @@ namespace FLIVR
 			}
 
 			//comment off when debug_ds
-			if (streaming_ && count > 0/* && !mask_ && !label_*/)
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - st_time_ > get_up_time())
-					time_out = true;
-			}
+			if (count > 0 && frame_budget_exhausted())
+				time_out = true;
 
 			if (mem_swap_ && count > 0 && (time_out || end_pass))
 			{
@@ -2146,10 +2222,7 @@ namespace FLIVR
 			}
 			
 			if (time_out)
-			{
-				VK_CHECK_RESULT(vkQueueWaitIdle(prim_dev->queue));
 				break;
-			}
 			
 			VkFilter filter;
 			if (interpolate_ && colormap_mode_ != 3)
@@ -2828,10 +2901,15 @@ namespace FLIVR
 		double scl_translate, double w2d, double bins, bool orthographic_p,
 		bool estimate, Texture* ext_msk, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
 	{
+		const bool ptm = vvd::ptime::On();
+		vvd::ptime::MaskPassStats& pst = vvd::ptime::Mask();
+		double pt0 = ptm ? vvd::ptime::NowMs() : 0.0;
+		if (ptm) pst.calls++;
 		//this writes textures the in-flight frame may sample: wait it out first
 		if (m_vulkan)
 			for (auto dev : m_vulkan->devices)
 				dev->WaitIdleAllFrameSlots();
+		if (ptm) { double t = vvd::ptime::NowMs(); pst.wait_slots_ms += t - pt0; pt0 = t; }
 
 /*		if (paint_mode == 1 || paint_mode == 2)
 		{
@@ -2982,38 +3060,167 @@ namespace FLIVR
 		//render bricks
 
 		//no queue drain needed: every submit of this command buffer is fence-waited below
+
+		//The bricks are independent (each dispatch reads and writes only its own
+		//brick's textures), so the dispatches of consecutive bricks whose
+		//textures are already resident are recorded into one command buffer and
+		//submitted / fence-waited together instead of one round trip per brick.
+		//A brick that has to be uploaded (which may swap out a texture of the
+		//pool) first flushes what is recorded, so no pending dispatch can lose
+		//a texture it uses. VVD_SEG_NO_BATCH=1: one submit per brick (A/B).
+		static const bool no_batch = []() { const char* e = std::getenv("VVD_SEG_NO_BATCH"); return e && std::atoi(e) != 0; }();
+		VkCommandBuffer cmdbuf = m_seg_commandBuffers[prim_dev];
+		bool recording = false;
+		//recorded dispatches; second: the dispatch cannot change the brick's mask
+		//(outside the 2D mask: it only clears the stroke), which then is not
+		//marked dirty, so return_mask reads back only the bricks that changed
+		std::vector<std::pair<TextureBrick*, bool>> recorded;
+		const int written_comp_vol = write_to_vol ? 0 : -1;
+		auto flush_recorded = [&]()
+		{
+			if (!recording)
+				return;
+			const double tf = ptm ? vvd::ptime::NowMs() : 0.0;
+			vkEndCommandBuffer(cmdbuf);
+			recording = false;
+
+			VkSubmitInfo submitInfo = vks::initializers::submitInfo();
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &cmdbuf;
+
+			//reuse a cached fence: create/destroy per brick costs three driver round-trips
+			VkFence fence = getComputeFence(prim_dev);
+			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
+
+			// Submit to the queue
+			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
+			// Wait for the fence to signal that command buffer has finished executing
+			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+
+			//the component the shader wrote: the data volume for the noise
+			//removal filter (type 2), the mask otherwise. Only dirty bricks are
+			//read back (return_volume / return_mask), so marking the mask after a
+			//data write left the filtered data on the GPU and the volume unchanged
+			for (const auto& rec : recorded)
+			{
+				TextureBrick* rb = rec.first;
+				if (rec.second)
+					continue;
+				const int written = written_comp_vol >= 0 ? written_comp_vol : rb->nmask();
+				rb->set_dirty(written, true);
+				rb->set_modified(written, true);
+			}
+			recorded.clear();
+			if (ptm) { pst.gpu_ms += vvd::ptime::NowMs() - tf; pst.submits++; }
+		};
+		//would loading this brick's textures need an upload (and maybe a swap)?
+		auto resident = [&](unsigned int bi) -> bool
+		{
+			TextureBrick* rb = (*bricks)[bi];
+			auto in_pool = [&](TextureBrick* tb, int c) {
+				return c >= 0 && prim_dev->findTexInPool(tb, c, tb->nx(), tb->ny(), tb->nz(), tb->nb(c), tb->tex_format(c)) != -1;
+			};
+			if (!in_pool(rb, 0))
+				return false;
+			if (ext_msk && ext_msk->nmask() != -1)
+			{
+				TextureBrick* mb = (*msk_bricks)[bi];
+				if (!in_pool(mb, mb->nmask()))
+					return false;
+			}
+			else if (!in_pool(rb, rb->nmask()))
+				return false;
+			if (use_stroke && !in_pool(rb, rb->nstroke()))
+				return false;
+			return true;
+		};
 		
+		//Bricks outside the 2D mask (see prepare_2d_cull): the passes whose
+		//shader returns for a voxel sampling the 2D mask below the cull
+		//threshold (0.45 or 0.95, SEG_BODY_DB_GROW_CULL / SEG_BODY_INIT_CULL /
+		//SEG_BODY_INIT_CULL_ERASE; only the stroke clear and the bound / clip
+		//checks come before it) do not change such a brick's mask. Without a
+		//stroke clear the dispatch writes nothing there and is skipped.
+		const bool culled_pass =
+			(type == 1 && paint_mode != 5) ||
+			(type == 0 && (paint_mode == 1 || paint_mode == 2 || paint_mode == 3 || paint_mode == 4 || paint_mode == 8));
+		const bool skip_2d = culled_pass && !write_to_vol && !cull2d_sat_.empty() &&
+			tex_2d_mask_ && tex_2d_mask_.get() == cull2d_tex_;
+
+		if (ptm) { double t = vvd::ptime::NowMs(); pst.setup_ms += t - pt0; pt0 = t; }
 		for (unsigned int i=0; i < bricks->size(); i++)
 		{
 			TextureBrick* b = (*bricks)[i];
+			//VVD_SEG_VERIFY_SKIP=1 (testing aid): run the skipped bricks anyway and
+			//count the mask / stroke voxels their dispatch changed (expected: 0)
+			static const bool verify_skip = []() { const char* e = std::getenv("VVD_SEG_VERIFY_SKIP"); return e && std::atoi(e) != 0; }();
+			bool verify_this = false;
+			const bool outside = skip_2d && brick_outside_2d_mask(b, seg_ubo.mv_mat, seg_ubo.proj_mat);
+			if (outside && !clear_stroke)
+			{
+				if (ptm) pst.skipped++;
+				if (!verify_skip)
+					continue;
+				verify_this = true;
+			}
+			else if (outside)
+			{
+				if (ptm) pst.mask_unchanged++;
+				verify_this = verify_skip;
+			}
 			shared_ptr<vks::VTexture> brktex, msktex, stroketex;
 			std::vector<VkWriteDescriptorSet> descriptorWrites = descriptorWritesBase;
+			bool upd_d = false, upd_m = false, upd_s = false;
+
+			if (recording && (no_batch || !resident(i)))
+				flush_recorded();
+			if (ptm) pt0 = vvd::ptime::NowMs();
 			
 			b->prevent_tex_deletion(true);
-			brktex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, compression_);
+			brktex = load_brick(prim_dev, 0, 0, bricks, i, VK_FILTER_NEAREST, compression_, 0, true, &upd_d);
 			if (!brktex) { b->prevent_tex_deletion(false); continue; }
 
             if (ext_msk && ext_msk->nmask() != -1)
-                msktex = load_brick_mask(prim_dev, msk_bricks, i, VK_FILTER_NEAREST, false, 0, true);
+                msktex = load_brick_mask(prim_dev, msk_bricks, i, VK_FILTER_NEAREST, false, 0, true, true, &upd_m);
             else
-                msktex = load_brick_mask(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
+                msktex = load_brick_mask(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true, true, &upd_m);
 
 
 			if (!msktex) { b->prevent_tex_deletion(false); continue; }
 
 			if (use_stroke)
 			{
-				stroketex = load_brick_stroke(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true);
+				stroketex = load_brick_stroke(prim_dev, bricks, i, VK_FILTER_NEAREST, false, 0, true, &upd_s);
 				if (!stroketex) { b->prevent_tex_deletion(false); continue; }
 			}
 			b->prevent_tex_deletion(false);
+			if (ptm)
+			{
+				double t = vvd::ptime::NowMs(); pst.load_ms += t - pt0; pt0 = t;
+				pst.bricks++;
+				pst.uploads += (int)upd_d + (int)upd_m + (int)upd_s;
+			}
 
 
-			VkCommandBuffer cmdbuf = m_seg_commandBuffers[prim_dev];
-			VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-			VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
-
-			vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
+			std::vector<unsigned char> vbefore_m, vbefore_s;
+			if (verify_this)
+			{
+				flush_recorded();
+				vbefore_m.resize((size_t)msktex->w * msktex->h * msktex->d * msktex->bytes);
+				prim_dev->DownloadTexture(msktex, vbefore_m.data());
+				if (stroketex && !clear_stroke)
+				{
+					vbefore_s.resize((size_t)stroketex->w * stroketex->h * stroketex->d * stroketex->bytes);
+					prim_dev->DownloadTexture(stroketex, vbefore_s.data());
+				}
+			}
+			if (!recording)
+			{
+				VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+				VK_CHECK_RESULT(vkBeginCommandBuffer(cmdbuf, &cmdBufInfo));
+				vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.vkpipeline);
+				recording = true;
+			}
 
 			//layout transition to VK_IMAGE_LAYOUT_GENERAL
 			if (write_to_vol)
@@ -3103,28 +3310,113 @@ namespace FLIVR
 			uint32_t group_count_z = b->nz() / 4 + ((b->nz() % 4) > 0 ? 1 : 0);
 
 			vkCmdDispatch(cmdbuf, group_count_x, group_count_y, group_count_z);
-
-			vkEndCommandBuffer(cmdbuf);
-
-			VkSubmitInfo submitInfo = vks::initializers::submitInfo();
-			submitInfo.commandBufferCount = 1;
-			submitInfo.pCommandBuffers = &cmdbuf;
-
-			//reuse a cached fence: create/destroy per brick costs three driver round-trips
-			VkFence fence = getComputeFence(prim_dev);
-			VK_CHECK_RESULT(vkResetFences(prim_dev->logicalDevice, 1, &fence));
-
-			// Submit to the queue
-			VK_CHECK_RESULT(vkQueueSubmit(prim_dev->compute_queue, 1, &submitInfo, fence));
-			// Wait for the fence to signal that command buffer has finished executing
-			VK_CHECK_RESULT(vkWaitForFences(prim_dev->logicalDevice, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-
-			b->set_dirty(b->nmask(), true);
-            b->set_modified(b->nmask(), true);
+			recorded.push_back({ b, outside });
+			if (ptm) pst.gpu_ms += vvd::ptime::NowMs() - pt0;
+			if (verify_this)
+			{
+				flush_recorded();
+				long long changed = 0;
+				std::vector<unsigned char> after(vbefore_m.size());
+				prim_dev->DownloadTexture(msktex, after.data());
+				for (size_t k = 0; k < after.size(); k++) changed += after[k] != vbefore_m[k];
+				if (stroketex && !clear_stroke)
+				{
+					after.assign(vbefore_s.size(), 0);
+					prim_dev->DownloadTexture(stroketex, after.data());
+					for (size_t k = 0; k < after.size(); k++) changed += after[k] != vbefore_s[k];
+				}
+				pst.verify_bricks++;
+				pst.verify_changed += changed;
+			}
 		}
+		flush_recorded();
         
         if (tex_->isBrxml())
-            tex_->SetModifiedAllLevels(true, tex_->nmask());
+            tex_->SetModifiedAllLevels(true, write_to_vol ? 0 : tex_->nmask());
+	}
+
+	//threshold of SEG_BODY_DB_GROW_CULL ("if (cmask2d < 0.45) return;"); a
+	//texel counts as covered from slightly below it (bilinear weights)
+	static const float kCull2dThresh = 0.45f - 0.01f;
+
+	bool VolumeRenderer::prepare_2d_cull()
+	{
+		release_2d_cull();
+		static const bool off = []() { const char* e = std::getenv("VVD_SEG_NO_SKIP"); return e && std::atoi(e) != 0; }();
+		if (off || !tex_2d_mask_ || !m_vulkan || m_vulkan->devices.empty())
+			return false;
+		const std::shared_ptr<vks::VTexture>& t = tex_2d_mask_;
+		if (t->w == 0 || t->h == 0 || t->d != 1 || t->format != VK_FORMAT_R32G32B32A32_SFLOAT || t->bytes != 16)
+			return false;
+		vks::VulkanDevice* dev = t->device ? t->device : m_vulkan->devices[0];
+		//the mask was last written by a frame's paint pass
+		for (auto d : m_vulkan->devices)
+			d->WaitIdleAllFrameSlots();
+		const int w = (int)t->w, h = (int)t->h;
+		std::vector<float> px((size_t)w * h * 4);
+		if (!dev->DownloadTexture(t, px.data()))
+			return false;
+		cull2d_sat_.assign((size_t)(w + 1) * (h + 1), 0u);
+		for (int y = 0; y < h; y++)
+		{
+			uint32_t row = 0;
+			for (int x = 0; x < w; x++)
+			{
+				row += px[((size_t)y * w + x) * 4] >= kCull2dThresh ? 1u : 0u;
+				cull2d_sat_[(size_t)(y + 1) * (w + 1) + x + 1] = cull2d_sat_[(size_t)y * (w + 1) + x + 1] + row;
+			}
+		}
+		cull2d_w_ = w;
+		cull2d_h_ = h;
+		cull2d_tex_ = t.get();
+		return true;
+	}
+
+	void VolumeRenderer::release_2d_cull()
+	{
+		cull2d_sat_.clear();
+		cull2d_sat_.shrink_to_fit();
+		cull2d_w_ = cull2d_h_ = 0;
+		cull2d_tex_ = nullptr;
+	}
+
+	//true when no voxel of brick b can sample the 2D mask at or above the cull
+	//threshold (conservative: any doubt keeps the brick)
+	bool VolumeRenderer::brick_outside_2d_mask(TextureBrick* b, const glm::mat4& mv, const glm::mat4& proj) const
+	{
+		if (!b || cull2d_sat_.empty() || !tex_2d_mask_ || tex_2d_mask_.get() != cull2d_tex_)
+			return false;
+		const glm::dmat4 m = glm::dmat4(proj) * glm::dmat4(mv);
+		//the shader projects t*brkscale + brktrans, t in (0, 1): the brick's dbox
+		const BBox dbox = b->dbox();
+		const Point lo = dbox.min(), hi = dbox.max();
+		double umin = 1e30, umax = -1e30, vmin = 1e30, vmax = -1e30;
+		for (int c = 0; c < 8; c++)
+		{
+			glm::dvec4 p((c & 1) ? hi.x() : lo.x(), (c & 2) ? hi.y() : lo.y(), (c & 4) ? hi.z() : lo.z(), 1.0);
+			glm::dvec4 q = m * p;
+			//behind / at the eye: the projection of the box is not bounded by its corners
+			if (!(q.w > 1e-6))
+				return false;
+			const double u = q.x / q.w / 2.0 + 0.5, v = q.y / q.w / 2.0 + 0.5;
+			if (!std::isfinite(u) || !std::isfinite(v))
+				return false;
+			umin = std::min(umin, u); umax = std::max(umax, u);
+			vmin = std::min(vmin, v); vmax = std::max(vmax, v);
+		}
+		//texels a bilinear lookup in [umin, umax] x [vmin, vmax] can touch
+		//(texel space x = u * w - 0.5), plus a margin for float rounding;
+		//clamp-to-edge addressing maps everything outside onto the border texels
+		const int margin = 2;
+		auto texel_lo = [margin](double c, int n) { double x = std::floor(c * n - 0.5) - margin; return (int)std::max(0.0, std::min((double)n - 1, x)); };
+		auto texel_hi = [margin](double c, int n) { double x = std::floor(c * n - 0.5) + 1 + margin; return (int)std::max(0.0, std::min((double)n - 1, x)); };
+		const int x0 = texel_lo(umin, cull2d_w_), x1 = texel_hi(umax, cull2d_w_);
+		const int y0 = texel_lo(vmin, cull2d_h_), y1 = texel_hi(vmax, cull2d_h_);
+		const size_t W = (size_t)cull2d_w_ + 1;
+		const uint32_t covered =
+			cull2d_sat_[(size_t)(y1 + 1) * W + x1 + 1] - cull2d_sat_[(size_t)y0 * W + x1 + 1] -
+			cull2d_sat_[(size_t)(y1 + 1) * W + x0] + cull2d_sat_[(size_t)y0 * W + x0];
+		return covered == 0;
 	}
 
 	//generate the labeling assuming the mask is already generated
@@ -3569,7 +3861,27 @@ namespace FLIVR
 				descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 1, &mask->descriptor));
 			}
 
-			if (type==8 || type==10 || type==11)
+			if (type == 8)
+			{
+				//intersection with masks (CAL_UNIFORMS_WITH_MASK): mask of A at
+				//binding 3 (tex2), mask of B at binding 4 (tex3). Since 27d5cb2
+				//this shared the NA-mode branch below, which binds A's label
+				//(an unsigned texture) where the shader samples B's mask, so the
+				//Colocalization result was empty.
+				if (bricks_a && vr_a && vr_a->tex_ && vr_a->tex_->nmask() != -1)
+				{
+					mask = vr_a->load_brick_mask(prim_dev, bricks_a, i, VK_FILTER_NEAREST, false, 0, true);
+					if (!mask) { unlock_bricks(); continue; }
+					descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 2, &mask->descriptor));
+				}
+				if (bricks_b && vr_b && vr_b->tex_ && vr_b->tex_->nmask() != -1)
+				{
+					label = vr_b->load_brick_mask(prim_dev, bricks_b, i, VK_FILTER_NEAREST, false, 0, true);
+					if (!label) { unlock_bricks(); continue; }
+					descriptorWrites.push_back(VolCalShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 3, &label->descriptor));
+				}
+			}
+			else if (type==10 || type==11)
 			{
 				if (bricks_a)
 				{
@@ -3725,11 +4037,30 @@ namespace FLIVR
 		return ret_pipeline;
 	}
 
+	//process physical footprint (includes Metal / GPU allocations on macOS);
+	//VVD_WARP_DEBUG statistics only
+	static unsigned long long physFootprint()
+	{
+#ifdef __APPLE__
+		task_vm_info_data_t info;
+		mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+		if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
+			return (unsigned long long)info.phys_footprint;
+#endif
+		return 0;
+	}
+
 	//thin plate spline warp: resample vr_in (moving) into this volume (fixed space)
-	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp)
+	void VolumeRenderer::warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp,
+		const glm::dvec3* out_scale, const glm::dvec3* out_off)
 	{
 		if (!vr_in || !tex_ || !vr_in->tex_ || !m_vulkan || !tps.valid())
 			return;
+		//output grid != source grid: output-normalized f -> source-normalized
+		//f * dms + dmo (see the header)
+		const bool dmap = out_scale && out_off;
+		const glm::dvec3 dms = dmap ? *out_scale : glm::dvec3(1.0);
+		const glm::dvec3 dmo = dmap ? *out_off : glm::dvec3(0.0);
 
 		const int out_bytes = tex_->nb(0);
 		const int src_nb = vr_in->tex_->nb(0);
@@ -3798,8 +4129,17 @@ namespace FLIVR
 			ubo.G[1] = glm::vec4(glm::vec3(A[1] * svdim), 0.0f);
 			ubo.G[2] = glm::vec4(glm::vec3(A[2] * svdim), 0.0f);
 			ubo.G[3] = glm::vec4(glm::vec3(tps.translation() * svdim - 0.5), 1.0f);
-			ubo.gscale = glm::vec4(glm::vec3(tps.aspect() / (ovdim * R)), 0.0f);
-			ubo.goff = glm::vec4(glm::vec3((0.5 * tps.aspect() / ovdim - tps.center()) / R), 0.0f);
+			if (!dmap)
+			{
+				ubo.gscale = glm::vec4(glm::vec3(tps.aspect() / (ovdim * R)), 0.0f);
+				ubo.goff = glm::vec4(glm::vec3((0.5 * tps.aspect() / ovdim - tps.center()) / R), 0.0f);
+			}
+			else
+			{
+				//target grid: f = (o+0.5)/ovdim * dms + dmo, u = (f*aspect - c)/R
+				ubo.gscale = glm::vec4(glm::vec3(dms * tps.aspect() / (ovdim * R)), 0.0f);
+				ubo.goff = glm::vec4(glm::vec3(((0.5 * dms / ovdim + dmo) * tps.aspect() - tps.center()) / R), 0.0f);
+			}
 			ubo.srcDim = glm::ivec4(svx, svy, svz, 0);
 			ubo.cfg = glm::ivec4(N, interp == 0 ? 0 : 1, 0, 0);
 		}
@@ -3818,6 +4158,18 @@ namespace FLIVR
 		//this writes textures the in-flight frame may sample: wait it out first
 		for (auto dev : m_vulkan->devices)
 			dev->WaitIdleAllFrameSlots();
+		//the warp runs between frames and allocates / releases many large
+		//textures (source tiles, output bricks, pool evictions). Released
+		//objects normally wait for the next frame boundary, which never comes
+		//while the warp blocks the UI thread: free them as the warp goes.
+		//(2026-10-15: a 2953x625x625 TPS warp piled up its source tiles until
+		//~100 GB of GPU memory was wired and macOS panicked in IOGPUFamily.)
+		prim_dev->DrainDeferredDestroys();
+
+		const bool warp_dbg = std::getenv("VVD_WARP_DEBUG") != nullptr;
+		unsigned long long dbg_fp0 = warp_dbg ? physFootprint() : 0, dbg_fp_peak = dbg_fp0;
+		size_t dbg_tiles = 0, dbg_regions = 0, dbg_clamped = 0;
+		unsigned long long dbg_tile_bytes = 0, dbg_tile_max = 0;
 
 		Ray view_ray(Point(0.802, 0.267, 0.534), Vector(0.802, 0.267, 0.534));
 		tex_->set_sort_bricks();
@@ -3833,7 +4185,20 @@ namespace FLIVR
 		}
 
 		const int max3d = (int)prim_dev->properties.limits.maxImageDimension3D;
-		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d);
+		//byte budget of one source tile: a quarter of the graphics-memory limit,
+		//256 MB..1 GB (a tile is only bounded per axis by max3d otherwise:
+		//2048^3 x 2 bytes = 16 GB in a single allocation)
+		const unsigned long long MB = 1024ull * 1024ull;
+		unsigned long long tile_budget = 1024ull * MB;
+		if (prim_dev->use_mem_limit && prim_dev->mem_limit > 0.0)
+			tile_budget = (unsigned long long)(prim_dev->mem_limit / 4.0) * MB;
+		tile_budget = std::max(256ull * MB, std::min(1024ull * MB, tile_budget));
+		auto tileBytes = [src_nb](size_t w, size_t h, size_t d)
+		{
+			return (unsigned long long)w * h * d * (unsigned long long)src_nb;
+		};
+		const bool wholeFits = (svx <= max3d && svy <= max3d && svz <= max3d) &&
+			tileBytes((size_t)svx, (size_t)svy, (size_t)svz) <= 2 * tile_budget;
 
 		vks::Buffer lm_buf;
 		prim_dev->createBuffer(
@@ -3893,7 +4258,9 @@ namespace FLIVR
 				double fx = (gox + (double)kx / SS * nx) / ovx;
 				double fy = (goy + (double)ky / SS * ny) / ovy;
 				double fz = (goz + (double)kz / SS * nz) / ovz;
-				glm::dvec3 mm = tps.evaluate(glm::dvec3(fx, fy, fz));
+				glm::dvec3 mm = dmap ?
+					tps.evaluate(glm::dvec3(fx, fy, fz) * dms + dmo) :
+					tps.evaluate(glm::dvec3(fx, fy, fz));
 				if (mm.x < mnx) mnx = mm.x; if (mm.x > mxx) mxx = mm.x;
 				if (mm.y < mny) mny = mm.y; if (mm.y > mxy) mxy = mm.y;
 				if (mm.z < mnz) mnz = mm.z; if (mm.z > mxz) mxz = mm.z;
@@ -3953,7 +4320,7 @@ namespace FLIVR
 			}
 			else
 			{
-				const size_t max_regions = 512; //safety cap (degenerate inverses)
+				const size_t max_regions = 1024; //safety cap (degenerate inverses)
 				std::vector<OutRegion> work;
 				work.push_back({ 0, 0, 0, bmx, bmy, bmz, 0, 0, 0, 0, 0, 0 });
 				while (!work.empty())
@@ -3962,7 +4329,8 @@ namespace FLIVR
 					work.pop_back();
 					estimateTile(b->ox() + r.ox, b->oy() + r.oy, b->oz() + r.oz,
 						r.nx, r.ny, r.nz, r.stx, r.sty, r.stz, r.w, r.h, r.d);
-					bool oversized = r.w > (size_t)max3d || r.h > (size_t)max3d || r.d > (size_t)max3d;
+					bool oversized = r.w > (size_t)max3d || r.h > (size_t)max3d || r.d > (size_t)max3d ||
+						tileBytes(r.w, r.h, r.d) > tile_budget;
 					bool splittable = (r.nx > 1 || r.ny > 1 || r.nz > 1) &&
 						regions.size() + work.size() + 2 <= max_regions;
 					if (oversized && splittable)
@@ -3995,6 +4363,19 @@ namespace FLIVR
 						if (r.w > (size_t)max3d) r.w = (size_t)max3d;
 						if (r.h > (size_t)max3d) r.h = (size_t)max3d;
 						if (r.d > (size_t)max3d) r.d = (size_t)max3d;
+						//and never allocate more than 2x the tile budget: shrink
+						//the longest axis around its centre
+						while (tileBytes(r.w, r.h, r.d) > 2 * tile_budget)
+						{
+							size_t* ax = &r.w; long* st = &r.stx;
+							if (r.h > *ax) { ax = &r.h; st = &r.sty; }
+							if (r.d > *ax) { ax = &r.d; st = &r.stz; }
+							if (*ax <= 1) break;
+							const size_t nw = *ax / 2;
+							*st += (long)((*ax - nw) / 2);
+							*ax = nw;
+						}
+						dbg_clamped++;
 					}
 					regions.push_back(r);
 				}
@@ -4022,6 +4403,13 @@ namespace FLIVR
 				else
 				{
 					srctex = buildTile((size_t)r.stx, (size_t)r.sty, (size_t)r.stz, r.w, r.h, r.d);
+					if (srctex)
+					{
+						const unsigned long long tb = tileBytes(r.w, r.h, r.d);
+						dbg_tiles++;
+						dbg_tile_bytes += tb;
+						if (tb > dbg_tile_max) dbg_tile_max = tb;
+					}
 					tileOrigin = glm::ivec4((int)r.stx, (int)r.sty, (int)r.stz, 0);
 					tileSize = glm::ivec4((int)r.w, (int)r.h, (int)r.d, 0);
 				}
@@ -4100,15 +4488,27 @@ namespace FLIVR
 
 					written = true;
 				}
-				//per-sub-region temp source texture (srctex) is released here (after the fences)
+				//per-sub-region temp source texture: free it now (after the
+				//fences) instead of at the next frame boundary
+				if (!wholeFits)
+				{
+					srctex.reset();
+					prim_dev->DrainDeferredDestroys();
+				}
+				if (warp_dbg)
+					dbg_fp_peak = std::max(dbg_fp_peak, physFootprint());
 			}
+			dbg_regions += regions.size();
 
 			if (written)
 			{
 				b->set_dirty(0, true);
 				b->set_modified(0, true);
 			}
+			//pool textures evicted by load_brick (check_swap_memory) above
+			prim_dev->DrainDeferredDestroys();
 		}
+		wholeTex.reset();
 
 		if (tex_->isBrxml())
 			tex_->SetModifiedAllLevels(true, 0);
@@ -4123,6 +4523,19 @@ namespace FLIVR
 			m_vulkan->eraseBricksFromTexpools(bricks, 0);
 			compression_ = compression_this;
 		}
+
+		prim_dev->DrainDeferredDestroys();
+		//the tile uploads grew the staging ring to the largest tile
+		prim_dev->TrimUploadStaging(256ull * MB);
+
+		if (warp_dbg)
+			fprintf(stderr, "[warp] src %dx%dx%d (%d B) out %dx%dx%d bricks %zu whole %d max3d %d "
+				"tile budget %llu MB regions %zu tiles %zu (sum %llu MB, max %llu MB) clamped %zu, "
+				"pool %zu textures, avail %.0f / %.0f MB; footprint start %llu MB peak %llu MB end %llu MB\n",
+				svx, svy, svz, src_nb, ovx, ovy, ovz, bricks->size(), wholeFits ? 1 : 0, max3d,
+				tile_budget / MB, dbg_regions, dbg_tiles, dbg_tile_bytes / MB, dbg_tile_max / MB, dbg_clamped,
+				prim_dev->tex_pool.size(), prim_dev->available_mem, prim_dev->mem_limit,
+				dbg_fp0 / MB, dbg_fp_peak / MB, physFootprint() / MB);
 	}
 
 	void VolumeRenderer::return_component(int c)

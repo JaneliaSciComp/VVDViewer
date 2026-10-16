@@ -44,6 +44,10 @@ DEALINGS IN THE SOFTWARE.
 #include "compatibility.h"
 
 #include <wx/wx.h>
+#include <wx/fileconf.h>
+#include <wx/treectrl.h>
+#include <wx/listctrl.h>
+#include <wx/progdlg.h>
 #include <wx/clrpicker.h>
 #include <wx/spinbutt.h>
 #include <wx/event.h>
@@ -808,13 +812,13 @@ public:
 
 	void SetEmptyBlockDetectorActive(bool val) { m_ebd_run = val; }
 
-	static void setCriticalSection(wxCriticalSection* crtsec) 
+	static void setCriticalSection(vvd::CriticalSection* crtsec) 
 	{
 		ms_pThreadCS = crtsec;
 		VolumeLoader::setCriticalSection(crtsec);
         EmptyBlockDetector::setCriticalSection(crtsec);
 	}
-	static wxCriticalSection* ms_pThreadCS;
+	static vvd::CriticalSection* ms_pThreadCS;
     
     void CalcAndSetCombinedClippingPlanes();
     

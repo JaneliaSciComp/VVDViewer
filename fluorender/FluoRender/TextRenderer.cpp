@@ -29,8 +29,12 @@ DEALINGS IN THE SOFTWARE.
 #include "TextRenderer.h"
 #include <FLIVR/ShaderProgram.h>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
 
 bool TextRenderer::m_init = false;
+int TextRenderer::s_layout_w = 0;
+int TextRenderer::s_layout_h = 0;
 FT_Library TextRenderer::m_ft;
 
 TextRenderer::TextRenderer(const string &lib_name, std::shared_ptr<Vulkan2dRender> v2drender)
@@ -140,10 +144,28 @@ void TextRenderer::RenderText(const std::unique_ptr<vks::VFrameBuffer>& framebuf
         return;
 	
 	vks::VulkanDevice* prim_dev = m_v2drender->m_vulkan->vulkanDevice;
-	TextDimensions dims = m_cur_font->Measure(text);
 
-	int w = framebuf->w;
-	int h = framebuf->h;
+	// glyph pixels -> NDC: 2 / (framebuffer size). On a HiDPI swapchain the
+	// callers lay text out in layout units (s_layout_w/h), so rasterize at
+	// the swapchain's scale and map through the layout size scaled by the
+	// same factor (text appears at m_size layout units, as in wx).
+	std::shared_ptr<FLFont> font = m_cur_font;
+	float w = (float)framebuf->w;
+	float h = (float)framebuf->h;
+	if (s_layout_w > 0 && s_layout_h > 0 && m_size > 0 &&
+		!framebuf->attachments.empty() && framebuf->attachments[0]->is_swapchain_images &&
+		framebuf->h != s_layout_h)
+	{
+		const double r = double(framebuf->h) / double(s_layout_h);
+		const unsigned int px = std::max(1u, (unsigned int)std::lround(m_size * r));
+		if (std::shared_ptr<FLFont> f = LoadFont(m_cur_libname, px))
+		{
+			font = f;
+			const float fr = float(px) / float(m_size);
+			w = s_layout_w * fr;
+			h = s_layout_h * fr;
+		}
+	}
 
 	std::vector<Vulkan2dRender::V2DRenderParams> v2drender_params;
 	Vulkan2dRender::V2dPipeline pl =
@@ -157,7 +179,7 @@ void TextRenderer::RenderText(const std::unique_ptr<vks::VFrameBuffer>& framebuf
 
 	float pos = x;
 	for (auto c : text) {
-		auto glyph = m_cur_font->GetGlyph(c);
+		auto glyph = font->GetGlyph(c);
 		auto texture = glyph->GetTexture();
 		if (texture) {
 
@@ -180,6 +202,8 @@ void TextRenderer::RenderText(const std::unique_ptr<vks::VFrameBuffer>& framebuf
 		pos += (float)glyph->GetAdvance() * 2.0f / w;
 	}
 
+	if (v2drender_params.empty())
+		return;
 	vks::VulkanSemaphoreSettings sem = prim_dev->GetNextRenderSemaphoreSettings();
 	v2drender_params[0].waitSemaphores = sem.waitSemaphores;
 	v2drender_params[0].waitSemaphoreCount = sem.waitSemaphoreCount;
@@ -190,6 +214,27 @@ void TextRenderer::RenderText(const std::unique_ptr<vks::VFrameBuffer>& framebuf
 		framebuf->replaceRenderPass(pl.pass);
 
 	m_v2drender->seq_render(framebuf, v2drender_params.data(), v2drender_params.size());
+}
+
+// a face of lib_name rasterized at px pixels, cached with the fonts
+// LoadNewFace creates (same "lib?size" key)
+std::shared_ptr<FLFont> TextRenderer::LoadFont(const string &lib_name, unsigned int px)
+{
+	std::stringstream ss;
+	ss << lib_name.c_str() << "?" << px;
+	auto foundIt = m_fonts.find(ss.str());
+	if (foundIt != m_fonts.end())
+		return foundIt->second;
+	if (!m_init)
+		return nullptr;
+	FT_Face face;
+	if (FT_New_Face(m_ft, lib_name.c_str(), 0, &face))
+		return nullptr;
+	FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+	FT_Set_Pixel_Sizes(face, 0, px);
+	std::shared_ptr<FLFont> font = std::make_shared<FLFont>(face, m_textureAtlas);
+	m_fonts[ss.str()] = font;
+	return font;
 }
 
 TextDimensions TextRenderer::RenderTextDims(wstring& text)

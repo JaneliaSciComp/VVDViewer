@@ -227,6 +227,23 @@ mark_as_advanced(CLEAR ZLIB_LIBRARY)
 find_package(ZLIB REQUIRED)
 add_definitions(-DTEEM_ZLIB=1)
 include_directories(${ZLIB_INCLUDE_DIRS})
+# libdeflate (vcpkg.json): teem decodes gzip-encoded NRRD data with it in one
+# whole-buffer call (Nrrd/encodingGzip.c, 3-5x faster than zlib's streaming
+# inflate). Optional: without it teem keeps using zlib.
+find_package(libdeflate CONFIG QUIET)
+if(TARGET libdeflate::libdeflate_static)
+	set(VVD_LIBDEFLATE libdeflate::libdeflate_static)
+elseif(TARGET libdeflate::libdeflate_shared)
+	set(VVD_LIBDEFLATE libdeflate::libdeflate_shared)
+endif()
+if(VVD_LIBDEFLATE)
+	message(STATUS "NRRD gzip decoding: libdeflate (${VVD_LIBDEFLATE})")
+	# every executable that links zlib also gets libdeflate (teem is
+	# compiled into each of them)
+	list(APPEND ZLIB_LIBRARIES ${VVD_LIBDEFLATE})
+else()
+	message(STATUS "NRRD gzip decoding: zlib (libdeflate not found)")
+endif()
 
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/teem)
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/teem/Biff)
@@ -244,6 +261,10 @@ file(GLOB nrrdhdr fluorender/teem/Nrrd/*.h)
 add_library(TEEM_OBJ OBJECT
       ${airsrc} ${hestsrc} ${nrrdsrc} ${biffsrc}
       ${airhdr} ${hesthdr} ${nrrdhdr} ${biffhdr})
+if(VVD_LIBDEFLATE)
+	target_compile_definitions(TEEM_OBJ PRIVATE TEEM_LIBDEFLATE=1)
+	target_link_libraries(TEEM_OBJ PRIVATE ${VVD_LIBDEFLATE})
+endif()
 
 #pole
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/pole)
@@ -322,6 +343,13 @@ add_library(NV_OBJ OBJECT
       ${nv_src} ${nv_hdr})
 
 #FLIVR
+# Toolkit-neutral core (strings, threads, file utils, UI callbacks) used by the
+# engine and data layer. Must never include a GUI toolkit header.
+include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Core)
+file(GLOB core_src fluorender/FluoRender/Core/*.cpp)
+file(GLOB core_hdr fluorender/FluoRender/Core/*.h)
+add_library(CORE_OBJ OBJECT ${core_src} ${core_hdr} ${VVDViewer_SOURCE_DIR}/external/miniz/miniz.c)
+
 include_directories(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/FLIVR)
 file(GLOB fli_src fluorender/FluoRender/FLIVR/*.cpp)
 file(GLOB fli_hdr fluorender/FluoRender/FLIVR/*.h)
@@ -531,6 +559,29 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
         set(VULKAN_LIB_DIR "$ENV{VULKAN_SDK}/lib")
     endif()
     file(GLOB SPIRV_LIBRARIES ${VULKAN_LIB_DIR}/*.a)
+
+    # MoltenVK (the Vulkan driver) + its ICD manifest are copied into both app
+    # bundles by cmake/macos_bundle_fixup.sh, so end users need no Vulkan SDK.
+    # Search the SDK this build uses (VULKAN_SDK, or the SDK root derived from
+    # the headers / loader found above), then the system-wide SDK install
+    # (/usr/local) and Homebrew's molten-vk.
+    get_filename_component(_vk_sdk_root "${Vulkan_INCLUDE_DIR}/.." ABSOLUTE)
+    get_filename_component(_vk_loader_dir "${Vulkan_LIBRARY}" DIRECTORY)
+    set(_mvk_roots "$ENV{VULKAN_SDK}" "${_vk_sdk_root}" "${_vk_loader_dir}/.." "${_vk_loader_dir}/../../.."
+        /usr/local /opt/homebrew/opt/molten-vk /opt/homebrew /usr/local/opt/molten-vk)
+    find_library(MOLTENVK_LIBRARY NAMES MoltenVK
+        HINTS ${_mvk_roots} PATH_SUFFIXES lib lib/MoltenVK NO_DEFAULT_PATH)
+    find_file(MOLTENVK_ICD_JSON MoltenVK_icd.json
+        HINTS ${_mvk_roots} PATH_SUFFIXES share/vulkan/icd.d etc/vulkan/icd.d NO_DEFAULT_PATH)
+    if(NOT MOLTENVK_LIBRARY)
+        message(FATAL_ERROR "libMoltenVK.dylib not found; install the LunarG Vulkan SDK "
+            "(or `brew install molten-vk`) or pass -DMOLTENVK_LIBRARY=/path/to/libMoltenVK.dylib")
+    endif()
+    message(STATUS "MoltenVK (bundled into the .app): ${MOLTENVK_LIBRARY}")
+    # Identity for re-signing the bundles after install_name_tool. "-" = ad hoc
+    # (fine for local use / internal testing); for distribution pass
+    # -DVVD_CODESIGN_IDENTITY="Developer ID Application: ..." and notarize.
+    set(VVD_CODESIGN_IDENTITY "-" CACHE STRING "codesign identity for the macOS app bundles (- = ad hoc)")
 else()
     # See the Darwin note above: prefer $VULKAN_SDK/lib over dirname(Vulkan_LIBRARY).
     get_filename_component(VULKAN_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
@@ -608,6 +659,12 @@ foreach(f ${hdrall})
   endif()
 endforeach()
 file(GLOB rsc ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/img/*.xpm)
+# the cell warp (RigidCellsWarp.cpp) reproduces a Java plugin bit for bit:
+# no fused multiply-add contraction (also set by a pragma in the file)
+if(NOT MSVC)
+  set_source_files_properties(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/RigidCellsWarp.cpp
+    PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     file(GLOB mac_src ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/*.m)
@@ -636,6 +693,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		$<TARGET_OBJECTS:POLE_OBJ>
 		$<TARGET_OBJECTS:TEEM_OBJ>
 		$<TARGET_OBJECTS:PLUGINS_OBJ>
+		$<TARGET_OBJECTS:CORE_OBJ>
 		$<TARGET_OBJECTS:WACUTILS_OBJ>)
 else()
 	add_library(VVDMainFrame SHARED
@@ -649,7 +707,8 @@ else()
 		$<TARGET_OBJECTS:TRACKING_OBJ>
 		$<TARGET_OBJECTS:POLE_OBJ>
 		$<TARGET_OBJECTS:TEEM_OBJ>
-		$<TARGET_OBJECTS:PLUGINS_OBJ>)
+		$<TARGET_OBJECTS:PLUGINS_OBJ>
+		$<TARGET_OBJECTS:CORE_OBJ>)
 endif()
 
 #platform specific rules
@@ -696,6 +755,7 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 					  POLE_OBJ
 					  TEEM_OBJ
 					  PLUGINS_OBJ
+					  CORE_OBJ
 					  PROPERTIES
 					  COMPILE_DEFINITIONS 
 					  nrrd_EXPORTS
@@ -1210,9 +1270,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"cp -f \"\${VULKAN_REAL}\" \"\${FRAMEWORKS_DIR}/\${VULKAN_DYLIB}\"\n"
 		"chmod u+w \"\${FRAMEWORKS_DIR}/\${VULKAN_DYLIB}\"\n"
 		"install_name_tool -id \"\${FW_PREFIX}/\${VULKAN_DYLIB}\" \"\${FRAMEWORKS_DIR}/\${VULKAN_DYLIB}\"\n\n"
-		"cp -f /usr/local/lib/libMoltenVK.dylib \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
-		"chmod u+w \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n"
-		"install_name_tool -id \"\${FW_PREFIX}/libMoltenVK.dylib\" \"\${FRAMEWORKS_DIR}/libMoltenVK.dylib\"\n\n"
+		"# MoltenVK + its ICD manifest are bundled by cmake/macos_bundle_fixup.sh\n\n"
 		"# Bundle liblzma if it is a dynamic library. When vcpkg provides liblzma\n"
 		"# as a static archive (.a), its symbols are already inside libVVDMainFrame.dylib\n"
 		"# (via static libtiff), and install_name_tool on a static archive errors.\n"
@@ -1265,33 +1323,42 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"fix_refs \"\${EXECUTABLE}\"\n"
 		"for f in \"\${FRAMEWORKS_DIR}\"/*.dylib; do\n  fix_refs \"\${f}\"\ndone\n"
 		"for f in \"\${PLUGINS_DIR}\"/*.dylib; do\n  fix_refs \"\${f}\"\ndone\n\n"
-		"sed 's|../../../lib/libMoltenVK.dylib|../../../Frameworks/libMoltenVK.dylib|'"
-		" /usr/local/share/vulkan/icd.d/MoltenVK_icd.json"
-		" > \"\${RESOURCES_DIR}/vulkan/icd.d/MoltenVK_icd.json\"\n\n"
-		"# Re-codesign all modified binaries (install_name_tool invalidates signatures)\n"
-		"# Use the same identity as the Xcode project; fall back to ad-hoc if unavailable\n"
-		"SIGN_ID=\$(security find-identity -v -p codesigning 2>/dev/null | grep 'Apple Development' | head -1 | sed 's/.*\"\\(.*\\)\".*/\\1/')\n"
-		"if [ -z \"\${SIGN_ID}\" ]; then\n"
-		"  SIGN_ID=\"-\"\n"
-		"fi\n"
-		"for f in \"\${FRAMEWORKS_DIR}\"/*.dylib; do\n"
-		"  codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${f}\"\n"
-		"done\n"
-		"for f in \"\${PLUGINS_DIR}\"/*.dylib; do\n"
-		"  codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${f}\"\n"
-		"done\n"
-		"codesign --force --sign \"\${SIGN_ID}\" --timestamp=none \"\${EXECUTABLE}\"\n")
+		"# rpath cleanup + re-signing: cmake/macos_bundle_fixup.sh (next step)\n")
+
+	# Files the wx plugins load from Contents/Resources at run time
+	# (FijiInterfacePlugin copies the macros/jars into the user's Fiji;
+	# NBLASTGuiPlugin runs nblast_search.R through term.sh). Must be copied
+	# before the final codesign, which seals Resources.
+	add_custom_command(TARGET VVDViewer POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy
+			"${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/macros/vvd_listener.txt"
+			"${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/macros/vvd_run.txt"
+			"${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/macros/vvd_quit.txt"
+			"${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/plugins/vvd_listener.jar"
+			"${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/plugins/Apply_Bigwarp_Filter.jar"
+			"${VVDViewer_SOURCE_DIR}/plugin_nblast/r/nblast_search.R"
+			"${VVDViewer_SOURCE_DIR}/plugin_nblast/vvd/term.sh"
+			"$<TARGET_BUNDLE_CONTENT_DIR:VVDViewer>/Resources/"
+		COMMENT "Copying wx plugin resources into VVDViewer.app")
 
 	add_custom_command(TARGET VVDViewer POST_BUILD
 		COMMAND /bin/sh "${CMAKE_BINARY_DIR}/fix_bundle.sh"
 			"$<TARGET_BUNDLE_CONTENT_DIR:VVDViewer>/Frameworks"
 			"$<TARGET_BUNDLE_CONTENT_DIR:VVDViewer>/Resources"
 			"$<TARGET_FILE:VVDViewer>"
-			"${CMAKE_BINARY_DIR}/$<CONFIG>"
+			"$<TARGET_FILE_DIR:VVDMainFrame>"
 			"${LZMA_LIBRARY}"
 			"${Vulkan_LIBRARY}"
 			"${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
 		COMMENT "Bundling dylibs and fixing paths in VVDViewer.app")
+	# Last step: MoltenVK + ICD manifest into the bundle, rewrite any remaining
+	# non-system reference into Frameworks, strip the build-machine LC_RPATHs
+	# (vcpkg_installed, build dir, Vulkan SDK) and re-sign the whole bundle.
+	add_custom_command(TARGET VVDViewer POST_BUILD
+		COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_bundle_fixup.sh"
+			"$<TARGET_BUNDLE_DIR:VVDViewer>" "${MOLTENVK_LIBRARY}" "${MOLTENVK_ICD_JSON}"
+			"${Vulkan_LIBRARY}" "${VVD_CODESIGN_IDENTITY}"
+		COMMENT "Making VVDViewer.app self-contained (MoltenVK, rpaths, codesign)")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	# Deploy vcpkg runtime DLLs (wxWidgets, ffmpeg, libCZI) next to VVDViewer.exe.
 	# VCPKG_APPLOCAL_DEPS=ON already auto-copies dependent DLLs during the build;
@@ -1370,3 +1437,17 @@ else()
 			$<TARGET_FILE_DIR:VVDViewer>)
 	endforeach()
 endif()
+
+# ---------------------------------------------------------------------------
+# Toolkit interop for vvd::String (Core/VVDString.h). Only the wx GUI targets
+# get the wxString conversions; the engine object libraries stay neutral and
+# are shared with the Qt front end.
+foreach(_t VVDMainFrame VVDViewer wxGuiPluginBase FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin PLUGINS_OBJ IMAGES_OBJ WACUTILS_OBJ)
+	if(TARGET ${_t})
+		target_compile_definitions(${_t} PRIVATE VVD_WX_STRING_INTEROP=1)
+	endif()
+endforeach()
+
+# Optional Qt front end (phase 1 of the Qt port). See cmake/QtGui.cmake.
+option(ENABLE_QT_GUI "Build the Qt front end (VVDViewerQt) in addition to the wx app" OFF)
+include(${VVDViewer_SOURCE_DIR}/cmake/QtGui.cmake)

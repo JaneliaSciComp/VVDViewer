@@ -28,6 +28,7 @@ DEALINGS IN THE SOFTWARE.
 //#include <GL/glew.h>
 #include "compatibility.h"
 #include <vector>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <string.h>
@@ -38,8 +39,9 @@ DEALINGS IN THE SOFTWARE.
 #include "FLIVR/MeshRenderer.h"
 #include "FLIVR/VolumeRenderer.h"
 #include "FLIVR/TextureBrick.h"
-#include <wx/wfstream.h>
-#include <wx/fileconf.h>
+#include "Core/VVDString.h"
+#include "Core/Thread.h"
+#include "Core/FileUtil.h"
 #include "Formats/base_reader.h"
 #include "Formats/oib_reader.h"
 #include "Formats/oif_reader.h"
@@ -63,7 +65,7 @@ DEALINGS IN THE SOFTWARE.
 #include "Formats/v3dpbd_reader.h"
 
 #include "Tracking/TrackMap.h"
-#include "DatabaseDlg.h"
+#include "AnnotationDB.h"
 
 #include <curl/curl.h>
 #include <boost/property_tree/ptree.hpp>
@@ -106,11 +108,11 @@ public:
 	{
 		return type;
 	}
-	wxString GetName()
+	VVDString GetName()
 	{
 		return m_name;
 	}
-	void SetName(wxString name)
+	void SetName(VVDString name)
 	{
 		m_name = name;
 	}
@@ -158,9 +160,9 @@ public:
 	void SetSyncB(bool sync_b)
 	{m_sync_b = sync_b;}
     
-    wxString GetMetadataPath()
+    VVDString GetMetadataPath()
     {return m_metadata;}
-    void SetMetadataPath(wxString mpath)
+    void SetMetadataPath(VVDString mpath)
     {m_metadata = mpath;}
 
 	//randomize color
@@ -178,10 +180,10 @@ public:
 
 protected:
 	int type;//-1:invalid, 2:volume, 3:mesh, 4:annotations, 5:group, 6:mesh group, 7:ruler, 8:traces
-	wxString m_name;
+	VVDString m_name;
 	unsigned int m_id;
     
-    wxString m_metadata;
+    VVDString m_metadata;
 
 	//layer adjustment
 	Color m_gamma;
@@ -204,6 +206,7 @@ class EXPORT_API ClippingLayer : public TreeLayer
 public:
 	ClippingLayer() {
 
+		m_sync_clipping_planes = false;   // was left uninitialised for volumes / meshes
 		m_clip_dist_x = 1;
 		m_clip_dist_y = 1;
 		m_clip_dist_z = 1;
@@ -417,7 +420,7 @@ public:
 	MeshData();
 	virtual ~MeshData();
 
-	wxString GetPath();
+	VVDString GetPath();
 	BBox GetBounds();
 	void SetBounds(BBox b);
 	GLMmodel* GetMesh();
@@ -429,9 +432,9 @@ public:
 	bool GetDrawBounds();
 
 	//data management
-	int Load(wxString &filename);
+	int Load(const VVDString &filename);
 	int Load(GLMmodel* mesh);
-	void Save(wxString &filename);
+	void Save(const VVDString &filename);
 
 	static MeshData* DeepCopy(MeshData &copy, bool use_default_settings=false, DataManager *d_manager=NULL);
 
@@ -480,6 +483,10 @@ public:
 
 	//randomize color
 	void RandomizeColor();
+	//next value of the mesh default-colour generator (same range as rand()).
+	//Private to mesh colours so other rand() callers (including OS worker
+	//threads on macOS) cannot change which colour a newly loaded mesh gets.
+	static int NextRandomColorValue();
 
 	//shown in legend
 	void SetLegend(bool val);
@@ -658,8 +665,8 @@ public:
 	void SetClipMode(int mode, double cam_rotx, double cam_roty, double cam_rotz, Vector obj_ctr, Vector obj_trans);
 
 private:
-	//wxString m_name;
-	wxString m_data_path;
+	//VVDString m_name;
+	VVDString m_data_path;
 	GLMmodel* m_data;
     float* m_extra_vertex_data;
 	MeshRenderer *m_mr;
@@ -730,7 +737,7 @@ public:
 	void SetSkipBrick(bool skip);
 	bool GetSkipBrick();
 	//load
-	int Load(const std::shared_ptr<VL_Nrrd>& data, const wxString& name, const wxString& path, BRKXMLReader* breader = NULL);
+	int Load(const std::shared_ptr<VL_Nrrd>& data, const VVDString& name, const VVDString& path, BRKXMLReader* breader = NULL);
 	int Replace(const std::shared_ptr<VL_Nrrd>& data, bool del_tex);
 	int Replace(VolumeData* data);
 	std::shared_ptr<VL_Nrrd> GetVolume(bool ret);
@@ -762,10 +769,10 @@ public:
 	double GetOriginalValue(int i, int j, int k, bool normalize = true);
 	double GetTransferedValue(int i, int j, int k);
 	int GetLabellValue(int i, int j, int k);
-	void Save(wxString& filename, int mode = 0, bool bake = false, bool compress = false, bool save_msk = true, bool save_label = true, VolumeLoader* vl = NULL, bool crop = false, int lv = 0);
-	void ExportMask(wxString& filename);
-	void ImportMask(wxString& filename);
-	void ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd = nullptr, int mode = 2, bool compress = true);
+	void Save(const VVDString &filename, int mode = 0, bool bake = false, bool compress = false, bool save_msk = true, bool save_label = true, VolumeLoader* vl = NULL, bool crop = false, int lv = 0);
+	void ExportMask(const VVDString &filename);
+	void ImportMask(const VVDString &filename);
+	void ExportEachSegment(VVDString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd = nullptr, int mode = 2, bool compress = true);
 
 	//volumerenderer
 	VolumeRenderer* GetVR();
@@ -776,8 +783,8 @@ public:
 	//bounding box
 	BBox GetBounds();
 	//path
-	void SetPath(wxString path);
-	wxString GetPath();
+	void SetPath(VVDString path);
+	VVDString GetPath();
 	//multi-channel
 	void SetCurChannel(int chan);
 	int GetCurChannel();
@@ -807,6 +814,12 @@ public:
 		double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
 		double w2d, double bins, bool ortho = false, Texture* ext_msk = NULL, bool clear_msk_cache = true, bool use_absolute_value = false, bool save_stroke = true, bool force_clear_stroke = false);
 	void DrawMaskThreshold(float th, bool ortho = false, bool use_absolute_value = false);
+	//keep the GPU textures of the bricks DrawMask works on (data, mask and
+	//stroke, at the mask level) resident while pinned: the texture pool then
+	//swaps out other bricks instead of the ones every diffusion pass revisits.
+	//pin = true pins only when those textures fit within budget_mb (MB) and
+	//returns whether it pinned; pin = false unpins.
+	bool PinMaskBricks(bool pin, double budget_mb);
 	void DrawMaskDSLT(int type, int paint_mode, int hr_mode,
 		double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
 		double w2d, double bins, int dslt_r, int dslt_q, double dslt_c, bool ortho = false, bool use_absolute_value = false);
@@ -818,8 +831,11 @@ public:
 	//calculation
 	void Calculate(int type, VolumeData* vd_a, VolumeData* vd_b, VolumeData* vd_c = NULL);
 
-	//thin plate spline warp: resample vd_in (moving) into this volume (fixed)
-	void Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp = 1);
+	//thin plate spline warp: resample vd_in (moving) into this volume (fixed);
+	//out_scale / out_off: this volume's grid differs from vd_in's (see
+	//VolumeRenderer::warp)
+	void Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp = 1,
+		const glm::dvec3* out_scale = nullptr, const glm::dvec3* out_off = nullptr);
 
 	//set 2d mask for segmentation
 	void Set2dMask(std::shared_ptr<vks::VTexture>& mask);
@@ -1063,11 +1079,11 @@ public:
     void SetNAMode(bool val) { if (m_vr) m_vr->set_na_mode(val); }
     bool GetNAMode() { return m_vr ? m_vr->get_na_mode() : false; }
 
-	wxString GetSharedLabelName() { return m_shared_lbl_name; }
-	void SetSharedLabelName(wxString name) { m_shared_lbl_name = name; }
+	VVDString GetSharedLabelName() { return m_shared_lbl_name; }
+	void SetSharedLabelName(VVDString name) { m_shared_lbl_name = name; }
     
-    wxString GetSharedMaskName() { return m_shared_msk_name; }
-    void SetSharedMaskName(wxString name) { m_shared_msk_name = name; }
+    VVDString GetSharedMaskName() { return m_shared_msk_name; }
+    void SetSharedMaskName(VVDString name) { m_shared_msk_name = name; }
 
 	static Nrrd* NrrdScale(Nrrd* src, size_t dst_datasize, bool interpolation = true);
 	static Nrrd* NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool interpolation = true);
@@ -1103,7 +1119,7 @@ private:
 	bool m_dup;
 	int m_dup_counter;
 
-	wxString m_tex_path;
+	VVDString m_tex_path;
 	BBox m_bounds;
 	VolumeRenderer *m_vr;
 	Texture *m_tex;
@@ -1213,8 +1229,8 @@ private:
 	VolumeData *m_brkxml_mask;
 	int m_mask_lv;
 
-	wxString m_shared_lbl_name;
-    wxString m_shared_msk_name;
+	VVDString m_shared_lbl_name;
+    VVDString m_shared_msk_name;
 
 private:
 	//label functions
@@ -1253,7 +1269,7 @@ public:
 
 	void Run();
 
-	wxCriticalSection m_pThreadCS;
+	vvd::CriticalSection m_pThreadCS;
 	int m_running_nrrd_scale_th;
 
 private:
@@ -1262,7 +1278,7 @@ private:
 	bool m_interpolation;
 };
 
-class NrrdScaleThread : public wxThread
+class NrrdScaleThread : public vvd::Thread
 {
 public:
 	NrrdScaleThread(NrrdScaler* scaler, Nrrd* src, Nrrd* dst, int zst, int zend, bool interpolation);
@@ -1334,13 +1350,13 @@ public:
 	bool GetMemoRO();
 
 	//save/load
-	wxString GetPath();
-	int Load(wxString &filename, DataManager* mgr);
-	void Save(wxString &filename);
+	VVDString GetPath();
+	int Load(const VVDString &filename, DataManager* mgr);
+	void Save(const VVDString &filename);
 
 	//info meaning
-	wxString GetInfoMeaning();
-	void SetInfoMeaning(wxString &str);
+	VVDString GetInfoMeaning();
+	void SetInfoMeaning(const VVDString &str);
 
 	bool InsideClippingPlanes(Point &pos);
 
@@ -1377,13 +1393,13 @@ private:
 	bool m_memo_ro;//read only
 
 	//on disk
-	wxString m_data_path;
+	VVDString m_data_path;
 
 	//atext info meaning
-	wxString m_info_meaning;
+	VVDString m_info_meaning;
 
 private:
-	AText* GetAText(wxString str);
+	AText* GetAText(VVDString str);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1391,7 +1407,7 @@ class EXPORT_API RulerBalloon
 {
 public:
 	
-	RulerBalloon(bool visibility, Point point, wxArrayString annotations);
+	RulerBalloon(bool visibility, Point point, vvd::StringArray annotations);
 
 	~RulerBalloon();
 
@@ -1403,14 +1419,14 @@ public:
 	{
 		m_point = p;
 	}
-	void SetAnnotations(wxArrayString annotations)
+	void SetAnnotations(vvd::StringArray annotations)
 	{
 		m_annotations = annotations;
 	}
 
 	bool GetVisibility(){return m_visibility;}
 	Point GetPoint(){return m_point;}
-    wxArrayString GetAnnotations();
+    vvd::StringArray GetAnnotations();
 	vector<AnnotationDB> GetAnnotationDB(){return m_annotationdb;}
 
 	void SetAnnotationsFromDatabase(vector<AnnotationDB> ann, Point new_p, double spcx = 1.0, double spcy = 1.0, double spcz = 1.0);
@@ -1420,7 +1436,7 @@ private:
 	bool m_visibility;
 	Point m_point;
 	vector<AnnotationDB> m_annotationdb;
-	wxArrayString m_annotations;
+	vvd::StringArray m_annotations;
 	vector<CURL *> m_curl;
 	vector<string> m_bufs;
 };
@@ -1467,10 +1483,15 @@ public:
 	double GetAngle();
 	void Scale(double spcx, double spcy, double spcz);
     
-    wxArrayString GetAnnotations(int index, vector<AnnotationDB> annotationdb, double spcx, double spcy, double spcz);
+    vvd::StringArray GetAnnotations(int index, vector<AnnotationDB> annotationdb, double spcx, double spcy, double spcz);
 
 	bool AddPoint(const Point &point);
 	void SetTransform(Transform *tform);
+
+	//name of the volume a point was picked on (empty: view plane / not picked
+	//on a volume); index as GetPoint
+	void SetPointVolName(int index, const VVDString &name);
+	VVDString GetPointVolName(int index);
 
 	void Clear();
 	
@@ -1507,57 +1528,57 @@ public:
 	}
 
 
-	wxString GetNameDisp()
+	VVDString GetNameDisp()
 	{
 		return m_name_disp;
 	}
-	void SetNameDisp(wxString name_disp)
+	void SetNameDisp(VVDString name_disp)
 	{
 		m_name_disp = name_disp;
 	}
-	wxString GetDesc()
+	VVDString GetDesc()
 	{
 		return m_desc;
 	}
-	void SetDesc(wxString desc)
+	void SetDesc(VVDString desc)
 	{
 		m_desc = desc;
 	}
 
 
 	//extra info
-	void AddInfoNames(wxString &str)
+	void AddInfoNames(const VVDString &str)
 	{
 		m_info_names += str;
 	}
-	void SetInfoNames(wxString &str)
+	void SetInfoNames(const VVDString &str)
 	{
 		m_info_names = str;
 	}
-	wxString &GetInfoNames()
+	VVDString &GetInfoNames()
 	{
 		return m_info_names;
 	}
-	void AddInfoValues(wxString &str)
+	void AddInfoValues(const VVDString &str)
 	{
 		m_info_values += str;
 	}
-	void SetInfoValues(wxString &str)
+	void SetInfoValues(const VVDString &str)
 	{
 		m_info_values = str;
 	}
-	wxString &GetInfoValues()
+	VVDString &GetInfoValues()
 	{
 		return m_info_values;
 	}
-	wxString GetDelInfoValues(wxString del=",");
+	VVDString GetDelInfoValues(VVDString del=",");
 
 	//profile
-	void SetInfoProfile(wxString &str)
+	void SetInfoProfile(const VVDString &str)
 	{
 		m_info_profile = str;
 	}
-	wxString &GetInfoProfile()
+	VVDString &GetInfoProfile()
 	{
 		return m_info_profile;
 	}
@@ -1565,7 +1586,7 @@ public:
 	{
 		return &m_profile;
 	}
-	void SaveProfile(wxString &filename);
+	void SaveProfile(const VVDString &filename);
 
 	//color
 	void SetColor(Color& color)
@@ -1593,7 +1614,7 @@ private:
 	bool m_disp;
 	Transform *m_tform;
 	//a profile
-	wxString m_info_profile;
+	VVDString m_info_profile;
 	vector<ProfileBin> m_profile;
 	//color
 	bool m_use_color;
@@ -1603,15 +1624,18 @@ private:
 	bool m_time_dep;
 	int m_time;
 
-	wxString m_name_disp;//add by takashi
-	wxString m_desc;//add by takashi
+	VVDString m_name_disp;//add by takashi
+	VVDString m_desc;//add by takashi
 
 	//extra info
-	wxString m_info_names;
-	wxString m_info_values;
+	VVDString m_info_names;
+	VVDString m_info_values;
 
 	//added by takashi
 	vector<RulerBalloon> m_balloons;
+
+	//per point: name of the volume it was picked on (may be shorter than m_ruler)
+	vector<VVDString> m_point_vols;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1640,7 +1664,7 @@ public:
 		return m_track_map;
 	}
 
-	wxString GetPath() {return m_data_path;}
+	VVDString GetPath() {return m_data_path;}
 	void SetCurTime(int time);
 	int GetCurTime();
 	void SetPrvTime(int time);
@@ -1685,8 +1709,8 @@ public:
 	bool GetMappedRulers(FL::RulerList &rulers);
 
 	//i/o
-	bool Load(wxString &filename);
-	bool Save(wxString &filename);
+	bool Load(const VVDString &filename);
+	bool Save(const VVDString &filename);
 
 	//draw
 	unsigned int Draw(vector<float> &verts);
@@ -1702,7 +1726,7 @@ public:
 
 private:
 	static int m_num;
-	wxString m_data_path;
+	VVDString m_data_path;
 	//for selective drawing
 	int m_cur_time;
 	int m_prv_time;
@@ -1902,7 +1926,7 @@ public:
 
 private:
 	static int m_num;
-	//wxString m_name;
+	//VVDString m_name;
 	vector <VolumeData*> m_vd_list;
 	bool m_sync_volume_prop;
 	bool m_sync_volume_spc;
@@ -2036,6 +2060,94 @@ private:
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Parallel volume loading, split the way the wx multi-threaded project loader
+// (ProjectDataLoaderThread) splits it:
+//  * DataManager::PrefetchVolume (any thread): file lookup, reader creation,
+//    Preprocess and Convert of every requested channel - the file I/O and
+//    decompression. It touches no DataManager list and no GPU object.
+//  * DataManager::LoadVolumeData(..., VolumePrefetch*) (main thread): takes
+//    the prefetched reader and data and does everything the plain call does
+//    after the Convert (VolumeData::Load -> Texture/VolumeRenderer creation,
+//    masks, AddVolumeData, SetVolumeDefault, colours), so the result is the
+//    same as a sequential LoadVolumeData with the same arguments.
+// Readers that are not prefetched (bricked/URL/.idi data, missing files, a
+// reader for the file already in the DataManager) fall back to the normal path.
+struct VolumePrefetch
+{
+	// request (the LoadVolumeData arguments and DataManager reader settings)
+	VVDString filename;
+	int type = 0;
+	int ch_num = -1;
+	int t_num = -1;
+	bool slice_seq = false;
+	bool time_seq = false;
+	VVDString time_id;
+
+	// result
+	bool valid = false;            // reader and channels are usable
+	VVDString pathname;            // the file actually read
+	BaseReader* reader = nullptr;  // owned until LoadVolumeData takes it
+	VVDString error_msg;           // reader->GetErrorMsg() after Preprocess
+	int chan_num = 0;              // reader->GetChanNum() after Preprocess
+	struct Channel
+	{
+		int index = 0;
+		std::shared_ptr<VL_Nrrd> data;
+		// reader state right after this channel's Convert
+		std::wstring data_name;
+		bool valid_spc = false;
+		double xspc = 1.0, yspc = 1.0, zspc = 1.0;
+		double scalar_scale = 1.0;
+		double max_value = 0.0;
+		int cur_time = 0;
+	};
+	std::vector<Channel> channels;
+
+	VolumePrefetch() = default;
+	VolumePrefetch(const VolumePrefetch&) = delete;
+	VolumePrefetch& operator=(const VolumePrefetch&) = delete;
+	~VolumePrefetch() { delete reader; }
+};
+
+// MeasureDlg "Apply Transform" (wx VRenderVulkanView::WarpCurrentVolumeInternal,
+// Qt RulerTool::WarpCurrentVolume): fits the transform to the landmarks of
+// the ruler list (2-point ruler: point 0 = moving, point 1 = fixed; locator:
+// zero-displacement anchor) and resamples src with it on the GPU. ttype: 0
+// Thin Plate Spline (stiffness lambda), 1 affine, 2 similarity, 3 rigid,
+// 4 translation; interp: 0 nearest neighbor, 1 linear. Returns the new volume
+// (same size / spacing / bits as src, display properties and clipping planes
+// copied, name = src name + _WARPED/_AFFINE/_SIM/_RIGID/_TRANS) not yet added
+// to any DataManager or view, or nullptr; error then holds the message box
+// text (empty: silent failure). Shared by both GUIs so their results are
+// identical.
+//
+// target (Qt Measurement "Target:", BigWarp's output grid): null or src =
+// the result is on src's grid as above. Another volume: the result is on
+// the target's grid (its size, spacing and world placement; bit depth of
+// src), the same transform resampling src, so it overlaps the target in the
+// view. When every 2-point ruler starts on the target volume and ends on src
+// (WarpRulersReversed), the landmark roles are swapped (point 1 = moving,
+// point 0 = fixed): src is the volume the end points were placed on.
+EXPORT_API VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
+	int ttype, double lambda, int interp, VVDString* error = nullptr, VolumeData* target = nullptr);
+// true when target is another volume and every 2-point ruler (at least one)
+// records point 0 on target and point 1 on src (Ruler::GetPointVolName)
+EXPORT_API bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<Ruler*>& rulers);
+// grid's normalized box in src's normalized coords: src_f = grid_f * scale +
+// off per axis. False (error set) when the two boxes are not axis-aligned in
+// world space (rotated / flipped BigDataViewer transforms).
+EXPORT_API bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3],
+	VVDString* error = nullptr);
+// the empty result volume of a warp: src's bit depth on src's grid (target
+// null or src) or on target's (size, spacing, additional transform); null
+// with *error set when it would need more than half of the installed memory
+EXPORT_API VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error = nullptr);
+// The display properties WarpVolumeByRulers copies from src to its result
+// (clipping planes, gamma, boundary, offset, thresholds, colour, alpha,
+// shading, material, shadow, sample rate, output adjustments, scalar scale).
+// Also used by the cell warp (RigidCellsWarp.h).
+EXPORT_API void CopyWarpDisplayProperties(VolumeData* src, VolumeData* vd);
+
 class EXPORT_API DataManager
 {
 public:
@@ -2047,12 +2159,16 @@ public:
 	//set project path
 	//when data and project are moved, use project file's path
 	//if data's directory doesn't exist
-	void SetProjectPath(wxString path);
-	wxString SearchProjectPath(wxString &filename);
+	void SetProjectPath(VVDString path);
+	VVDString SearchProjectPath(const VVDString &filename);
 
-	bool DownloadToCurrentDir(wxString &filename);
+	bool DownloadToCurrentDir(VVDString &filename);
 	//load volume
-	int LoadVolumeData(wxString &filename, int type, int ch_num=-1, int t_num=-1, size_t datasize = 0, wxString prefix = wxT(""), wxString metadata = wxT(""));
+	//pre: optional result of PrefetchVolume for the same filename/type/ch_num/t_num
+	//(see VolumePrefetch); its reader and data are consumed when usable
+	int LoadVolumeData(const VVDString &filename, int type, int ch_num=-1, int t_num=-1, size_t datasize = 0, VVDString prefix = L"", VVDString metadata = L"", VolumePrefetch* pre = nullptr);
+	//thread-safe first half of LoadVolumeData (see VolumePrefetch); fills pre
+	void PrefetchVolume(VolumePrefetch &pre);
 	//set default
 	void SetVolumeDefault(VolumeData* vd);
 	//load volume options
@@ -2061,21 +2177,24 @@ public:
 	void SetCompression(bool compression) {m_compression = compression;}
 	bool GetCompression(){ return m_compression; }
 	void SetSkipBrick(bool skip) {m_skip_brick = skip;}
-	void SetTimeId(wxString str) {m_timeId = str;}
+	void SetTimeId(VVDString str) {m_timeId = str;}
+	bool GetSliceSequence() {return m_sliceSequence;}
+	bool GetTimeSequence() {return m_timeSequence;}
+	VVDString GetTimeId() {return m_timeId;}
 	void SetLoadMask(bool load_mask) {m_load_mask = load_mask;}
 	void AddVolumeData(VolumeData* vd);
-	void AddEmptyVolumeData(wxString name, int bits, int nx, int ny, int nz, double spcx, double spcy, double spcz);
+	void AddEmptyVolumeData(VVDString name, int bits, int nx, int ny, int nz, double spcx, double spcy, double spcz);
 	void AddMeshData(MeshData* md);
 	VolumeData* DuplicateVolumeData(VolumeData* vd, bool use_default_settings=false);
 	MeshData* DuplicateMeshData(MeshData* vd, bool use_default_settings=false);
 	void ReplaceVolumeData(int index, VolumeData *vd);
 	void RemoveVolumeData(int index);
-	void RemoveVolumeData(const wxString &name);
+	void RemoveVolumeData(const VVDString &name);
 	void RemoveVolumeDataset(BaseReader *reader, int channel);
 	int GetVolumeNum();
 	VolumeData* GetVolumeData(int index);
-	VolumeData* GetVolumeData(const wxString &name);
-	int GetVolumeIndex(wxString &name);
+	VolumeData* GetVolumeData(const VVDString &name);
+	int GetVolumeIndex(const VVDString &name);
 	VolumeData* GetLastVolumeData()
 	{
 		int num = m_vd_list.size();
@@ -2097,12 +2216,12 @@ public:
 	}
 
 	//load mesh
-    int LoadMeshData(wxString &filename, wxString prefix = wxT(""));
+    int LoadMeshData(const VVDString &filename, VVDString prefix = L"");
 	int LoadMeshData(GLMmodel* mesh);
 	int GetMeshNum();
 	MeshData* GetMeshData(int index);
-	MeshData* GetMeshData(wxString &name);
-	int GetMeshIndex(wxString &name);
+	MeshData* GetMeshData(const VVDString &name);
+	int GetMeshIndex(const VVDString &name);
 	MeshData* GetLastMeshData()
 	{
 		int num = m_md_list.size();
@@ -2112,17 +2231,17 @@ public:
 			return 0;
 	};
 	void RemoveMeshData(int index);
-	void RemoveMeshData(const wxString &name);
+	void RemoveMeshData(const VVDString &name);
 
 	//annotations
-	Annotations* LoadAnnotations(wxString &filename);
+	Annotations* LoadAnnotations(const VVDString &filename);
 	void AddAnnotations(Annotations* ann);
 	void RemoveAnnotations(int index);
-	void RemoveAnnotations(const wxString &name);
+	void RemoveAnnotations(const VVDString &name);
 	int GetAnnotationNum();
 	Annotations* GetAnnotations(int index);
-	Annotations* GetAnnotations(wxString &name);
-	int GetAnnotationIndex(wxString &name);
+	Annotations* GetAnnotations(const VVDString &name);
+	int GetAnnotationIndex(const VVDString &name);
 	Annotations* GetLastAnnotations()
 	{
 		int num = m_annotation_list.size();
@@ -2132,9 +2251,9 @@ public:
 			return 0;
 	}
 
-	bool CheckNames(const wxString &str);
-	bool CheckNames(const wxString &str, int type);
-	wxString CheckNewName(const wxString &name, int type);
+	bool CheckNames(const VVDString &str);
+	bool CheckNames(const VVDString &str, int type);
+	VVDString CheckNewName(const VVDString &name, int type);
 
 	//wavelength to color
 	void SetWavelengthColor(int c1, int c2, int c3, int c4);
@@ -2206,11 +2325,11 @@ private:
 	//skip brick
 	bool m_skip_brick;
 	//time sequence identifier
-	wxString m_timeId;
+	VVDString m_timeId;
 	//load volume mask
 	bool m_load_mask;
 	//project path
-	wxString m_prj_path;
+	VVDString m_prj_path;
 	//override voxel size
 	bool m_override_vox;
 	//flgs for pvxml flipping
@@ -2262,7 +2381,7 @@ struct VolumeDecompressorData
 
 class VolumeLoader;
 
-class EXPORT_API VolumeDecompressorThread : public wxThread
+class EXPORT_API VolumeDecompressorThread : public vvd::Thread
 {
 public:
 	VolumeDecompressorThread(VolumeLoader* vl);
@@ -2272,7 +2391,7 @@ protected:
 	VolumeLoader* m_vl;
 };
 
-class EXPORT_API VolumeLoaderThread : public wxThread
+class EXPORT_API VolumeLoaderThread : public vvd::Thread
 {
     public:
 		VolumeLoaderThread(VolumeLoader *vl);
@@ -2324,7 +2443,7 @@ class EXPORT_API VolumeLoader
 		static bool sort_data_asc(const VolumeLoaderData b1, const VolumeLoaderData b2)
 		{ return b2.brick->get_d() < b1.brick->get_d(); }
 
-		static void setCriticalSection(wxCriticalSection* crtsec) { ms_pThreadCS = crtsec; }
+		static void setCriticalSection(vvd::CriticalSection* crtsec) { ms_pThreadCS = crtsec; }
 
 	protected:
 		VolumeLoaderThread *m_thread;
@@ -2344,7 +2463,7 @@ class EXPORT_API VolumeLoader
 		long long m_memory_limit;
 		long long m_used_memory;
 
-		static wxCriticalSection* ms_pThreadCS;
+		static vvd::CriticalSection* ms_pThreadCS;
 
 		inline void AddLoadedBrick(const VolumeLoaderData &lbd)
 		{
@@ -2365,22 +2484,22 @@ class ProjectDataLoader;
 class ProjectDataLoaderQueue
 {
 public:
-    wxString path;
-    wxString name;
-    wxString metadata;
+    VVDString path;
+    VVDString name;
+    VVDString metadata;
     int ch;
     int t;
     bool compression;
     bool skip_brick;
     bool slice_seq;
     bool time_seq;
-    wxString time_id;
+    VVDString time_id;
     bool load_mask;
-    wxString mskpath;
-    wxString lblpath;
+    VVDString mskpath;
+    VVDString lblpath;
     int type;
     
-    ProjectDataLoaderQueue(const wxString &_path, int _ch, int _t, wxString _name=wxEmptyString , bool _compression=false, bool _skip_brick=false, bool _slice_seq=false, bool _time_seq=false, wxString _time_id=wxEmptyString, bool _load_mask=true, wxString _mskpath=wxEmptyString, wxString _lblpath=wxEmptyString, wxString _metadata=wxEmptyString)
+    ProjectDataLoaderQueue(const VVDString &_path, int _ch, int _t, VVDString _name=VVDString() , bool _compression=false, bool _skip_brick=false, bool _slice_seq=false, bool _time_seq=false, VVDString _time_id=VVDString(), bool _load_mask=true, VVDString _mskpath=VVDString(), VVDString _lblpath=VVDString(), VVDString _metadata=VVDString())
     {
         path = _path;
         name = _name;
@@ -2396,7 +2515,7 @@ public:
         lblpath = _lblpath;
         metadata = _metadata;
         
-        wxString suffix = path.Mid(path.Find('.', true)).MakeLower();
+        VVDString suffix = path.Mid(path.Find('.', true)).MakeLower();
         if (suffix == ".nrrd")
             type = LOAD_TYPE_NRRD;
         else if (suffix == ".tif"||suffix == ".tiff"||suffix == ".zip")
@@ -2445,7 +2564,7 @@ public:
     
 };
 
-class EXPORT_API ProjectDataLoaderThread : public wxThread
+class EXPORT_API ProjectDataLoaderThread : public vvd::Thread
 {
 public:
     ProjectDataLoaderThread(ProjectDataLoader *pdl);
@@ -2473,7 +2592,18 @@ public:
     void SetDataManager(DataManager *dm) { m_dm = dm; }
     bool IsRunning() { return m_running_th > 0; }
     
-    static void setCriticalSection(wxCriticalSection* crtsec) { ms_pThreadCS = crtsec; }
+    // Prefetch mode (set before Run): the threads only run
+    // DataManager::PrefetchVolume for each queue entry - no VolumeData is
+    // created and nothing is added to the DataManager. The caller takes the
+    // results by queue index (on the main thread, in any order) and finishes
+    // each load with DataManager::LoadVolumeData(..., prefetch), which keeps
+    // the volume order and all GPU work on the calling thread.
+    void SetPrefetchMode(bool prefetch) { m_prefetch_mode = prefetch; }
+    bool GetPrefetchMode() { return m_prefetch_mode; }
+    bool IsPrefetchReady(size_t index);
+    std::unique_ptr<VolumePrefetch> TakePrefetch(size_t index);
+    
+    static void setCriticalSection(vvd::CriticalSection* crtsec) { ms_pThreadCS = crtsec; }
     
 protected:
     vector<ProjectDataLoaderQueue> m_queues;
@@ -2483,8 +2613,12 @@ protected:
     int m_max_th;
     int m_queue_count;
     int m_progress;
+    bool m_prefetch_mode;
+    size_t m_next_index;
+    vector<std::unique_ptr<VolumePrefetch>> m_prefetched;
+    vector<char> m_prefetch_ready;
     
-    static wxCriticalSection* ms_pThreadCS;
+    static vvd::CriticalSection* ms_pThreadCS;
     
     friend class ProjectDataLoaderThread;
 };
@@ -2524,7 +2658,7 @@ public:
     
 };
 
-class EXPORT_API EmptyBlockDetectorThread : public wxThread
+class EXPORT_API EmptyBlockDetectorThread : public vvd::Thread
 {
 public:
     EmptyBlockDetectorThread(EmptyBlockDetector *vl);
@@ -2549,7 +2683,7 @@ public:
     int GetProgress() { return m_progress; }
     bool IsRunning() { return m_running_th > 0; }
     
-    static void setCriticalSection(wxCriticalSection* crtsec) { ms_pThreadCS = crtsec; }
+    static void setCriticalSection(vvd::CriticalSection* crtsec) { ms_pThreadCS = crtsec; }
     
 protected:
     vector<EmptyBlockDetectorQueue> m_queues;
@@ -2559,7 +2693,7 @@ protected:
     int m_queue_count;
     int m_progress;
     
-    static wxCriticalSection* ms_pThreadCS;
+    static vvd::CriticalSection* ms_pThreadCS;
     
     friend class EmptyBlockDetectorThread;
 };

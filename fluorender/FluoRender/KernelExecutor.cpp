@@ -26,8 +26,8 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 //#include "KernelExecutor.h"
-//#include <wx/wfstream.h>
-//#include <wx/txtstrm.h>
+
+
 //#include <boost/chrono.hpp>
 //
 //using namespace boost::chrono;
@@ -43,14 +43,14 @@ DEALINGS IN THE SOFTWARE.
 //{
 //}
 //
-//void KernelExecutor::SetCode(wxString &code)
+//void KernelExecutor::SetCode(VVDString &code)
 //{
 //	m_code = code;
 //}
 //
-//void KernelExecutor::LoadCode(wxString &filename)
+//void KernelExecutor::LoadCode(VVDString &filename)
 //{
-//	if (!wxFileExists(filename))
+//	if (!vvd::FileExists(filename))
 //	{
 //		m_message = "Kernel file " +
 //			filename + " doesn't exist.\n";
@@ -101,7 +101,7 @@ DEALINGS IN THE SOFTWARE.
 //	m_vd_r = 0;
 //}
 //
-//bool KernelExecutor::GetMessage(wxString &msg)
+//bool KernelExecutor::GetMessage(VVDString &msg)
 //{
 //	if (m_message == "")
 //		return false;
@@ -174,7 +174,7 @@ DEALINGS IN THE SOFTWARE.
 ////			res_x, res_y, res_z,
 ////			spc_x, spc_y, spc_z);
 ////		m_vd_r->SetSpcFromFile(true);
-////		wxString name = m_vd->GetName();
+////		VVDString name = m_vd->GetName();
 ////		m_vd_r->SetName(name + "_CL");
 ////		Texture* tex_r = m_vd_r->GetTexture();
 ////		if (!tex_r)
@@ -337,7 +337,7 @@ DEALINGS IN THE SOFTWARE.
 //	kernel->execute(3, global_size, local_size);
 //	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 //	duration<double> time_span = duration_cast<duration<double>>(t2 - t1);
-//	wxString stime = wxString::Format("%.4f", time_span.count());
+//	VVDString stime = VVDString::Format("%.4f", time_span.count());
 //	m_message += "OpenCL time on " +
 //		kernel->get_device_name() +
 //		": " + stime + " sec.\n";

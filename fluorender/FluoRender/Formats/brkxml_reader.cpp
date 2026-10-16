@@ -15,9 +15,7 @@
 #include <boost/lexical_cast.hpp>
 #include "boost/filesystem.hpp"
 
-#include <wx/url.h>
-#include <wx/file.h>
-#include <wx/stdpaths.h>
+#include "../Core/FileUtil.h"
 
 namespace fs = std::filesystem;
 
@@ -58,12 +56,8 @@ bool BRKXMLReader::DownloadFile(std::string& url)
     curl = curl_easy_init();
     if (curl)
     {
-        wxString pathname = url;
-#ifdef _WIN32
-        wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "\\" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#else
-        wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "/" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#endif
+        vvd::String pathname = url;
+        vvd::String tmpfname = vvd::JoinPath(vvd::GetTempDir(), pathname.AfterLast(L'/'));
         std::ofstream outputFile(tmpfname.ToStdString(), std::ios::binary);
         if (!outputFile.is_open())
         {
@@ -107,41 +101,15 @@ bool BRKXMLReader::DownloadFile(std::string& url)
     return false;
 }
 
-bool DownloadToCurrentDir(wxString& filename)
+bool DownloadToCurrentDir(vvd::String& filename)
 {
-    wxString pathname = filename;
-    wxURL url(pathname);
-    //if (!url.IsOk())
-    //    return false;
-    url.GetProtocol().SetTimeout(10);
-    wxString suffix = pathname.Mid(pathname.Find('.', true)).MakeLower();
-    if (url.GetError() != wxURL_NOERR)
+    vvd::String pathname = filename;
+    if (!vvd::IsURL(pathname))
         return false;
-    wxInputStream* in = url.GetInputStream();
-    if (!in || !in->IsOk()) return false;
-#define DOWNLOAD_BUFSIZE 8192
-    unsigned char buffer[DOWNLOAD_BUFSIZE];
-    size_t count = -1;
-    wxMemoryBuffer mem_buf;
-    while (!in->Eof() && count != 0)
-    {
-        in->Read(buffer, DOWNLOAD_BUFSIZE - 1);
-        count = in->LastRead();
-        if (count > 0) mem_buf.AppendData(buffer, count);
-    }
-
-#ifdef _WIN32
-    wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "\\" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#else
-    wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "/" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#endif
-
-    wxFile of(tmpfname, wxFile::write);
-    of.Write(mem_buf.GetData(), mem_buf.GetDataLen());
-    of.Close();
-
+    vvd::String tmpfname = vvd::JoinPath(vvd::GetTempDir(), pathname.AfterLast(L'/'));
+    if (!vvd::DownloadToFile(pathname, tmpfname))
+        return false;
     filename = tmpfname;
-
     return true;
 }
 

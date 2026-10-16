@@ -219,8 +219,12 @@ _nrrdCalloc(Nrrd *nrrd, NrrdIoState *nio, FILE *file) {
       biffAdd(NRRD, err); return 1;
     }
   }
-  /* make it look like it came from calloc(), as used by nrrdNew() */
-  memset(nrrd->data, 0, needDataSize);
+  /* make it look like it came from calloc(), as used by nrrdNew().
+     VVDViewer: not for gzip, whose reader either writes all needDataSize
+     bytes or fails (the zeroing was a full extra pass over the buffer) */
+  if (nrrdEncodingGzip != nio->encoding) {
+    memset(nrrd->data, 0, needDataSize);
+  }
   return 0;
 }
 

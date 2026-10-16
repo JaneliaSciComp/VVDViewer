@@ -27,6 +27,7 @@
 
 #include <string>
 #include <sstream>
+#include <cstdlib>
 #include <iostream>
 #include <regex>
 #include <FLIVR/VRayShader.h>
@@ -332,6 +333,46 @@ namespace FLIVR
 
 #define VRAY_LOOP_CONDITION_HIDE_OUTSIDE_MASK \
 	"maskval > 0.5 && "
+
+// Hide Inside (mask_hide_mode 2) for intensity data: the sample is the
+// trilinear interpolation of data * (1 - mask), i.e. exactly what the volume
+// the Erase button creates (Calculate(6)) shows. Skipping the samples whose
+// interpolated mask is > 0.5 (the old test, still used as a fallback when
+// the mask texture does not match the data brick) keeps the half-voxel
+// shells where the interpolated data are already above the threshold but the
+// interpolated mask is not above 0.5 yet: every surface inside the hidden
+// region showed up as a speckled translucent layer.
+#define VRAY_HIDE_INSIDE_FUNC \
+	"//VRAY_HIDE_INSIDE_FUNC\n" \
+	"float vray_hide_inside_value(vec3 tc)\n" \
+	"{\n" \
+	"	const vec3 mc = (tc * brk.brkscale.xyz + brk.brktrans.xyz - brk.mskbrktrans.xyz) / brk.mskbrkscale.xyz;\n" \
+	"	const ivec3 ds = textureSize(tex0, 0);\n" \
+	"	if (ds != textureSize(tex2, 0) || brk.brkscale.xyz != brk.mskbrkscale.xyz || brk.brktrans.xyz != brk.mskbrktrans.xyz)\n" \
+	"		return texture(tex2, mc).x > 0.5 ? 0.0 : texture(tex0, tc).x;\n" \
+	"	const vec3 p = tc * vec3(ds) - 0.5;\n" \
+	"	const vec3 p0 = floor(p);\n" \
+	"	const vec3 f = p - p0;\n" \
+	"	const ivec3 i0 = ivec3(p0);\n" \
+	"	const ivec3 hi = ds - 1;\n" \
+	"	float r = 0.0;\n" \
+	"	for (int k = 0; k < 2; k++)\n" \
+	"	for (int j = 0; j < 2; j++)\n" \
+	"	for (int i = 0; i < 2; i++)\n" \
+	"	{\n" \
+	"		const ivec3 c = clamp(i0 + ivec3(i, j, k), ivec3(0), hi);\n" \
+	"		const float w = (i == 1 ? f.x : 1.0 - f.x) * (j == 1 ? f.y : 1.0 - f.y) * (k == 1 ? f.z : 1.0 - f.z);\n" \
+	"		r += w * texelFetch(tex0, c, 0).x * (1.0 - texelFetch(tex2, c, 0).x);\n" \
+	"	}\n" \
+	"	return r;\n" \
+	"}\n" \
+	"\n"
+
+#define VRAY_DATA_HIDE_INSIDE \
+	"			//VRAY_DATA_HIDE_INSIDE\n" \
+	"			v.x = vray_hide_inside_value(t.stp);\n" \
+	"			orig = v.x;\n" \
+	"\n"
 
 #define VRAY_LOOP_CONDITION_END \
 	"!vol_clip_func(t) && t.x >= brk.tbmin.x && t.x <= brk.tbmax.x && t.y >= brk.tbmin.y && t.y <= brk.tbmax.y && t.z >= brk.tbmin.z && t.z <= brk.tbmax.z && outcol.w <= 0.99995)\n" \
@@ -1116,6 +1157,26 @@ VRayShader::VRayShader(
 		//functions
 		if (clip_)
 			z << VRAY_CLIP_FUNC;
+
+		//Hide Inside, intensity data: sample data * (1 - mask)
+		//VVD_HIDE_INSIDE_LEGACY=1: the old "interpolated mask > 0.5" test (A/B checks)
+		static const bool legacy_hide_inside = getenv("VVD_HIDE_INSIDE_LEGACY") != nullptr;
+		const bool exact_hide_inside = mask_hide_mode_ == 2 && channels_ == 1 &&
+			color_mode_ != 3 && color_mode_ != 255 && !legacy_hide_inside;
+		if (exact_hide_inside)
+			z << VRAY_HIDE_INSIDE_FUNC;
+		//gradients from the same data * (1 - mask) samples
+		auto grad = [exact_hide_inside](const char* code) {
+			string g(code);
+			if (exact_hide_inside)
+			{
+				const string from = "texture(tex0, p.stp)";
+				const string to = "vec4(vray_hide_inside_value(p.stp))";
+				for (size_t pos = g.find(from); pos != string::npos; pos = g.find(from, pos + to.size()))
+					g.replace(pos, from.size(), to);
+			}
+			return g;
+		};
 		
 		//the common head
 		if (persp_)
@@ -1175,7 +1236,7 @@ VRayShader::VRayShader(
 		else if (peel_ == 3 || peel_ == 4)//draw volume after 14 and before 15
 			z << VRAY_DP_Z1_FAR << VRAY_DP_Z2_NEAR;
 
-		if (mask_hide_mode_ > 0)
+		if (mask_hide_mode_ > 0 && !exact_hide_inside)
 			z << VRAY_MASK_VAL;
 
 		z << VRAY_LOOP_CONDITION_START;
@@ -1189,7 +1250,7 @@ VRayShader::VRayShader(
 
 		if (mask_hide_mode_ == 1)
 			z << VRAY_LOOP_CONDITION_HIDE_OUTSIDE_MASK;
-		else if (mask_hide_mode_ == 2)
+		else if (mask_hide_mode_ == 2 && !exact_hide_inside)
 			z << VRAY_LOOP_CONDITION_HIDE_INSIDE_MASK;
 
 		if (color_mode_ != 2)
@@ -1226,14 +1287,16 @@ VRayShader::VRayShader(
 		{
 			//no gradient volume, need to calculate in real-time
 			z << VRAY_DATA_VOLUME_LOOKUP;
+			if (exact_hide_inside)
+				z << VRAY_DATA_HIDE_INSIDE;
             
             if (label_seg)
                 z << VRAY_DATA_LABEL_SEG_IF;
 
 			if (hiqual_)
-				z << VRAY_GRAD_COMPUTE_HI;
+				z << grad(VRAY_GRAD_COMPUTE_HI);
 			else
-				z << VRAY_GRAD_COMPUTE_LO;
+				z << grad(VRAY_GRAD_COMPUTE_LO);
 
 			z << VRAY_BODY_SHADING;
 
@@ -1275,6 +1338,8 @@ VRayShader::VRayShader(
 		else // No shading
 		{
 			z << VRAY_DATA_VOLUME_LOOKUP;
+			if (exact_hide_inside)
+				z << VRAY_DATA_HIDE_INSIDE;
 
             if (label_seg)
                 z << VRAY_DATA_LABEL_SEG_IF;
@@ -1287,9 +1352,9 @@ VRayShader::VRayShader(
 				{
 					// Compute Gradient magnitude and use it.
 					if (hiqual_)
-						z << VRAY_GRAD_COMPUTE_HI;
+						z << grad(VRAY_GRAD_COMPUTE_HI);
 					else
-						z << VRAY_GRAD_COMPUTE_LO;
+						z << grad(VRAY_GRAD_COMPUTE_LO);
 
 					z << VRAY_COMPUTED_GM_LOOKUP;
 				}

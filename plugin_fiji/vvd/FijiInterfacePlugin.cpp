@@ -640,15 +640,7 @@ void SampleGuiPlugin1::OnTimer(wxTimerEvent& event)
 
 void SampleGuiPlugin1::LoadConfigFile()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/fiji_interface_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "fiji_interface_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "fiji_interface_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"fiji_interface_settings.dft");
 	if (wxFileExists(dft))
 	{
 		wxFileInputStream is(dft);
@@ -675,16 +667,7 @@ void SampleGuiPlugin1::SaveConfigFile()
 	fconfig.Write("launch_fiji", m_launch_fiji_startup);
 	fconfig.Write("send_mask", m_sendmask);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/fiji_interface_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "fiji_interface_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "fiji_interface_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"fiji_interface_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 }

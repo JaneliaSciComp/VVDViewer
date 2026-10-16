@@ -617,15 +617,7 @@ void wxDBListDialog::LoadList()
 	if (!m_list)
 		return;
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString listpath = expath + "/../Resources/NBLAST_database_list.txt";
-#else
-	wxString listpath = expath + GETSLASHS() + "NBLAST_database_list.txt";
-	if (!wxFileExists(listpath))
-		listpath = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_database_list.txt";
-#endif
+	wxString listpath = vvd::SettingsReadPath(L"NBLAST_database_list.txt");
 	if (wxFileExists(listpath))
 	{
 		m_list->DeleteAll();
@@ -657,16 +649,7 @@ void wxDBListDialog::SaveList()
 	if (!m_list)
 		return;
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString listpath = expath + "/../Resources/NBLAST_database_list.txt";
-#else
-	wxString listpath = expath + GETSLASHS() + "NBLAST_database_list.txt";
-	wxString listpath2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_database_list.txt";
-	if (!wxFileExists(listpath) && wxFileExists(listpath2))
-		listpath = listpath2;
-#endif
+	wxString listpath = vvd::SettingsWritePath(L"NBLAST_database_list.txt");
 
 	wxFileOutputStream os(listpath);
 	wxTextOutputStream tos(os);

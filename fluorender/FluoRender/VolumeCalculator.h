@@ -43,6 +43,8 @@ public:
 
 	void SetThreshold(double thresh)
 	{ m_threshold = thresh; }
+	double GetThreshold() const
+	{ return m_threshold; }
 
 	VolumeData* GetVolumeA();
 	VolumeData* GetVolumeB();

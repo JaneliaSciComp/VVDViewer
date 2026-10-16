@@ -3090,16 +3090,7 @@ void VPropView::OnSaveDefault(wxCommandEvent& event)
 	fconfig.Write("shadow_intensity", swi);
 	mgr->m_vol_swi = swi;
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_volume_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_volume_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_volume_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_volume_settings.dft");
 
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);

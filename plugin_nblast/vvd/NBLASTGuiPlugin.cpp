@@ -397,15 +397,7 @@ void NBLASTGuiPlugin::OnTimer(wxTimerEvent& event)
 
 void NBLASTGuiPlugin::LoadConfigFile()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/NBLAST_plugin_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "NBLAST_plugin_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_plugin_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"NBLAST_plugin_settings.dft");
 	if (wxFileExists(dft))
 	{
 		wxFileInputStream is(dft);
@@ -461,16 +453,7 @@ void NBLASTGuiPlugin::SaveConfigFile()
 	fconfig.Write("prefix_database", m_pfx_db);
 	fconfig.Write("scoring_method", m_scmtd);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/NBLAST_plugin_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "NBLAST_plugin_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "NBLAST_plugin_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"NBLAST_plugin_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 }

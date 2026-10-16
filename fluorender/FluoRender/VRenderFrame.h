@@ -545,7 +545,7 @@ private:
 
 	wxApp* m_app; 
 
-	static wxCriticalSection ms_criticalSection;
+	static vvd::CriticalSection ms_criticalSection;
     
     ProjectDataLoader m_project_data_loader;
     
