@@ -141,15 +141,26 @@ jobs:
           New-Item -ItemType Directory -Force $env:VCPKG_ARCHIVES | Out-Null
           "VCPKG_BINARY_SOURCES=clear;files,$($env:VCPKG_ARCHIVES),readwrite" >> $env:GITHUB_ENV
 
+      # Cache entries are immutable, so every run that builds new packages saves
+      # a new entry (key ends in the run id) and the next run restores the most
+      # recent one through the restore-keys prefixes.
       - name: Restore the vcpkg binary cache
         id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.VCPKG_ARCHIVES }}
-          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-
             vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
             vcpkg-${{ matrix.triplet }}-
+
+      - name: Count the cached vcpkg packages
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem $env:VCPKG_ARCHIVES -Recurse -File -Filter *.zip -ErrorAction SilentlyContinue).Count
+          "VCPKG_ARCHIVES_RESTORED=$n" >> $env:GITHUB_ENV
+          Write-Host "$n cached vcpkg packages restored"
 
       # ---- per-OS prerequisites --------------------------------------------
       - name: Install the Vulkan SDK (Windows)
@@ -281,8 +292,17 @@ jobs:
           [ -n "${VVD_MAC_KEYCHAIN:-}" ] && args+=(--keychain "$VVD_MAC_KEYCHAIN")
           bash package.sh "${args[@]}"
 
+      - name: Check for newly built vcpkg packages
+        id: newpkgs
+        if: always() && matrix.license == 'lgpl'
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem $env:VCPKG_ARCHIVES -Recurse -File -Filter *.zip -ErrorAction SilentlyContinue).Count
+          Write-Host "$n vcpkg packages now in the cache ($env:VCPKG_ARCHIVES_RESTORED restored)"
+          "changed=$(($n -ne [int]$env:VCPKG_ARCHIVES_RESTORED).ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
       - name: Save the vcpkg binary cache
-        if: always() && matrix.license == 'lgpl' && steps.cache.outputs.cache-hit != 'true'
+        if: always() && matrix.license == 'lgpl' && steps.newpkgs.outputs.changed == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.VCPKG_ARCHIVES }}
