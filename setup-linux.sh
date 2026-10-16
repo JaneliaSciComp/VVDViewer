@@ -14,9 +14,11 @@
 # Run as your NORMAL user (it calls sudo itself only for apt, so the Vulkan SDK
 # and ~/.bashrc land in YOUR home — do NOT run the whole script with sudo).
 #
-# Usage: bash setup-linux.sh [--sdk-dir DIR] [--skip-apt] [--skip-vulkan]
+# Usage: bash setup-linux.sh [--sdk-dir DIR] [--sdk-version VER] [--skip-apt] [--skip-vulkan]
 #
-#   --sdk-dir DIR   Where to install the Vulkan SDK (default: $HOME/vulkan)
+#   --sdk-dir DIR      Where to install the Vulkan SDK (default: $HOME/vulkan)
+#   --sdk-version VER  Install this Vulkan SDK version (e.g. 1.4.350.1) instead
+#                      of the latest one (CI pins the version this way)
 #   --skip-apt      Do not install apt packages
 #   --skip-vulkan   Do not install the Vulkan SDK
 #
@@ -28,7 +30,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="${HOME}/vulkan"
 DO_APT=1
 DO_VULKAN=1
-SDK_URL="https://sdk.lunarg.com/sdk/download/latest/linux/vulkan_sdk.tar.xz"
+SDK_VERSION="latest"
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*" >&2; }
@@ -37,6 +39,7 @@ fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --sdk-dir)     shift; SDK_DIR="${1:?--sdk-dir needs a path}" ;;
+    --sdk-version) shift; SDK_VERSION="${1:?--sdk-version needs a version}" ;;
     --skip-apt)    DO_APT=0 ;;
     --skip-vulkan) DO_VULKAN=0 ;;
     -h|--help)     grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -67,7 +70,7 @@ if [ "$DO_APT" = "1" ]; then
   command -v apt-get >/dev/null 2>&1 || fail \
 "This script targets Debian/Ubuntu (apt). On Fedora install the equivalents:
   sudo dnf install gcc gcc-c++ make cmake ninja-build git curl zip unzip tar xz \\
-    pkgconf-pkg-config nasm yasm autoconf automake libtool bison flex gperf perl \\
+    pkgconf-pkg-config nasm yasm autoconf automake libtool libtool-ltdl-devel bison flex gperf perl \\
     python3-pip \\
     gtk3-devel mesa-libGL-devel mesa-libGLU-devel libX11-devel libxcb-devel \\
     libXext-devel libXrender-devel libXrandr-devel libXi-devel libXfixes-devel \\
@@ -81,8 +84,8 @@ then install the Vulkan SDK from https://vulkan.lunarg.com/ and re-run with --sk
   log "Installing toolchain + vcpkg build deps + display libraries (sudo)..."
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential cmake ninja-build git curl ca-certificates \
-    zip unzip tar xz-utils pkg-config \
-    nasm yasm autoconf automake libtool libtool-bin autoconf-archive \
+    zip unzip tar xz-utils patch pkg-config \
+    nasm yasm autoconf automake libtool libtool-bin libltdl-dev autoconf-archive \
     bison flex gperf python3 python3-venv python3-pip perl \
     libgtk-3-dev \
     libgl1-mesa-dev libglu1-mesa-dev \
@@ -98,11 +101,16 @@ fi
 # 2) Vulkan SDK (LunarG tarball) -----------------------------------------------
 setup_env=""
 if [ "$DO_VULKAN" = "1" ]; then
-  existing="$(ls -d "${SDK_DIR}"/*/setup-env.sh 2>/dev/null | sort | tail -1 || true)"
+  SDK_URL="https://sdk.lunarg.com/sdk/download/${SDK_VERSION}/linux/vulkan_sdk.tar.xz"
+  if [ "$SDK_VERSION" = "latest" ]; then
+    existing="$(ls -d "${SDK_DIR}"/*/setup-env.sh 2>/dev/null | sort | tail -1 || true)"
+  else
+    existing="$(ls -d "${SDK_DIR}/${SDK_VERSION}/setup-env.sh" 2>/dev/null || true)"
+  fi
   if [ -n "$existing" ]; then
     log "Vulkan SDK already present: $(dirname "$existing")"
   else
-    log "Downloading Vulkan SDK (LunarG, ~320 MB)..."
+    log "Downloading Vulkan SDK ${SDK_VERSION} (LunarG, ~320 MB)..."
     mkdir -p "$SDK_DIR"
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
@@ -112,7 +120,11 @@ if [ "$DO_VULKAN" = "1" ]; then
     rm -rf "$tmp"; trap - EXIT
   fi
 
-  setup_env="$(ls -d "${SDK_DIR}"/*/setup-env.sh 2>/dev/null | sort | tail -1 || true)"
+  if [ "$SDK_VERSION" = "latest" ]; then
+    setup_env="$(ls -d "${SDK_DIR}"/*/setup-env.sh 2>/dev/null | sort | tail -1 || true)"
+  else
+    setup_env="$(ls -d "${SDK_DIR}/${SDK_VERSION}/setup-env.sh" 2>/dev/null || true)"
+  fi
   [ -n "$setup_env" ] || fail "Could not find setup-env.sh under ${SDK_DIR}; unexpected SDK layout."
 
   # Activate for this process (so we can verify). setup-env.sh may reference

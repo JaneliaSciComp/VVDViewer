@@ -5,7 +5,13 @@
 .DESCRIPTION
     Downloads and builds every third-party dependency (EXCEPT the Vulkan SDK)
     from source via vcpkg, then configures and builds VVDViewer with CMake.
-    All dependencies are linked statically except wxWidgets, which is a DLL.
+    All dependencies are linked statically except wxWidgets, ffmpeg and libCZI,
+    which are DLLs.
+
+    By default ffmpeg is built WITHOUT the GPL x264/x265 encoders, so the
+    resulting binaries can be redistributed under the LGPL (movie export uses
+    MPEG-4 Part 2). Use -EnableGPL for H.264 movie export; binaries built that
+    way are covered by the GPL.
 
     The Vulkan SDK is NOT managed here: install it separately from
     https://vulkan.lunarg.com/ so that the VULKAN_SDK environment variable is set.
@@ -22,19 +28,31 @@
 
 .PARAMETER Triplet
     vcpkg triplet. Defaults to the bundled x64-windows-vvd (static libs, dynamic
-    CRT, wxWidgets dynamic).
+    CRT, wxWidgets/ffmpeg/libCZI dynamic). x64-windows-vvd-release builds only
+    the release configuration of the dependencies (Release builds only; used by CI).
 
 .PARAMETER Clean
     Delete the build directory before configuring.
 
 .PARAMETER EnableND2
     Enable the Nikon ND2 reader. Requires the proprietary Nd2ReadSdk; you must
-    pass -DND2_INCLUDE_DIR / -DND2_LIBRARY_DIR via CMake yourself. Off by default.
+    pass -DND2_INCLUDE_DIR / -DND2_LIBRARY_DIR via -ExtraCMakeArgs. Off by default.
+    Cannot be combined with -EnableGPL (the proprietary SDK is GPL-incompatible).
+
+.PARAMETER EnableGPL
+    Build ffmpeg with the GPL x264/x265 encoders (vcpkg manifest feature "gpl").
+    Off by default (LGPL build).
+
+.PARAMETER ExtraCMakeArgs
+    Extra arguments passed to the CMake configure step, e.g.
+    -ExtraCMakeArgs '-DVCPKG_INSTALL_OPTIONS=--clean-buildtrees-after-build'
 
 .EXAMPLE
     .\build.ps1
 .EXAMPLE
     .\build.ps1 -Config Debug -Clean
+.EXAMPLE
+    .\build.ps1 -EnableGPL
 #>
 [CmdletBinding()]
 param(
@@ -44,7 +62,9 @@ param(
     [string]$BuildDir = $(Join-Path $PSScriptRoot 'build'),
     [string]$Triplet = 'x64-windows-vvd',
     [switch]$Clean,
-    [switch]$EnableND2
+    [switch]$EnableND2,
+    [switch]$EnableGPL,
+    [string[]]$ExtraCMakeArgs = @()
 )
 
 # NOTE: keep this 'Continue', not 'Stop'. Native tools (git, cmake) write
@@ -58,6 +78,13 @@ function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 function Info($msg) { Write-Host $msg -ForegroundColor Cyan }
 
 Info "=== VVDViewer auto-build (Windows) ==="
+
+if ($EnableND2 -and $EnableGPL) {
+    Fail "-EnableND2 and -EnableGPL cannot be combined: the proprietary Nikon ND2 SDK cannot be distributed together with GPL code."
+}
+if ($Config -eq 'Debug' -and $Triplet -like '*-release') {
+    Fail "Triplet $Triplet builds release-only dependencies; it cannot be used for a Debug build."
+}
 
 # 1) Prerequisites ----------------------------------------------------------
 if (-not $env:VULKAN_SDK) {
@@ -146,9 +173,13 @@ $cmakeArgs = @(
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
     "-DVCPKG_TARGET_TRIPLET=$Triplet",
     "-DVCPKG_OVERLAY_TRIPLETS=$(Join-Path $repo 'triplets')",
-    "-DCMAKE_BUILD_TYPE=$Config"
+    "-DCMAKE_BUILD_TYPE=$Config",
+    # Always pass the feature list explicitly (empty = LGPL) so that switching
+    # an existing build directory between LGPL and GPL takes effect.
+    "-DVCPKG_MANIFEST_FEATURES=$(if ($EnableGPL) { 'gpl' } else { '' })"
 )
 if ($EnableND2) { $cmakeArgs += '-DENABLE_ND2=ON' }
+$cmakeArgs += $ExtraCMakeArgs
 
 Write-Host "Configuring... first run downloads & builds ALL dependencies from source (can take 30-90 min)." -ForegroundColor Yellow
 & cmake @cmakeArgs
@@ -170,3 +201,5 @@ if (Test-Path $exe) {
 }
 $nd2 = if ($EnableND2) { 'ENABLED' } else { 'disabled (default)' }
 Write-Host "ND2 (Nikon) reader: $nd2.  libCZI: enabled (via vcpkg).  Vulkan SDK: external ($env:VULKAN_SDK)."
+$lic = if ($EnableGPL) { 'GPL (x264/x265 enabled; movie export H.264)' } else { 'LGPL (default; movie export MPEG-4 Part 2)' }
+Write-Host "ffmpeg: $lic."

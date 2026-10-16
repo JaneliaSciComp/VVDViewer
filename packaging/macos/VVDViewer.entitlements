@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for VVDViewer.app (used by package.sh when
+  signing with a Developer ID; required for notarization).
+
+  VVDViewer needs no runtime exceptions: every dylib it loads (wxWidgets,
+  ffmpeg, libCZI, the Vulkan loader, MoltenVK and the plugins in
+  PlugIns/gui) is bundled and signed with the same identity, so library
+  validation passes. Add exceptions here only when a feature needs them, e.g.
+    com.apple.security.cs.disable-library-validation  load plugins signed by
+                                                       another team
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
