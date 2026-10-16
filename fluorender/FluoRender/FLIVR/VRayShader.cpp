@@ -284,7 +284,7 @@ namespace FLIVR
 
 #define VRAY_HEAD_HIGHLIGHT \
     "    //VRAY_HEAD_HIGHLIGHT\n" \
-    "    bool highlight = false;\n" \
+    "    bool hl_hit = false;\n" \
     "    float maxplusmin = max(max(base.loc6.r, base.loc6.g), base.loc6.b) + min(min(base.loc6.r, base.loc6.g), base.loc6.b);\n" \
     "    vec4 hcol = vec4(maxplusmin - base.loc6.r, maxplusmin - base.loc6.g, maxplusmin - base.loc6.b, 0.2);\n" \
     "\n"
@@ -383,7 +383,7 @@ namespace FLIVR
 
 #define VRAY_HIGHLIGHT_THRESHOLD \
     "           //VRAY_HIGHLIGHT_THRESHOLD\n" \
-    "           highlight = texture(tex0, t.stp).r >= base.loc7.w || highlight ? true : false;\n" \
+    "           hl_hit = texture(tex0, t.stp).r >= base.loc7.w || hl_hit ? true : false;\n" \
     "\n"
 
 #define VRAY_INDEX_COLOR_BODY \
@@ -489,9 +489,18 @@ namespace FLIVR
 #define VRAY_INDEX_COLOR_D_BODY \
 	"			//VRAY_INDEX_COLOR_D_BODY\n" \
 	"			vec4 v;\n" \
-	"			uint label = uint(texture(tex0, t.stp).x*base.loc5.w+0.5); //get mask value\n" \
-	"			vec4 c = texture(tex7, vec2((float(label%256)+0.5)/256.0, (float(label/256)+0.5)/256.0));\n" \
+	"			uint idx = uint(texture(tex0, t.stp).x*base.loc5.w+0.5); //get mask value\n" \
+	"			vec4 c = texture(tex7, vec2((float(idx%256)+0.5)/256.0, (float(idx/256)+0.5)/256.0));\n" \
 	"			c.rgb = c.rgb*base.loc6.z;\n" \
+	"\n"
+
+//the index-color bodies output the palette color directly, so there is no
+//transfer-function opacity; fog and label+mask blending still read it as
+//(alpha, tf_alp): the palette color is fully transferred and its opacity is c.w
+#define VRAY_INDEX_COLOR_ALPHA \
+	"			//VRAY_INDEX_COLOR_ALPHA\n" \
+	"			float tf_alp = 1.0;\n" \
+	"			float alpha = c.w;\n" \
 	"\n"
 
 #define VRAY_DATA_VOLUME_LOOKUP \
@@ -960,7 +969,7 @@ namespace FLIVR
     "\n"
 
 #define VRAY_HIGHLIGHT_ADD \
-    "    outcol.rgb = highlight ? clamp(outcol.rgb + hcol.rgb*hcol.w, 0.0, 1.0) : outcol.rgb;\n" \
+    "    outcol.rgb = hl_hit ? clamp(outcol.rgb + hcol.rgb*hcol.w, 0.0, 1.0) : outcol.rgb;\n" \
     "\n"
 
 #define VRAY_ASSIGN_COLOR_LABEL_SEG \
@@ -1114,7 +1123,8 @@ VRayShader::VRayShader(
 				z << VRAY_UNIFORMS_INDEX_COLOR;
 			break;
         case 255://index color (depth mode)
-            z << VRAY_UNIFORMS_INDEX_COLOR_D;
+            if (!na_mode_)
+                z << VRAY_UNIFORMS_INDEX_COLOR_D;
             break;
                 
 		}
@@ -1136,7 +1146,8 @@ VRayShader::VRayShader(
 			break;
 		case 4:
 			z << VRAY_UNIFORMS_MASK;
-			z << VRAY_UNIFORMS_LABEL;
+			if (!na_mode_)
+				z << VRAY_UNIFORMS_LABEL;
 			break;
 		}
 
@@ -1251,16 +1262,26 @@ VRayShader::VRayShader(
             z << VRAY_HIGHLIGHT_THRESHOLD;
         
 		//bodies
+		//the NA label-segment filter (VRAY_DATA_LABEL_SEG_IF/ENDIF) wraps only the
+		//transfer-function bodies below; the index-color bodies never open it, so
+		//the closing ENDIF has to be emitted under exactly the same condition
+		bool label_seg = na_mode_ && color_mode_ != 3 && color_mode_ != 255;
 		if (color_mode_ == 3)
 		{
 			if (shading_)
 				z << VRAY_INDEX_COLOR_BODY_SHADE;
 			else
 				z << VRAY_INDEX_COLOR_BODY;
+			//fog and label+mask blending read (alpha, tf_alp), which the
+			//index-color bodies do not produce
+			if (fog_ || mask_ == 4)
+				z << VRAY_INDEX_COLOR_ALPHA;
 		}
         else if (color_mode_ == 255)
         {
             z << VRAY_INDEX_COLOR_D_BODY;
+            if (fog_ || mask_ == 4)
+                z << VRAY_INDEX_COLOR_ALPHA;
         }
 		else if (shading_)
 		{
@@ -1269,7 +1290,7 @@ VRayShader::VRayShader(
 			if (exact_hide_inside)
 				z << VRAY_DATA_HIDE_INSIDE;
             
-            if (na_mode_)
+            if (label_seg)
                 z << VRAY_DATA_LABEL_SEG_IF;
 
 			if (hiqual_)
@@ -1320,7 +1341,7 @@ VRayShader::VRayShader(
 			if (exact_hide_inside)
 				z << VRAY_DATA_HIDE_INSIDE;
 
-            if (na_mode_)
+            if (label_seg)
                 z << VRAY_DATA_LABEL_SEG_IF;
 
 			if (channels_ == 1)
@@ -1445,7 +1466,7 @@ VRayShader::VRayShader(
 		else
 			z << VRAY_BLEND_OVER;
         
-        if (na_mode_)
+        if (label_seg)
             z << VRAY_DATA_LABEL_SEG_ENDIF;
 
 		//early ray termination: valid only for OVER blending (not MIP, not depth map)

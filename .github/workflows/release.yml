@@ -1,0 +1,408 @@
+# Builds the VVDViewer release packages on GitHub-hosted runners:
+#   Windows (.zip), Ubuntu 24.04 (.tar.xz), macOS arm64 (.dmg)
+# with build.ps1/build.sh + package.ps1/package.sh, attaches GitHub build
+# provenance attestations and, for a tag push, creates a DRAFT release that a
+# maintainer reviews and publishes by hand.
+#
+# Triggers
+#   * push of a version tag such as 1.7.5  -> LGPL packages + draft release
+#   * manual run (Actions tab > Release packages > Run workflow)
+#       ffmpeg_license  lgpl (default) | gpl | both
+#       macos_intel     also build the macOS Intel package
+#       create_release  create/update a draft release for "tag"
+#
+# Dependency builds are cached with the vcpkg "files" binary cache in
+# actions/cache. The first run builds every dependency from source and can
+# take several hours; the cache is saved even when a later step fails, so a
+# re-run continues where it stopped.
+#
+# Optional code signing (packages are unsigned when these are not configured):
+#   Windows, Azure Artifact Signing (OIDC, no stored secret):
+#     vars    AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#             ARTIFACT_SIGNING_ENDPOINT (e.g. https://eus.codesigning.azure.net),
+#             ARTIFACT_SIGNING_ACCOUNT, ARTIFACT_SIGNING_PROFILE
+#   Windows, PFX file:
+#     secrets WINDOWS_PFX_BASE64, WINDOWS_PFX_PASSWORD
+#   macOS, Developer ID + notarization:
+#     secrets MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY,
+#             NOTARY_API_KEY_P8_BASE64, NOTARY_API_KEY_ID, NOTARY_API_ISSUER
+name: Release packages
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      ffmpeg_license:
+        description: 'ffmpeg license mode of the packages'
+        type: choice
+        options: [lgpl, gpl, both]
+        default: lgpl
+      macos_intel:
+        description: 'Also build the macOS Intel (x86_64) package'
+        type: boolean
+        default: false
+      create_release:
+        description: 'Create or update a draft GitHub release for the tag below'
+        type: boolean
+        default: false
+      tag:
+        description: 'Release tag (with create_release), e.g. 1.7.5'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Keep in step with the vcpkg checkout used for local builds.
+  VCPKG_COMMIT: 9849e070ad4c3383890fb1c80ae0c54325e2484a
+  VULKAN_SDK_VERSION_WINDOWS: 1.4.350.0
+  VULKAN_SDK_VERSION_LINUX: 1.4.350.1
+  VULKAN_SDK_VERSION_MACOS: 1.4.350.1
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      include: ${{ steps.plan.outputs.include }}
+      stamp: ${{ steps.plan.outputs.stamp }}
+    steps:
+      - id: plan
+        shell: bash
+        env:
+          LICENSE_INPUT: ${{ inputs.ffmpeg_license }}
+          MACOS_INTEL: ${{ inputs.macos_intel }}
+        run: |
+          case "${LICENSE_INPUT:-lgpl}" in
+            both) licenses="lgpl gpl" ;;
+            gpl)  licenses="gpl" ;;
+            *)    licenses="lgpl" ;;
+          esac
+          targets='windows-2025|x64-windows-vvd-release|win64
+          ubuntu-24.04|x64-linux-vvd-release|ubuntu24.04
+          macos-15|arm64-osx-vvd-release|macosx'
+          if [ "$MACOS_INTEL" = "true" ]; then
+            targets="$targets
+          macos-15-intel|x64-osx-vvd-release|macosx-intel"
+          fi
+          items=""
+          for lic in $licenses; do
+            while IFS='|' read -r os triplet id; do
+              os="$(echo "$os" | tr -d ' ')"
+              items="$items{\"os\":\"$os\",\"triplet\":\"$triplet\",\"id\":\"$id-$lic\",\"license\":\"$lic\"},"
+            done <<< "$targets"
+          done
+          echo "include=[${items%,}]" >> "$GITHUB_OUTPUT"
+          # One date stamp for every package of this run (old releases use MMDDYY).
+          echo "stamp=$(date -u +%m%d%y)" >> "$GITHUB_OUTPUT"
+          echo "matrix: [${items%,}]"
+
+  build:
+    name: ${{ matrix.id }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 355
+    permissions:
+      contents: read
+      id-token: write       # build provenance attestation; Azure OIDC signing
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.include) }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_ARCHIVES: ${{ github.workspace }}/vcpkg-archives
+      STAMP: ${{ needs.plan.outputs.stamp }}
+    steps:
+      - name: Check out VVDViewer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check out vcpkg (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_COMMIT }}
+          path: vcpkg
+
+      - name: Configure the vcpkg binary cache
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_ARCHIVES | Out-Null
+          "VCPKG_BINARY_SOURCES=clear;files,$($env:VCPKG_ARCHIVES),readwrite" >> $env:GITHUB_ENV
+
+      # Cache entries are immutable, so every run that builds new packages saves
+      # a new entry (key ends in the run id) and the next run restores the most
+      # recent one through the restore-keys prefixes.
+      - name: Restore the vcpkg binary cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_ARCHIVES }}
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-
+            vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ matrix.triplet }}-
+
+      - name: Count the cached vcpkg packages
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem $env:VCPKG_ARCHIVES -Recurse -File -Filter *.zip -ErrorAction SilentlyContinue).Count
+          "VCPKG_ARCHIVES_RESTORED=$n" >> $env:GITHUB_ENV
+          Write-Host "$n cached vcpkg packages restored"
+
+      # ---- per-OS prerequisites --------------------------------------------
+      - name: Install the Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/ci/install-vulkan-sdk.ps1 -Version $env:VULKAN_SDK_VERSION_WINDOWS
+
+      - name: Free disk space and install prerequisites (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          bash setup-linux.sh --sdk-version "$VULKAN_SDK_VERSION_LINUX" --sdk-dir "$HOME/vulkan"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y patchelf xvfb xauth mesa-vulkan-drivers librsvg2-common
+          echo "VULKAN_SDK=$HOME/vulkan/$VULKAN_SDK_VERSION_LINUX/x86_64" >> "$GITHUB_ENV"
+          df -h /
+
+      - name: Install prerequisites (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install autoconf autoconf-archive automake libtool pkgconf nasm || true
+          bash packaging/ci/install-vulkan-sdk-macos.sh "$VULKAN_SDK_VERSION_MACOS"
+
+      # ---- optional signing material ---------------------------------------
+      - name: Azure login for Artifact Signing (Windows)
+        if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_ACCOUNT != ''
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prepare Windows signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if ($env:SIGNING_ACCOUNT) {
+            # The Artifact Signing dlib authenticates through the Azure CLI
+            # session created by azure/login (DefaultAzureCredential).
+            $dir = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+            nuget install Microsoft.ArtifactSigning.Client -OutputDirectory $dir -NonInteractive | Out-Host
+            $dlib = Get-ChildItem $dir -Recurse -Filter Azure.CodeSigning.Dlib.dll | Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+            if (-not $dlib) { throw 'Azure.CodeSigning.Dlib.dll (x64) not found in the Artifact Signing client package' }
+            $meta = Join-Path $env:RUNNER_TEMP 'artifact-signing.json'
+            @{ Endpoint = $env:SIGNING_ENDPOINT; CodeSigningAccountName = $env:SIGNING_ACCOUNT; CertificateProfileName = $env:SIGNING_PROFILE } |
+              ConvertTo-Json | Set-Content -Encoding utf8 $meta
+            "VVD_SIGN_ARTIFACT_DLIB=$($dlib.FullName)" >> $env:GITHUB_ENV
+            "VVD_SIGN_ARTIFACT_METADATA=$meta" >> $env:GITHUB_ENV
+            Write-Host 'Windows signing: Azure Artifact Signing'
+          } elseif ($env:PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+            "VVD_SIGN_PFX_PATH=$pfx" >> $env:GITHUB_ENV
+            "VVD_SIGN_PFX_PASSWORD=$env:PFX_PASSWORD" >> $env:GITHUB_ENV
+            Write-Host 'Windows signing: PFX'
+          } else {
+            Write-Host 'Windows signing: not configured (unsigned package)'
+          }
+
+      - name: Prepare macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_P8_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+        run: |
+          if [ -z "$CERT_P12_BASE64" ]; then
+            echo "macOS signing: not configured (ad-hoc signature)"; exit 0
+          fi
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpass="$(uuidgen)"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc" >/dev/null
+          # keep the existing keychains in the search list (word splitting intended)
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          {
+            echo "VVD_MAC_SIGN_IDENTITY=$SIGN_IDENTITY"
+            echo "VVD_MAC_KEYCHAIN=$kc"
+          } >> "$GITHUB_ENV"
+          if [ -n "$NOTARY_P8_BASE64" ]; then
+            echo "$NOTARY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            {
+              echo "VVD_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
+              echo "VVD_NOTARY_KEY_ID=$NOTARY_KEY_ID"
+              echo "VVD_NOTARY_ISSUER=$NOTARY_ISSUER"
+            } >> "$GITHUB_ENV"
+          fi
+          echo "macOS signing: Developer ID ($SIGN_IDENTITY)"
+
+      # ---- build + package ---------------------------------------------------
+      - name: Build and package (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 300
+        shell: pwsh
+        run: |
+          $pkgArgs = @{
+            Build = $true; Triplet = '${{ matrix.triplet }}'; Stamp = $env:STAMP
+            ExtraCMakeArgs = @('-DVCPKG_INSTALL_OPTIONS=--clean-buildtrees-after-build;--clean-packages-after-build')
+          }
+          if ('${{ matrix.license }}' -eq 'gpl') { $pkgArgs.EnableGPL = $true }
+          ./package.ps1 @pkgArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and package (Linux / macOS)
+        if: runner.os != 'Windows'
+        timeout-minutes: 300
+        shell: bash
+        run: |
+          args=(--build --triplet "${{ matrix.triplet }}" --stamp "$STAMP"
+                --cmake-arg "-DVCPKG_INSTALL_OPTIONS=--clean-buildtrees-after-build;--clean-packages-after-build")
+          [ "${{ matrix.license }}" = gpl ] && args+=(--enable-gpl)
+          [ -n "${VVD_MAC_KEYCHAIN:-}" ] && args+=(--keychain "$VVD_MAC_KEYCHAIN")
+          bash package.sh "${args[@]}"
+
+      - name: Check for newly built vcpkg packages
+        id: newpkgs
+        if: always() && matrix.license == 'lgpl'
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem $env:VCPKG_ARCHIVES -Recurse -File -Filter *.zip -ErrorAction SilentlyContinue).Count
+          Write-Host "$n vcpkg packages now in the cache ($env:VCPKG_ARCHIVES_RESTORED restored)"
+          "changed=$(($n -ne [int]$env:VCPKG_ARCHIVES_RESTORED).ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: Save the vcpkg binary cache
+        if: always() && matrix.license == 'lgpl' && steps.newpkgs.outputs.changed == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_ARCHIVES }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Upload vcpkg logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-${{ matrix.id }}
+          path: |
+            vcpkg/buildtrees/*/*.log
+            build/vcpkg-manifest-install.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ---- smoke test (Linux, software Vulkan under Xvfb) ---------------------
+      - name: Smoke test the Linux package
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          pkg=""
+          for f in dist/*.tar.xz; do case "$f" in *-sources.tar.xz) ;; *) pkg="$f" ;; esac; done
+          mkdir -p "$RUNNER_TEMP/smoke" && tar -C "$RUNNER_TEMP/smoke" -xJf "$pkg"
+          cd "$RUNNER_TEMP/smoke"/*/
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          export VK_ICD_FILENAMES="${icds[0]}"
+          set +e
+          xvfb-run -a -s "-screen 0 1600x1200x24" timeout 40 ./VVDViewer > smoke.log 2>&1
+          rc=$?
+          set -e
+          tail -50 smoke.log
+          # 124 = still running when the timeout stopped it, i.e. it started fine.
+          if [ "$rc" != 124 ] && [ "$rc" != 0 ]; then echo "::warning::VVDViewer exited with $rc during the smoke test"; exit 1; fi
+
+      - name: List the attestation subjects
+        shell: bash
+        run: cat dist/*.sha256 > "$RUNNER_TEMP/subjects.sha256" && cat "$RUNNER_TEMP/subjects.sha256"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects.sha256
+
+      - name: Upload packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-${{ matrix.id }}
+          path: |
+            dist/*.zip
+            dist/*.tar.xz
+            dist/*.dmg
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Draft release
+    needs: [plan, build]
+    if: startsWith(github.ref, 'refs/tags/') || inputs.create_release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        run: |
+          [ -n "$TAG" ] || { echo "::error::No tag given (set the 'tag' input)"; exit 1; }
+          cd dist
+          shopt -s nullglob
+          cat ./*.sha256 > SHA256SUMS.txt
+          ls -la
+          cat > notes.md <<EOF
+          Built by GitHub Actions from commit ${GITHUB_SHA} (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+
+          | File | Platform |
+          |---|---|
+          | \`*-win64-vulkan*.zip\` | Windows 10/11 x64 - unzip and run VVDViewer.exe (no installer, no VC++ runtime install needed) |
+          | \`*-ubuntu24.04-vulkan*.tar.xz\` | Ubuntu 24.04 or newer x86_64 - extract and run ./VVDViewer |
+          | \`*-macosx*-vulkan*.dmg\` | macOS 14 or newer - drag VVDViewer.app to Applications |
+          | \`*-sources.*\` | Source code of the GPL/LGPL third-party components of the matching package |
+
+          Packages without a \`-gpl\` suffix use the LGPL build of ffmpeg (movie export: MPEG-4 Part 2); \`-gpl\` packages include the x264/x265 encoders (movie export: H.264) and are distributed under the GPL. See THIRD_PARTY_NOTICES.txt in each package.
+
+          Verify a download: \`sha256sum -c SHA256SUMS.txt\` or \`gh attestation verify <file> -R ${GITHUB_REPOSITORY}\`.
+          EOF
+          files=(./*.zip ./*.tar.xz ./*.dmg ./*.sha256 ./SHA256SUMS.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+            echo "Updated release $TAG"
+          else
+            gh release create "$TAG" "${files[@]}" --draft --title "$TAG" --notes-file notes.md --target "$GITHUB_SHA"
+            echo "Created draft release $TAG"
+          fi

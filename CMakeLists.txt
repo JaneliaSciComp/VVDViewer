@@ -53,8 +53,33 @@ endif()
 if(CMAKE_HOST_WIN32)
   set(VCPKG_APPLOCAL_DEPS ON)
 endif()
+# Minimum macOS version VVDViewer runs on. Without it the binaries require the
+# macOS version of the build machine's SDK. Keep in sync with
+# VCPKG_OSX_DEPLOYMENT_TARGET in triplets/*-osx-vvd*.cmake (the dependencies);
+# package.sh checks every bundled binary against it. Must precede project().
+# (An empty cache entry from an earlier configure is replaced; an explicit
+# -DCMAKE_OSX_DEPLOYMENT_TARGET=... wins.)
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version to deploy to" FORCE)
+endif()
 
 project ( VVDViewer )
+
+# Third-party libraries come from vcpkg (plus, on Linux, the system's standard
+# library directories). Do not derive package search prefixes from PATH: with a
+# Miniconda "Library/bin" on PATH, FindTIFF found Miniconda's TiffConfig.cmake
+# (vcpkg's tiff ships none), so VVDMainFrame.dll imported Miniconda's tiff.dll
+# instead of linking vcpkg's static libtiff, and failed to start elsewhere.
+if(DEFINED VCPKG_INSTALLED_DIR)
+	set(CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH OFF)
+	# Forget a TiffConfig.cmake found outside vcpkg by an earlier configure.
+	if(Tiff_DIR)
+		string(FIND "${Tiff_DIR}" "${VCPKG_INSTALLED_DIR}" _vvd_pos)
+		if(NOT _vvd_pos EQUAL 0)
+			unset(Tiff_DIR CACHE)
+		endif()
+	endif()
+endif()
 
 IF((COMMAND cmake_policy) AND NOT (CMAKE_MAJOR_VERSION LESS 3))
     CMAKE_POLICY(SET CMP0040 NEW)
@@ -102,9 +127,6 @@ add_definitions(-DVERSION_COPYRIGHT="November 2015")   # Up to here!
 
 #static compile
 add_definitions(-DSTATIC_COMPILE)
-
-# libCZI is linked statically (libCZIStatic); tell its headers not to use dllimport.
-add_definitions(-D_LIBCZISTATICLIB)
 
 # Windows/MSVC global compile settings. Defined here (before any add_library) so
 # every object library and target picks them up.
@@ -250,7 +272,17 @@ file(GLOB pole_srcs fluorender/pole/pole.cpp)
 file(GLOB pole_hdrs fluorender/pole/pole.h)
 add_library(POLE_OBJ OBJECT ${pole_srcs} ${pole_hdrs})
 
-#ffmpeg (provided by vcpkg, built from source, static)
+#ffmpeg (provided by vcpkg, built from source, dynamic - see triplets/ and the
+#"gpl" feature in vcpkg.json; LGPL by default, GPL with x264/x265 on request)
+# vcpkg's FindFFMPEG caches its results (and appends to the cached list), so a
+# change of ffmpeg's linkage or features would keep stale libraries such as
+# libx264 on the link line. Drop the cache so every configure starts fresh.
+get_cmake_property(_vvd_cache_vars CACHE_VARIABLES)
+foreach(_v ${_vvd_cache_vars})
+	if(_v MATCHES "^FFMPEG_")
+		unset(${_v} CACHE)
+	endif()
+endforeach()
 find_package(FFMPEG REQUIRED)
 include_directories(${FFMPEG_INCLUDE_DIRS})
 link_directories(${FFMPEG_LIBRARY_DIRS})
@@ -354,11 +386,21 @@ find_package(HDF5 REQUIRED COMPONENTS C CXX HL)
 include_directories(${HDF5_INCLUDE_DIRS})
 set(HDF5_LIBRARIES ${HDF5_CXX_LIBRARIES} ${HDF5_HL_LIBRARIES} ${HDF5_LIBRARIES})
 
-#libCZI
+#libCZI (LGPL; built as a shared library by the vvd triplets)
 find_path(CZI_INCLUDE_DIR NAMES libCZI.h PATH_SUFFIXES libCZI PATHS ${CZI_INCLUDE_DIR} /usr/local/include/libCZI /usr/include/libCZI /opt/local/include/libCZI)
 include_directories(${CZI_INCLUDE_DIR})
 set(CZI_NAMES ${CZI_NAMES} libCZIStatic liblibCZIStatic libCZI CZI)
+# Re-search when the cached library vanished (e.g. libCZI switched static -> shared).
+foreach(_v LIBCZI_LIBRARY JXRDECODE_LIBRARY)
+	if(${_v} AND NOT EXISTS "${${_v}}")
+		unset(${_v} CACHE)
+	endif()
+endforeach()
 find_library(LIBCZI_LIBRARY NAMES ${CZI_NAMES} HINTS ${CZI_LIBRARY_DIR})
+# A static libCZI needs _LIBCZISTATICLIB so its headers do not use dllimport.
+if(LIBCZI_LIBRARY MATCHES "Static")
+	add_definitions(-D_LIBCZISTATICLIB)
+endif()
 find_library(JXRDECODE_LIBRARY NAMES libJxrDecodeStatic HINTS ${CZI_LIBRARY_DIR})
 set(CZI_LIBRARIES ${LIBCZI_LIBRARY})
 if ( JXRDECODE_LIBRARY )
@@ -466,6 +508,12 @@ file(GLOB imgui_hdr ${VVDViewer_SOURCE_DIR}/external/imgui/*.h )
 # contains a stale, bundled vulkan/vulkan.h (VK_HEADER_VERSION 101) that would
 # otherwise shadow the real SDK and break newer extensions like
 # VK_KHR_portability_enumeration on macOS.
+# LunarG's Linux SDK 1.4.x keeps the loader in $VULKAN_SDK/lib/VulkanLoader/lib,
+# which FindVulkan only finds when the SDK's setup-env.sh was sourced (CI only
+# sets VULKAN_SDK), so name that directory explicitly.
+if(DEFINED ENV{VULKAN_SDK} AND IS_DIRECTORY "$ENV{VULKAN_SDK}/lib/VulkanLoader/lib")
+	list(APPEND CMAKE_LIBRARY_PATH "$ENV{VULKAN_SDK}/lib/VulkanLoader/lib")
+endif()
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIR})
 include_directories(${Vulkan_INCLUDE_DIR}/glslang)
@@ -836,7 +884,7 @@ if(MSVC AND DEFINED VCPKG_INSTALLED_DIR)
 	_vvd_perconfig(ZSTD_LIBRARIES  zstd)
 	_vvd_perconfig(BLOSC_LIBRARIES libblosc2 blosc2)
 	_vvd_perconfig(ZFP_LIBRARY     zfp)
-	_vvd_perconfig(CZI_LIBRARIES   libCZIStatic)
+	_vvd_perconfig(CZI_LIBRARIES   libCZIStatic libCZI)
 endif()
 
 #link the libraries
@@ -935,8 +983,9 @@ else()
     endif()
 
     # Every third-party library from vcpkg is a STATIC archive (.a), linked
-    # directly as found. wxWidgets (shared), the GTK3/X11 display libraries and
-    # the Vulkan loader stay dynamic. NOTE: do NOT rewrite the vcpkg .a paths to
+    # directly as found, except the shared ones listed in triplets/x64-linux-vvd
+    # (wxWidgets, the GTK3/GLib stack, ffmpeg, libCZI). The X11 display libraries
+    # and the Vulkan loader stay dynamic system libraries. NOTE: do NOT rewrite the vcpkg .a paths to
     # .so — those .so files do not exist in the static vcpkg tree and the rewrite
     # would silently pull in mismatched system libraries. (That rewrite was a
     # leftover from the old, pre-vcpkg system-library Linux build.)
@@ -1026,8 +1075,11 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   add_dependencies(FijiInterfacePlugin VVDMainFrame)
   add_dependencies(NBLASTGuiPlugin VVDMainFrame)
   add_dependencies(NeuronAnnotatorPlugin VVDMainFrame)
-  add_dependencies(VVDViewer FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin)
 endif()
+# VVDViewer's POST_BUILD step copies the plugin libraries (Linux: into bin/lib,
+# macOS: into the bundle), so the plugins must be linked first. Without this a
+# parallel build could copy a plugin that was not written yet (an empty file).
+add_dependencies(VVDViewer FijiInterfacePlugin NBLASTGuiPlugin NeuronAnnotatorPlugin)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 #TODO
@@ -1183,6 +1235,32 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"    chmod u+w \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
 		"    install_name_tool -id \"\${FW_PREFIX}/\${dylib}\" \"\${FRAMEWORKS_DIR}/\${dylib}\"\n"
 		"  fi\ndone\n\n"
+		"# Any other dylib a bundled binary loads from the vcpkg lib dir (absolute path\n"
+		"# or @rpath) - e.g. ffmpeg's libav*/libsw* and libCZI - is copied as well,\n"
+		"# repeating until the set is closed (libavformat -> libavcodec -> ...).\n"
+		"vcpkg_deps() {\n"
+		"  otool -L \"\$1\" | awk 'NR>1 {print \$1}' | while read -r dep; do\n"
+		"    name=\$(basename \"\${dep}\")\n"
+		"    case \"\${dep}\" in\n"
+		"      \"\${WX_LIB_DIR}\"/*|@rpath/*) if [ -f \"\${WX_LIB_DIR}/\${name}\" ]; then echo \"\${name}\"; fi ;;\n"
+		"    esac\n"
+		"  done\n"
+		"}\n"
+		"changed=1\n"
+		"while [ \"\${changed}\" = \"1\" ]; do\n"
+		"  changed=0\n"
+		"  for bin in \"\${EXECUTABLE}\" \"\${FRAMEWORKS_DIR}\"/*.dylib \"\${PLUGINS_DIR}\"/*.dylib; do\n"
+		"    [ -f \"\${bin}\" ] || continue\n"
+		"    for name in \$(vcpkg_deps \"\${bin}\"); do\n"
+		"      if [ ! -f \"\${FRAMEWORKS_DIR}/\${name}\" ]; then\n"
+		"        cp -f \"\${WX_LIB_DIR}/\${name}\" \"\${FRAMEWORKS_DIR}/\${name}\"\n"
+		"        chmod u+w \"\${FRAMEWORKS_DIR}/\${name}\"\n"
+		"        install_name_tool -id \"\${FW_PREFIX}/\${name}\" \"\${FRAMEWORKS_DIR}/\${name}\"\n"
+		"        changed=1\n"
+		"      fi\n"
+		"    done\n"
+		"  done\n"
+		"done\n\n"
 		"# Resolve the real (versioned) Vulkan loader dylib, so any version works\n"
 		"if [ -z \"\${VULKAN_LIB}\" ]; then\n"
 		"  VULKAN_LIB=\"/usr/local/lib/libvulkan.dylib\"\n"
@@ -1232,6 +1310,15 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"    install_name_tool -change \"\${LZMA_OLD_PATH}\" \"\${FW_PREFIX}/\${LZMA_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"
 		"    install_name_tool -change \"\${LZMA_LIB}\" \"\${FW_PREFIX}/\${LZMA_DYLIB}\" \"\${bin}\" 2>/dev/null || true\n"
 		"  fi\n"
+		"  # Generic: any remaining reference whose file was bundled into Frameworks\n"
+		"  # (the vcpkg dylibs collected above) is pointed there.\n"
+		"  for dep in \$(otool -L \"\${bin}\" | awk 'NR>1 {print \$1}'); do\n"
+		"    case \"\${dep}\" in \"\${FW_PREFIX}\"/*|\"\${PL_PREFIX}\"/*|/usr/lib/*|/System/*) continue ;; esac\n"
+		"    name=\$(basename \"\${dep}\")\n"
+		"    if [ -f \"\${FRAMEWORKS_DIR}/\${name}\" ]; then\n"
+		"      install_name_tool -change \"\${dep}\" \"\${FW_PREFIX}/\${name}\" \"\${bin}\" 2>/dev/null || true\n"
+		"    fi\n"
+		"  done\n"
 		"}\n\n"
 		"fix_refs \"\${EXECUTABLE}\"\n"
 		"for f in \"\${FRAMEWORKS_DIR}\"/*.dylib; do\n  fix_refs \"\${f}\"\ndone\n"
@@ -1273,7 +1360,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			"${Vulkan_LIBRARY}" "${VVD_CODESIGN_IDENTITY}"
 		COMMENT "Making VVDViewer.app self-contained (MoltenVK, rpaths, codesign)")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	# Deploy vcpkg runtime DLLs (wxWidgets) next to VVDViewer.exe.
+	# Deploy vcpkg runtime DLLs (wxWidgets, ffmpeg, libCZI) next to VVDViewer.exe.
 	# VCPKG_APPLOCAL_DEPS=ON already auto-copies dependent DLLs during the build;
 	# this is an explicit fallback that copies the whole vcpkg bin directory.
 	if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
