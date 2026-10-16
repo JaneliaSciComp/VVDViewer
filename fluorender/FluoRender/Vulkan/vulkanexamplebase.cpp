@@ -236,10 +236,44 @@ void VulkanExampleBase::prepareFrame()
 			return;
 		}
 	}
-	//SUBOPTIMAL still presents correctly; the resize path will be taken via the
-	//window size event (destroying an acquire-signaled semaphore here would leave
-	//a pending signal with no waiter)
-	if (err != VK_SUBOPTIMAL_KHR) {
+	//SUBOPTIMAL: the image can be rendered and presented, but it may no longer
+	//match the surface. On macOS this is not just a resize hint: MoltenVK can
+	//leave the CAMetalLayer's drawableSize at 1x1 when it creates a swapchain
+	//of the size the old one had (the wx view recreates its swapchain on every
+	//size event; seen right after a volume is loaded, while all of the old
+	//swapchain's images have been in use).
+	//Its drawables are then 1x1, and the window shows a single pixel stretched
+	//over the view (only the background color) until the swapchain is created
+	//again. No size event is guaranteed to follow, so recreate the swapchain
+	//here, once per frame, and acquire again.
+	if (err == VK_SUBOPTIMAL_KHR && prepared && !suboptimalPersists) {
+		//the acquire signaled the semaphore: consume that signal before
+		//windowResize() destroys the semaphore chains (a binary semaphore must
+		//not be destroyed with a signal pending)
+		VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkSubmitInfo si = vks::initializers::submitInfo();
+		si.waitSemaphoreCount = 1;
+		si.pWaitSemaphores = present_complete;
+		si.pWaitDstStageMask = &waitStage;
+		VK_CHECK_RESULT(vkQueueSubmit(vulkanDevice->queue, 1, &si, VK_NULL_HANDLE));
+		//waits for the device, recreates the swapchain (the acquired, never
+		//presented image goes with the old one), the per-slot semaphore chains
+		//and the present semaphores
+		windowResize();
+		present_complete = vulkanDevice->GetNextRenderSemaphore();
+		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
+		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
+			vulkanDevice->ResetRenderSemaphores();
+			return;
+		}
+		//still suboptimal with a brand-new swapchain: nothing to gain from
+		//recreating it every frame
+		if (err == VK_SUBOPTIMAL_KHR)
+			suboptimalPersists = true;
+	}
+	if (err == VK_SUCCESS)
+		suboptimalPersists = false;
+	else if (err != VK_SUBOPTIMAL_KHR) {
 		VK_CHECK_RESULT(err);
 	}
 
@@ -685,6 +719,7 @@ void VulkanExampleBase::setSize(int width, int height)
 
 	destWidth = width;
 	destHeight = height;
+	suboptimalPersists = false;
 
 	windowResize();
 }
