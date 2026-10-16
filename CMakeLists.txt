@@ -480,6 +480,12 @@ file(GLOB imgui_hdr ${VVDViewer_SOURCE_DIR}/external/imgui/*.h )
 # contains a stale, bundled vulkan/vulkan.h (VK_HEADER_VERSION 101) that would
 # otherwise shadow the real SDK and break newer extensions like
 # VK_KHR_portability_enumeration on macOS.
+# LunarG's Linux SDK 1.4.x keeps the loader in $VULKAN_SDK/lib/VulkanLoader/lib,
+# which FindVulkan only finds when the SDK's setup-env.sh was sourced (CI only
+# sets VULKAN_SDK), so name that directory explicitly.
+if(DEFINED ENV{VULKAN_SDK} AND IS_DIRECTORY "$ENV{VULKAN_SDK}/lib/VulkanLoader/lib")
+	list(APPEND CMAKE_LIBRARY_PATH "$ENV{VULKAN_SDK}/lib/VulkanLoader/lib")
+endif()
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIR})
 include_directories(${Vulkan_INCLUDE_DIR}/glslang)

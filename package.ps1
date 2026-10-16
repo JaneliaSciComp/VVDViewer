@@ -347,7 +347,9 @@ if (-not $NoSourcesArchive -and (Test-Path $srcStage) -and (Get-ChildItem $srcSt
 }
 foreach ($o in $outputs) {
     $h = (Get-FileHash -Algorithm SHA256 $o).Hash.ToLower()
-    "$h  $(Split-Path $o -Leaf)" | Set-Content -Encoding ascii -NoNewline "$o.sha256"
+    # One "hash  name" line ending in LF, like sha256sum (files are concatenated
+    # into SHA256SUMS.txt and the attestation subject list).
+    Write-TextFile "$o.sha256" "$h  $(Split-Path $o -Leaf)`n"
 }
 
 Write-Host ""

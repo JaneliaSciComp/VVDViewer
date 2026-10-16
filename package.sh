@@ -193,7 +193,10 @@ collect_licenses() {  # $1 = directory that receives THIRD_PARTY_NOTICES.txt and
 }
 
 write_buildinfo() {  # $1 = file
-  local commit dirty vcpkg_commit
+  local commit dirty vcpkg_commit cxx
+  # The Xcode generator records the compiler in CMakeFiles/<ver>/CMakeCXXCompiler.cmake only.
+  cxx="$(cache_get CMAKE_CXX_COMPILER)"
+  [ -n "$cxx" ] || cxx="$(sed -n 's/^set(CMAKE_CXX_COMPILER "\(.*\)")$/\1/p' "$BUILD_DIR"/CMakeFiles/*/CMakeCXXCompiler.cmake 2>/dev/null | head -1)"
   commit="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
   dirty=""; [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ] && dirty=" (with uncommitted changes)"
   vcpkg_commit="$(git -C "$VCPKG_ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -207,7 +210,7 @@ write_buildinfo() {  # $1 = file
     echo "ND2 reader:       $([ "$ND2" = ON ] && echo enabled || echo disabled)"
     echo "vcpkg commit:     $vcpkg_commit"
     echo "vcpkg triplet:    $TRIPLET"
-    echo "Compiler:         $(cache_get CMAKE_CXX_COMPILER) $("$(cache_get CMAKE_CXX_COMPILER)" --version 2>/dev/null | head -1)"
+    echo "Compiler:         $cxx $("$cxx" --version 2>/dev/null | head -1)"
     echo "Vulkan SDK:       $VK_SDK"
     if [ "$OS" = Linux ]; then
       echo "Build system:     $(. /etc/os-release && echo "$PRETTY_NAME"), $(ldd --version | head -1)"
