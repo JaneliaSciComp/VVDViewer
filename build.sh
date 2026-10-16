@@ -172,8 +172,12 @@ echo "Configuring... first run downloads & builds ALL dependencies from source (
 cmake "${CMAKE_ARGS[@]}"
 
 # 5) Build ------------------------------------------------------------------
-echo "Building VVDViewer ($CONFIG)..."
-cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel
+# Use one job per CPU. A bare --parallel lets make start an unlimited number of
+# compilers, which exhausted the memory of a 4-CPU/16 GB CI runner on the large
+# VVDMainFrame sources. CMAKE_BUILD_PARALLEL_LEVEL overrides the count.
+JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+echo "Building VVDViewer ($CONFIG, $JOBS parallel jobs)..."
+cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel "$JOBS"
 
 # 6) Report -----------------------------------------------------------------
 echo ""
