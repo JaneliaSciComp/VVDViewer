@@ -163,8 +163,14 @@ if(APPLE)
 		if(_brew_prefix)
 			set(_macdeployqt_libpath -libpath=${_brew_prefix}/lib)
 		endif()
+		set(_qt_fw_dir -)
+		if(_brew_prefix)
+			set(_qt_fw_dir "${_brew_prefix}/lib")
+		endif()
+		# (macos_deployqt.sh: why the executable needs an rpath to that dir)
 		add_custom_command(TARGET VVDViewerQt POST_BUILD
-			COMMAND ${MACDEPLOYQT} "$<TARGET_BUNDLE_DIR:VVDViewerQt>" -always-overwrite ${_macdeployqt_libpath}
+			COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_deployqt.sh" ${MACDEPLOYQT}
+				"$<TARGET_BUNDLE_DIR:VVDViewerQt>" "${_qt_fw_dir}" -always-overwrite ${_macdeployqt_libpath}
 			COMMENT "macdeployqt VVDViewerQt.app")
 	else()
 		message(WARNING "macdeployqt not found: VVDViewerQt.app will not contain Qt and only runs on this machine")
