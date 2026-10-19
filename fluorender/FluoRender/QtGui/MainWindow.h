@@ -195,9 +195,10 @@ public:
 	// keeps the window (and floating docks) inside the screen's available
 	// area: restored geometry clamped, shrunk to fit (MainWindowLayout.cpp)
 	void FitToScreen();
-	// the Properties dock as tall as the volume page needs, the render views
-	// taking the rest of the height (MainWindowLayout.cpp)
-	void FitPropertiesDock();
+	// the Properties and Record/Export docks as tall as their pages need, the
+	// render views / Workspace taking the rest of the height
+	// (MainWindowLayout.cpp)
+	void FitDocksToContent();
 
 	// ---- plugins (MainWindowPlugins.cpp; wx VRenderFrame plugin UI)
 	QtPluginManager* GetPluginManager() override;
@@ -237,6 +238,7 @@ public:
 
 protected:
 	void closeEvent(QCloseEvent*) override;
+	void resizeEvent(QResizeEvent*) override;
 	bool eventFilter(QObject* obj, QEvent* e) override;
 	void dragEnterEvent(QDragEnterEvent*) override;
 	void dropEvent(QDropEvent*) override;
@@ -280,9 +282,17 @@ private:
 	std::unique_ptr<Interpolator> m_interpolator;
 	TreePanel* m_tree = nullptr;
 	VolumePropPanel* m_prop = nullptr;
-	// height FitPropertiesDock last gave the Properties dock (-1: none yet);
-	// a different height means it was resized by hand
-	int m_prop_fit_h = -1;
+	// FitDocksToContent once the window size has settled (restarted by every
+	// window resize; MainWindowLayout.cpp)
+	class QTimer* m_dock_fit_timer = nullptr;
+	// time of the last fit (ms since epoch): the docks settle for a moment
+	// after it, which is not a resize by hand
+	qint64 m_dock_fit_ms = 0;
+	// the window size at the last fit: a dock resized while the window keeps
+	// this size had its separator dragged (Qt resizes the docks before the
+	// window's own resizeEvent, so the fit timer cannot tell)
+	QSize m_dock_fit_win;
+	void ScheduleDockFit();
 	QDockWidget* m_tree_dock = nullptr;
 	QDockWidget* m_prop_dock = nullptr;
 	QAction* m_persp_action = nullptr;

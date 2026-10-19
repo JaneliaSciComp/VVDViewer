@@ -1,10 +1,12 @@
 // Main window size against the screen (MainWindow::FitToScreen) and its
 // testing aid VVD_QT_TEST=layout (docs/QT_PORT.md "Window size").
 #include "MainWindow.h"
+#include <QDateTime>
 #include "TestRun.h"
 #include "QtPluginManager.h"
 #include "PaneScrollArea.h"
 #include "VolumePropPanel.h"
+#include "MoviePanel.h"
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDockWidget>
@@ -13,6 +15,7 @@
 #include <QLayout>
 #include <QScreen>
 #include <QScrollBar>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QWindow>
@@ -89,43 +92,94 @@ void MainWindow::FitToScreen()
 	}
 }
 
-// The Properties dock exactly as tall as the volume page needs: its rows, the
-// dock's title bar, and the horizontal scroll bar only while the page is wider
-// than the dock. The render views get the rest of the height. Run once the
-// window is shown (after restoreState: a saved pixel height does not follow
-// the screen resolution) and when the window moves to another screen. A
-// dock resized by hand keeps its size for the rest of the session.
-void MainWindow::FitPropertiesDock()
+// Docks exactly as tall as their page needs: Properties (the volume page) and
+// Record/Export. The page's rows, the dock's title bar, and the horizontal
+// scroll bar only while the page is wider than the dock. The render views
+// and the Workspace get the rest of the height. Run once the window size has
+// settled (Qt re-applies a restored state while a maximized window is still
+// growing; a saved pixel height does not follow the screen resolution), on
+// another screen, and when a dock's scroll bar appears or disappears. A dock
+// resized by hand keeps its size for the rest of the session.
+namespace
 {
-	if (!m_prop_dock || !m_prop || !isVisible() || m_prop_dock->isFloating() || m_prop_dock->isHidden())
-		return;
-	QWidget* content = m_prop_dock->widget();
-	if (!content || content->height() <= 0)
-		return;
-	int h = m_prop->sizeHint().height();
-	if (auto* sa = dynamic_cast<PaneScrollArea*>(content))
-	{
-		const int f = 2 * sa->frameWidth();
-		h += f;
-		const bool transient = sa->style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, sa->horizontalScrollBar());
-		if (!transient && sa->width() - f < PaneScrollArea::ContentMin(m_prop).width())
-			h += sa->horizontalScrollBar()->sizeHint().height();
-	}
-	// the title bar and frame, as the dock is laid out now
-	h += m_prop_dock->height() - content->height();
-	resizeDocks({ m_prop_dock }, { h }, Qt::Vertical);
-	m_prop_fit_h = h;   // resizeDocks applies on the next layout pass
+	const char* kFitH = "vvdFitH";
+	const char* kHandSized = "vvdHandSized";
+	const char* kHooked = "vvdFitHooked";
 
-	// the horizontal scroll bar appears / disappears with the window width
-	// (e.g. maximized after start-up): fit again, unless resized by hand
-	static const char* kHooked = "vvdPropFitHooked";
-	if (auto* sa = dynamic_cast<PaneScrollArea*>(content); sa && !sa->property(kHooked).toBool())
+	// the dock height that shows all of page without empty space; -1 if the
+	// dock is not laid out yet
+	int FittedDockHeight(QDockWidget* dock, QWidget* page)
 	{
-		sa->setProperty(kHooked, true);
-		connect(sa->horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int) {
-			if (m_prop_dock && m_prop_dock->height() == m_prop_fit_h)
-				QTimer::singleShot(0, this, [this]() { FitPropertiesDock(); });
-		});
+		QWidget* content = dock->widget();
+		if (!content || content->height() <= 0)
+			return -1;
+		int h = page->sizeHint().height();
+		if (auto* sa = dynamic_cast<PaneScrollArea*>(content))
+		{
+			const int f = 2 * sa->frameWidth();
+			h += f;
+			const bool transient = sa->style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, sa->horizontalScrollBar());
+			if (!transient && sa->width() - f < PaneScrollArea::ContentMin(page).width())
+				h += sa->horizontalScrollBar()->sizeHint().height();
+		}
+		// the title bar and frame, as the dock is laid out now
+		return h + dock->height() - content->height();
+	}
+}
+
+void MainWindow::ScheduleDockFit()
+{
+	if (!m_dock_fit_timer)
+	{
+		m_dock_fit_timer = new QTimer(this);
+		m_dock_fit_timer->setSingleShot(true);
+		connect(m_dock_fit_timer, &QTimer::timeout, this, &MainWindow::FitDocksToContent);
+	}
+	// after the last resize: Qt drops a restored window state ~150 ms after
+	// the window stops changing size
+	m_dock_fit_timer->start(400);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+	QMainWindow::resizeEvent(e);
+	ScheduleDockFit();
+}
+
+void MainWindow::FitDocksToContent()
+{
+	if (!isVisible())
+		return;
+	const std::pair<QDockWidget*, QWidget*> docks[] = { { m_prop_dock, m_prop }, { m_movie_dock, m_movie } };
+	for (const auto& [dock, page] : docks)
+	{
+		if (!dock || !page || dock->isFloating() || dock->isHidden() || dock->property(kHandSized).toBool())
+			continue;
+		const int h = FittedDockHeight(dock, page);
+		if (h <= 0)
+			continue;
+		if (dock->height() != h)   // label updates (movie playback) ask often
+		{
+			// Record/Export shares the left column with the Workspace: size both,
+			// the Workspace taking the rest (one dock alone is not applied there)
+			QDockWidget* above = dock == m_movie_dock ? m_tree_dock : nullptr;
+			if (above && !above->isHidden() && !above->isFloating() &&
+				dockWidgetArea(above) == dockWidgetArea(dock) && above->height() + dock->height() > h)
+				resizeDocks({ above, dock }, { above->height() + dock->height() - h, h }, Qt::Vertical);
+			else
+				resizeDocks({ dock }, { h }, Qt::Vertical);
+		}
+		dock->setProperty(kFitH, h);   // resizeDocks applies on the next layout pass
+		m_dock_fit_ms = QDateTime::currentMSecsSinceEpoch();
+		m_dock_fit_win = size();
+
+		// the horizontal scroll bar appears / disappears with the window
+		// width (e.g. maximized after start-up): fit again
+		if (auto* sa = dynamic_cast<PaneScrollArea*>(dock->widget()); sa && !sa->property(kHooked).toBool())
+		{
+			sa->setProperty(kHooked, true);
+			connect(sa->horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int) { ScheduleDockFit(); });
+		}
 	}
 }
 

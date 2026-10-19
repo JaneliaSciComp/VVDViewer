@@ -495,14 +495,16 @@ MainWindow::MainWindow(QWidget* parent)
 	// when the frame size is known; MainWindowLayout.cpp)
 	FitToScreen();
 	QTimer::singleShot(0, this, [this]() { FitToScreen(); });
-	// Properties fitted to its content once the docks have their sizes
-	// (layouts settle a few event-loop rounds after show), and again on
-	// another screen (resolution / scaling)
-	QTimer::singleShot(100, this, [this]() {
-		FitPropertiesDock();
+	// Properties and Record/Export fitted to their content once the window size has settled
+	// (MainWindowLayout.cpp: a restored state is re-applied by Qt while a
+	// maximized window is still growing), and again on another screen
+	m_prop_dock->installEventFilter(this);
+	m_movie_dock->installEventFilter(this);
+	m_movie->installEventFilter(this);   // its size need changes with the tab
+	ScheduleDockFit();
+	QTimer::singleShot(0, this, [this]() {
 		if (QWindow* wh = windowHandle())
-			connect(wh, &QWindow::screenChanged, this, [this]() {
-				QTimer::singleShot(100, this, [this]() { FitPropertiesDock(); }); });
+			connect(wh, &QWindow::screenChanged, this, [this]() { ScheduleDockFit(); });
 	});
 	m_last_dir = settings.value("lastDir").toString();
 

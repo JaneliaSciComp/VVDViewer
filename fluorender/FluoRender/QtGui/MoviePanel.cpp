@@ -163,6 +163,7 @@ MoviePanel::MoviePanel(QWidget* parent) : QWidget(parent)
 	m_stack->addWidget(m_pages[2] = CreateAutoKeyPage());
 	m_stack->addWidget(m_pages[3] = CreateCroppingPage());
 	root->addWidget(m_stack, 1);
+	SizeStackToCurrentPage();
 
 	BuildFooter(root);
 
@@ -1086,9 +1087,24 @@ void MoviePanel::OnRewind()
 	SetRendering(0.);
 }
 
+void MoviePanel::SizeStackToCurrentPage()
+{
+	// a QStackedWidget sizes itself to its tallest page; pages that ignore
+	// their vertical size count as 0 (QStackedLayout / qSmartMinSize)
+	for (int i = 0; i < m_stack->count(); i++)
+	{
+		QWidget* p = m_stack->widget(i);
+		const QSizePolicy::Policy v = i == m_stack->currentIndex() ? QSizePolicy::Preferred : QSizePolicy::Ignored;
+		if (p->sizePolicy().verticalPolicy() != v)
+			p->setSizePolicy(p->sizePolicy().horizontalPolicy(), v);
+	}
+	m_stack->updateGeometry();
+}
+
 void MoviePanel::OnPageChanged(int pageid)
 {
 	m_stack->setCurrentIndex(pageid);
+	SizeStackToCurrentPage();
 	long fps = GetFPS();
 	if (fps <= 0) fps = 1;
 

@@ -19,6 +19,8 @@
 //     PickMesh.
 
 #include "MainWindow.h"
+#include <QDateTime>
+#include "MoviePanel.h"
 
 #include <QAction>
 #include <QMenu>
@@ -68,6 +70,25 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* e)
 {
 	if (obj && obj == m_measure_dlg && (e->type() == QEvent::Show || e->type() == QEvent::Hide))
 		QTimer::singleShot(0, this, [this]() { SyncUIChecks(); });
+	// Record/Export's height need changes with its tab: fit right away
+	if (obj && obj == m_movie && e->type() == QEvent::LayoutRequest && !(m_dock_fit_timer && m_dock_fit_timer->isActive()))
+		QTimer::singleShot(0, this, [this]() { FitDocksToContent(); });
+	// a fitted dock (Properties, Record/Export) changing height while the
+	// window keeps its size and no fit is pending: its separator was dragged,
+	// so FitDocksToContent leaves it alone for the session
+	if (obj && (obj == m_prop_dock || obj == m_movie_dock) && e->type() == QEvent::Resize)
+	{
+		auto* d = static_cast<QDockWidget*>(obj);
+		const QVariant fit = d->property("vvdFitH");
+		const bool settling = (m_dock_fit_timer && m_dock_fit_timer->isActive()) ||
+			QDateTime::currentMSecsSinceEpoch() - m_dock_fit_ms < 500;
+		if (!fit.isValid())
+			;
+		else if (settling || size() != m_dock_fit_win)
+			d->setProperty("vvdFitH", d->height());   // the fit settling, or the window resizing
+		else if (d->height() != fit.toInt())
+			d->setProperty("vvdHandSized", true);
+	}
 	return QMainWindow::eventFilter(obj, e);
 }
 

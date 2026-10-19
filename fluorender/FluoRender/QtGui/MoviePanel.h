@@ -201,6 +201,9 @@ private Q_SLOTS:
 	void OnTimeEnter();             // progress text
 	void OnTimeText();              // current time text
 	void OnPageChanged(int idx);
+	// the page stack as tall as the current page (not the tallest one), so the
+	// Record/Export dock can be fitted to it (MainWindow::FitDocksToContent)
+	void SizeStackToCurrentPage();
 	void OnFrameCheck(bool on);
 	void OnResetFrame();
 	void OnFrameEditing();
