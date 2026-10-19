@@ -326,6 +326,10 @@ QWidget* ViewPanel::BuildZoomColumn()
 	v->addWidget(one, 0, Qt::AlignHCenter);
 	m_zoom_sldr = new QSlider(Qt::Vertical, w);
 	m_zoom_sldr->setRange(50, 999);
+	// wx m_scale_factor_sldr: wxSL_VERTICAL without wxSL_INVERSE, minimum at
+	// the top on Windows (dragging down zooms in); QSlider has it at the bottom
+	m_zoom_sldr->setInvertedAppearance(true);
+	m_zoom_sldr->setInvertedControls(true);   // wheel / keys as on a native slider
 	m_zoom_sldr->setValue(100);
 	v->addWidget(m_zoom_sldr, 1, Qt::AlignHCenter);
 	// wx m_scale_factor_spin

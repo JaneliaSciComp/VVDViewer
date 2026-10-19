@@ -31,8 +31,10 @@ const char* kQss =
 	"  border-radius: 2px; margin: 0 0; }"
 	"AdjustPanel QSlider::handle:vertical { background: #ffffff; border: 1px solid #b0b0b0;"
 	"  height: 14px; width: 14px; margin: 0 -6px; border-radius: 8px; }"
-	"AdjustPanel QSlider::add-page:vertical { background: #2f7bf5; }"
-	"AdjustPanel QSlider::sub-page:vertical { background: #c8c8c8; }";
+	// the sliders have their minimum at the top (setInvertedAppearance, as
+	// wx): blue from the minimum down to the handle (sub-page = above it)
+	"AdjustPanel QSlider::add-page:vertical { background: #c8c8c8; }"
+	"AdjustPanel QSlider::sub-page:vertical { background: #2f7bf5; }";
 
 const char* kChanName[3] = {"Red:", "Green:", "Blue:"};
 const char* kChanColor[3] = {"#ff0000", "#00ff00", "#0000ff"};
@@ -140,6 +142,12 @@ QWidget* AdjustPanel::buildPage(bool easy)
 		{
 			const int kind = easy ? int(kLevel) : kinds[i];
 			QSlider* s = new QSlider(Qt::Vertical, page);
+			// wx: wxSL_VERTICAL without wxSL_INVERSE, which on Windows has the
+			// minimum at the top: dragging down raises the value (Gam. / Lum. /
+			// Eql. / Easy-mode level: brighter). QSlider has it at the bottom.
+			s->setInvertedAppearance(true);
+			// wheel / arrow keys move the handle as on a native slider
+			s->setInvertedControls(true);
 			s->setMinimumHeight(40);
 			s->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 			switch (kind)
