@@ -94,6 +94,18 @@ namespace vvd
 #endif
 	}
 
+	String NativeSeparators(const String& path)
+	{
+#if defined(_WIN32)
+		std::wstring s = path.ToStdWstring();
+		if (s.find(L"://") != std::wstring::npos) return path;   // URLs keep '/'
+		std::replace(s.begin(), s.end(), L'/', L'\\');
+		return String(s);
+#else
+		return path;
+#endif
+	}
+
 	String JoinPath(const String& a, const String& b)
 	{
 		if (a.empty()) return b;

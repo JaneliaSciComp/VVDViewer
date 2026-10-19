@@ -22,6 +22,10 @@ namespace vvd
 	EXPORT_API long long FileSize(const String& path);    // -1 if missing
 	EXPORT_API wchar_t PathSeparator();
 	EXPORT_API String JoinPath(const String& a, const String& b);
+	// Windows: '/' -> '\' (the readers split paths with GETSLASH(), a
+	// backslash there; Qt hands out paths with '/'). URLs ("://") and other
+	// platforms: unchanged.
+	EXPORT_API String NativeSeparators(const String& path);
 	EXPORT_API String GetFileName(const String& path);    // "dir/a.txt" -> "a.txt"
 	EXPORT_API String GetFileStem(const String& path);    // "dir/a.txt" -> "a"
 	EXPORT_API String GetFileExt(const String& path);     // "dir/a.txt" -> "txt" (no dot)

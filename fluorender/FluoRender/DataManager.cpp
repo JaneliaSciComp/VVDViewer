@@ -9540,6 +9540,8 @@ namespace
 
 void DataManager::PrefetchVolume(VolumePrefetch &pre)
 {
+	// same normalisation as LoadVolumeData, which compares pre->filename
+	pre.filename = vvd::NativeSeparators(pre.filename);
 	pre.valid = false;
 	pre.channels.clear();
 	delete pre.reader;
@@ -9627,8 +9629,10 @@ void DataManager::PrefetchVolume(VolumePrefetch &pre)
 	}
 }
 
-int DataManager::LoadVolumeData(const VVDString &filename, int type, int ch_num, int t_num, size_t datasize, VVDString prefix, VVDString metadata, VolumePrefetch* pre)
+int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_num, int t_num, size_t datasize, VVDString prefix, VVDString metadata, VolumePrefetch* pre)
 {
+	// paths from the Qt app use '/'; the readers need native separators
+	const VVDString filename = vvd::NativeSeparators(filename_in);
 	VVDString pathname = filename;
 	bool isURL = false;
 	bool downloaded = false;
@@ -10121,8 +10125,9 @@ int DataManager::LoadVolumeData(const VVDString &filename, int type, int ch_num,
 	return result;
 }
 
-int DataManager::LoadMeshData(const VVDString &filename, VVDString prefix)
+int DataManager::LoadMeshData(const VVDString &filename_in, VVDString prefix)
 {
+	const VVDString filename = vvd::NativeSeparators(filename_in);
 	VVDString pathname = filename;
 	if (!vvd::FileExists(pathname))
 	{
@@ -10431,8 +10436,9 @@ MeshData* DataManager::DuplicateMeshData(MeshData* md, bool use_default_settings
 	return md_new;
 }
 
-Annotations* DataManager::LoadAnnotations(const VVDString &filename)
+Annotations* DataManager::LoadAnnotations(const VVDString &filename_in)
 {
+	const VVDString filename = vvd::NativeSeparators(filename_in);
 	VVDString pathname = filename;
 	if (!vvd::FileExists(pathname))
 	{
