@@ -24,6 +24,7 @@
 #include <thread>
 
 #include "../DLLExport.h"
+#include "WinCompat.h"
 
 namespace vvd
 {

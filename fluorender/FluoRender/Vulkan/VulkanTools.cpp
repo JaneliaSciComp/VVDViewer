@@ -286,7 +286,7 @@ namespace vks
 #if defined(_WIN32)
 			if (!errorModeSilent) {
 				std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
-				MessageBox(NULL, myconv.from_bytes(message).c_str(), NULL, MB_OK | MB_ICONERROR);
+				MessageBoxW(NULL, myconv.from_bytes(message).c_str(), NULL, MB_OK | MB_ICONERROR);
 			}
 #elif defined(__ANDROID__)
             LOGE("Fatal error: %s", message.c_str());

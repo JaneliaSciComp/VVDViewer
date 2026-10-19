@@ -1,3 +1,6 @@
+// Windows: parse <windows.h> before any engine header's "using namespace std",
+// or the SDK's ::byte is ambiguous with std::byte (enabled for the Qt app).
+#include "Core/WinCompat.h"
 #include "RecorderPanel.h"
 #include "MoviePanel.h"
 #include "RenderCanvas.h"

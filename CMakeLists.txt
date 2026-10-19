@@ -141,7 +141,9 @@ if(MSVC)
   add_definitions("/Zc:strictStrings-")
   # Disable std::byte so unqualified 'byte' (with "using namespace std") is not
   # ambiguous with the Windows SDK's ::byte (rpcndr.h / wtypes.h).
-  add_definitions(-D_HAS_STD_BYTE=0)
+  # Targets that need std::byte (Qt 6 headers) opt out with the target
+  # property VVD_ALLOW_STD_BYTE (see cmake/QtGui.cmake).
+  add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:VVD_ALLOW_STD_BYTE>>>:_HAS_STD_BYTE=0>)
   # Large files (e.g. VRenderView.cpp) exceed the COFF section limit in Debug.
   add_definitions("/bigobj")
 endif()

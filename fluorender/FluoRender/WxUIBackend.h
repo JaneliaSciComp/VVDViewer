@@ -6,8 +6,10 @@
 // Installed once by VRenderApp::OnInit().
 
 #include "Core/UICallbacks.h"
+#include "DLLExport.h"
 
-class WxUIBackend : public vvd::UIBackend
+// EXPORT_API: defined in VVDMainFrame.dll, installed from VVDViewer.exe (Main.cpp).
+class EXPORT_API WxUIBackend : public vvd::UIBackend
 {
 public:
 	int MessageBox(const VVDString& message, const VVDString& caption, int flags) override;

@@ -963,7 +963,7 @@ void VRenderVulkanView::InitVulkan()
 	if (vr_frame)
 	{
 		auto setting_dlg = vr_frame->GetSettingDlg();
-		wxString font_file = setting_dlg ? setting_dlg->GetFontFile() : "";
+		wxString font_file = setting_dlg ? setting_dlg->GetFontFile() : wxString();
 #ifdef __WXMAC__
 		wxString resDir = wxStandardPaths::Get().GetResourcesDir();
 		if (font_file != "")
@@ -21122,7 +21122,7 @@ void VRenderView::CreateBar()
 	m_aov_sldr->SetValue(GetPersp()?GetAov():10);
 	m_aov_text = new wxTextCtrl(this, ID_AovText, "",
 		wxDefaultPosition, wxSize(60, top_h), 0, vald_int);
-	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):"Ortho");
+	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):wxString("Ortho"));
 	m_free_chk = new wxCheckBox(this, ID_FreeChk, "FreeFly",
 		wxDefaultPosition, wxSize(-1, top_h));
 	if (GetFree())

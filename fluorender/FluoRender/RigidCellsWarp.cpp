@@ -578,7 +578,7 @@ namespace rigidcells
 				return out;
 			}
 			// is a physical point within radius of any voxel centre of component c?
-			bool near(int c, const std::vector<int>& runList, const V3& p, const Grid& g, double radius) const
+			bool isNear(int c, const std::vector<int>& runList, const V3& p, const Grid& g, double radius) const
 			{
 				for (int d = 0; d < 3; d++)
 				{
@@ -1353,7 +1353,7 @@ namespace rigidcells
 						double lsum = 0, lmax = 0; int nearCount = 0;
 						for (size_t i = 0; i < lm.size(); i++)
 						{
-							if (!runs.near(c, runsOf[c], lm[i], mg, radius)) continue;
+							if (!runs.isNear(c, runsOf[c], lm[i], mg, radius)) continue;
 							nearCount++;
 							double e = distance(field.map(lm[i]), lt[i]);
 							lsum += e * e; lmax = jmax(lmax, e);
@@ -1383,7 +1383,7 @@ namespace rigidcells
 					double lsum = 0, lmax = 0; int nearCount = 0;
 					for (size_t i = 0; i < lm.size(); i++)
 					{
-						if (!runs.near(c, runsOf[c], lm[i], mg, radius)) continue;
+						if (!runs.isNear(c, runsOf[c], lm[i], mg, radius)) continue;
 						nearCount++;
 						double e = distance(fit.apply(lm[i]), lt[i]);
 						lsum += e * e; lmax = jmax(lmax, e);

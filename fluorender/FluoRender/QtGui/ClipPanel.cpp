@@ -212,7 +212,7 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 		"  background:#fafafa; border:1px solid #969696; }"
 		"#ClipPanel QSpinBox[spinOnly=\"true\"] { color:transparent; border:none; background:transparent; }");
 
-	auto small = [](QWidget* w) { w->setAttribute(Qt::WA_MacSmallSize, true); };
+	auto makeSmall = [](QWidget* w) { w->setAttribute(Qt::WA_MacSmallSize, true); };
 
 	QVBoxLayout* v = new QVBoxLayout(this);
 	v->setContentsMargins(5, 4, 5, 4);
@@ -231,7 +231,7 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 	m_mode->setCurrentIndex(m_plane_mode);
 	m_mode->setMinimumWidth(90);
 	m_mode->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	small(m_mode);
+	makeSmall(m_mode);
 	v->addWidget(m_mode);
 
 	m_clipReset = new QPushButton("Reset Clipping Planes", this);

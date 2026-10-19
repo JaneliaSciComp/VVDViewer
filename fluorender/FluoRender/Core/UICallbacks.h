@@ -10,6 +10,7 @@
 
 #include <memory>
 #include "VVDString.h"
+#include "WinCompat.h"
 
 namespace vvd
 {

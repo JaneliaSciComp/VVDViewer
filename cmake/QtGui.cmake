@@ -93,7 +93,10 @@ target_sources(VVDViewerQt PRIVATE
 	$<TARGET_OBJECTS:POLE_OBJ>
 	$<TARGET_OBJECTS:TEEM_OBJ>)
 
-target_include_directories(VVDViewerQt PRIVATE ${QTGUI_DIR}
+# BEFORE: QtGui/ must win over the wx headers of the same name in
+# fluorender/FluoRender (TreePanel.h); the plugin_*/qt sources are not in QtGui/,
+# so a quoted include does not find the Qt sibling first.
+target_include_directories(VVDViewerQt BEFORE PRIVATE ${QTGUI_DIR}
 	${VVDViewer_SOURCE_DIR}/plugin_fiji/qt
 	${VVDViewer_SOURCE_DIR}/plugin_nblast/qt
 	${VVDViewer_SOURCE_DIR}/plugin_NA/qt)
@@ -112,6 +115,20 @@ target_include_directories(VVDViewerQt BEFORE PRIVATE ${Vulkan_INCLUDE_DIR})
 target_include_directories(VVDViewerQt BEFORE PRIVATE ${VVDViewer_SOURCE_DIR}/fluorender)
 # QT_NO_KEYWORDS: the FLIVR shader classes have a method called emit().
 target_compile_definitions(VVDViewerQt PRIVATE VVD_QT_STRING_INTEROP=1 QT_NO_KEYWORDS)
+if(WIN32)
+	# The engine sources compiled into this executable declare their symbols
+	# EXPORT_API; without VVD_DLL_EXPORTS that is dllimport, and defining a
+	# dllimport static (icons.cpp) is an error (C2491).
+	target_compile_definitions(VVDViewerQt PRIVATE VVD_DLL_EXPORTS)
+	# The top-level _HAS_STD_BYTE=0 (CMakeLists.txt) breaks Qt 6 headers
+	# (QByteArrayView needs std::byte), and every source here includes <QString>
+	# through VVDString.h (VVD_QT_STRING_INTEROP), engine files too. Keep
+	# std::byte for the whole target, and force-include WinCompat.h so that
+	# <windows.h>/<ole2.h> (the SDK's ::byte) are parsed before any engine
+	# header's "using namespace std" can make unqualified 'byte' ambiguous.
+	set_property(TARGET VVDViewerQt PROPERTY VVD_ALLOW_STD_BYTE ON)
+	target_compile_options(VVDViewerQt PRIVATE "/FI${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Core/WinCompat.h")
+endif()
 
 if(APPLE)
 	target_link_libraries(VVDViewerQt PRIVATE

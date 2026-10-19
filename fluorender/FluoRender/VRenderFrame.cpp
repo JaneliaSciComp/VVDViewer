@@ -1551,7 +1551,7 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 
 			int ch_num = 0;
 			wxString filename = files[j];
-            wxString prefix = j < descs.Count() ? descs[j] : wxT("");
+            wxString prefix = j < descs.Count() ? descs[j] : wxString();
 			wxString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
 
 			if (suffix == ".nrrd")
@@ -2299,7 +2299,7 @@ void VRenderFrame::LoadMeshes(wxArrayString files, VRenderView* vrv, wxArrayStri
         }
         else
         {
-            m_data_mgr.LoadMeshData(filename, i < descs.Count() ? descs[i] : wxT(""));
+            m_data_mgr.LoadMeshData(filename, i < descs.Count() ? descs[i] : wxString());
 
             MeshData* md = m_data_mgr.GetLastMeshData();
             if (vrv && md)

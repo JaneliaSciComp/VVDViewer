@@ -2580,6 +2580,10 @@ class EXPORT_API ProjectDataLoader
 public:
     ProjectDataLoader();
     ~ProjectDataLoader();
+    // Not copyable (owns unique_ptrs). Explicit, because MSVC generates every
+    // special member of an EXPORT_API (dllexport) class.
+    ProjectDataLoader(const ProjectDataLoader&) = delete;
+    ProjectDataLoader& operator=(const ProjectDataLoader&) = delete;
     void Queue(ProjectDataLoaderQueue path);
     void ClearQueues();
     void Set(vector<ProjectDataLoaderQueue> &queues);

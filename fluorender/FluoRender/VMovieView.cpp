@@ -1577,6 +1577,10 @@ void VMovieView::SaveDefault()
 void VMovieView::LoadSettings()
 {
 	wxString dft = vvd::SettingsReadPath(L"default_movie_settings.dft");
+	// No default is shipped for this file; on a first run it does not exist yet,
+	// and opening it anyway makes wxWidgets pop up a "can't open file" error.
+	if (!wxFileExists(dft))
+		return;
 
 	wxFileInputStream is(dft);
 
