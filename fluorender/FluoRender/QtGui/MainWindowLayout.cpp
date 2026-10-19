@@ -3,6 +3,8 @@
 #include "MainWindow.h"
 #include "TestRun.h"
 #include "QtPluginManager.h"
+#include "PaneScrollArea.h"
+#include "VolumePropPanel.h"
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDockWidget>
@@ -10,6 +12,7 @@
 #include <QFileInfo>
 #include <QLayout>
 #include <QScreen>
+#include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
 #include <QWindow>
@@ -83,6 +86,46 @@ void MainWindow::FitToScreen()
 		}
 		if (!on || g.width() > avail.width() || g.height() > avail.height())
 			d->setGeometry(FitRect(d->geometry(), avail, QSize(0, 20)));
+	}
+}
+
+// The Properties dock exactly as tall as the volume page needs: its rows, the
+// dock's title bar, and the horizontal scroll bar only while the page is wider
+// than the dock. The render views get the rest of the height. Run once the
+// window is shown (after restoreState: a saved pixel height does not follow
+// the screen resolution) and when the window moves to another screen. A
+// dock resized by hand keeps its size for the rest of the session.
+void MainWindow::FitPropertiesDock()
+{
+	if (!m_prop_dock || !m_prop || !isVisible() || m_prop_dock->isFloating() || m_prop_dock->isHidden())
+		return;
+	QWidget* content = m_prop_dock->widget();
+	if (!content || content->height() <= 0)
+		return;
+	int h = m_prop->sizeHint().height();
+	if (auto* sa = dynamic_cast<PaneScrollArea*>(content))
+	{
+		const int f = 2 * sa->frameWidth();
+		h += f;
+		const bool transient = sa->style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, sa->horizontalScrollBar());
+		if (!transient && sa->width() - f < PaneScrollArea::ContentMin(m_prop).width())
+			h += sa->horizontalScrollBar()->sizeHint().height();
+	}
+	// the title bar and frame, as the dock is laid out now
+	h += m_prop_dock->height() - content->height();
+	resizeDocks({ m_prop_dock }, { h }, Qt::Vertical);
+	m_prop_fit_h = h;   // resizeDocks applies on the next layout pass
+
+	// the horizontal scroll bar appears / disappears with the window width
+	// (e.g. maximized after start-up): fit again, unless resized by hand
+	static const char* kHooked = "vvdPropFitHooked";
+	if (auto* sa = dynamic_cast<PaneScrollArea*>(content); sa && !sa->property(kHooked).toBool())
+	{
+		sa->setProperty(kHooked, true);
+		connect(sa->horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int) {
+			if (m_prop_dock && m_prop_dock->height() == m_prop_fit_h)
+				QTimer::singleShot(0, this, [this]() { FitPropertiesDock(); });
+		});
 	}
 }
 

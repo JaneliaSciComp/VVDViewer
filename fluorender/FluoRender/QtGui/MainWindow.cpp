@@ -17,6 +17,7 @@
 #include <QSettings>
 #include <QFileInfo>
 #include <QStyle>
+#include <QWindow>
 #include <QLabel>
 #include <QVBoxLayout>
 #include <cmath>
@@ -494,6 +495,15 @@ MainWindow::MainWindow(QWidget* parent)
 	// when the frame size is known; MainWindowLayout.cpp)
 	FitToScreen();
 	QTimer::singleShot(0, this, [this]() { FitToScreen(); });
+	// Properties fitted to its content once the docks have their sizes
+	// (layouts settle a few event-loop rounds after show), and again on
+	// another screen (resolution / scaling)
+	QTimer::singleShot(100, this, [this]() {
+		FitPropertiesDock();
+		if (QWindow* wh = windowHandle())
+			connect(wh, &QWindow::screenChanged, this, [this]() {
+				QTimer::singleShot(100, this, [this]() { FitPropertiesDock(); }); });
+	});
 	m_last_dir = settings.value("lastDir").toString();
 
 	// wx VRenderFrame ctor: the plugin manager, the Plugins menu, and at its

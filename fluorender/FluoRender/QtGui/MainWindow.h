@@ -195,6 +195,9 @@ public:
 	// keeps the window (and floating docks) inside the screen's available
 	// area: restored geometry clamped, shrunk to fit (MainWindowLayout.cpp)
 	void FitToScreen();
+	// the Properties dock as tall as the volume page needs, the render views
+	// taking the rest of the height (MainWindowLayout.cpp)
+	void FitPropertiesDock();
 
 	// ---- plugins (MainWindowPlugins.cpp; wx VRenderFrame plugin UI)
 	QtPluginManager* GetPluginManager() override;
@@ -277,6 +280,9 @@ private:
 	std::unique_ptr<Interpolator> m_interpolator;
 	TreePanel* m_tree = nullptr;
 	VolumePropPanel* m_prop = nullptr;
+	// height FitPropertiesDock last gave the Properties dock (-1: none yet);
+	// a different height means it was resized by hand
+	int m_prop_fit_h = -1;
 	QDockWidget* m_tree_dock = nullptr;
 	QDockWidget* m_prop_dock = nullptr;
 	QAction* m_persp_action = nullptr;
