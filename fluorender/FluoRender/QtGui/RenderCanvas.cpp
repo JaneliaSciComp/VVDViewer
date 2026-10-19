@@ -690,16 +690,19 @@ FLIVR::Quaternion RenderCanvas::Trackball(int p1x, int p1y, int p2x, int p2y)
 
 // Virtual sphere rotation (Settings "Virtual sphere"). The drag
 // points are put on a sphere of radius R centred in the view (y down, z to
-// the viewer, the frame Trackball uses); outside the sphere they lie on its
-// rim, so a drag around the centre there turns the data about the view axis
-// only. The in-plane part runs at the Trackball speed (len / 3 degrees per
+// the viewer, the frame Trackball uses). R is half the view's diagonal, so
+// the whole view lies on the sphere: a drag anywhere turns the data (with a
+// smaller radius, points beyond the rim were pinned to it and a sideways
+// drag near the left/right side of a wide view did not rotate at all).
+// Towards the edges a drag around the centre turns more about the view axis
+// (roll). The in-plane part runs at the Trackball speed (len / 3 degrees per
 // pixel at the centre); the roll follows the mouse angle 1:1, like a knob.
 FLIVR::Quaternion RenderCanvas::SphereTrackball(const QPoint& from, const QPoint& to, int w, int h)
 {
 	FLIVR::Quaternion q;
 	if (from == to)
 		return q;
-	const double R = 0.45 * std::max(1, std::min(w, h));
+	const double R = std::max(1.0, 0.5 * std::hypot(double(w), double(h)));
 	auto on_sphere = [&](const QPoint& p) {
 		const double x = (p.x() - 0.5 * w) / R, y = (p.y() - 0.5 * h) / R;
 		const double d2 = x * x + y * y;

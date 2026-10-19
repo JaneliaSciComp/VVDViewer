@@ -1126,7 +1126,8 @@ void MainWindow::RunTestScript(const QString& name)
 	else if (name == "sphererot")
 	{
 		// Settings "Virtual sphere": a centre drag turns like the wx
-		// trackball; a drag around the centre outside the sphere only rolls.
+		// trackball; a drag around the centre near the edge mostly rolls; a drag
+		// near the left/right side still turns the data.
 		// "[sphere]" lines; view captures sph_<n>.png (VVD_QT_TEST_DIR).
 		RenderCanvas* cv = m_canvas;
 		const QString dir = QFileInfo(qEnvironmentVariable("VVD_QT_GRAB")).absolutePath();
@@ -1155,8 +1156,14 @@ void MainWindow::RunTestScript(const QString& name)
 		at(400, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(true); drag(vline); rot("sphere, centre drag down 30 px"); });
 		at(500, [=]() { cv->SetRotations(0, 0, 0); cv->RefreshView(); });
 		at(1300, [=]() { cv->CaptureToFile(dir + "/sph_0.png"); });
-		at(1900, [=]() { cv->SetSphereRot(true); drag(arc); rot("sphere, arc 45 deg clockwise outside the sphere"); cv->RefreshView(); });
+		at(1900, [=]() { cv->SetSphereRot(true); drag(arc); rot("sphere, arc 45 deg clockwise near the edge"); cv->RefreshView(); });
 		at(2700, [=]() { cv->CaptureToFile(dir + "/sph_1.png"); });
+		// a drag near the left/right side of the view must still rotate
+		std::vector<QPoint> side, sidev;
+		for (int i = 0; i <= 10; i++) side.push_back(QPoint(w - 100 - 3 * i, h / 2));
+		for (int i = 0; i <= 10; i++) sidev.push_back(QPoint(w - 100, h / 2 + 3 * i));
+		at(3000, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(true); drag(side); rot("sphere, drag left 30 px near the right side"); });
+		at(3300, [=]() { cv->SetRotations(0, 0, 0); cv->SetSphereRot(true); drag(sidev); rot("sphere, drag down 30 px near the right side"); });
 		// (QtMain grabs the window and quits 4 s after the test starts)
 	}
 	else if (name == "treescroll")
