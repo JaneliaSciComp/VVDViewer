@@ -150,7 +150,13 @@ void MainWindow::FitDocksToContent()
 {
 	if (!isVisible())
 		return;
-	const std::pair<QDockWidget*, QWidget*> docks[] = { { m_prop_dock, m_prop }, { m_movie_dock, m_movie } };
+	// Properties: the page shown (volume, mesh, annotation, ...); with nothing
+	// selected the volume page, so the dock does not collapse to the empty
+	// page and jump when a volume is picked
+	QWidget* prop_page = m_prop_stack ? m_prop_stack->currentWidget() : nullptr;
+	if (!prop_page || prop_page == m_prop_empty)
+		prop_page = m_prop;
+	const std::pair<QDockWidget*, QWidget*> docks[] = { { m_prop_dock, prop_page }, { m_movie_dock, m_movie } };
 	for (const auto& [dock, page] : docks)
 	{
 		if (!dock || !page || dock->isFloating() || dock->isHidden() || dock->property(kHandSized).toBool())

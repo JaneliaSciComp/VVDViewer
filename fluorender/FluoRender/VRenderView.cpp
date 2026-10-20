@@ -15850,10 +15850,12 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 						vector<TextureBrick*> *bricks2 = tex->get_sorted_bricks(view_ray, !m_persp);
 						if (!bricks2 || bricks2->size()==0)
 							continue;
+						//"Skip empty bricks": the transfer-function test once per volume
+						const int skip_max = vd->GetVR()->invisible_brick_max((*bricks2)[0]->nb(0));
 						for (j=0; j<bricks2->size(); j++)
 						{
 							(*bricks2)[j]->set_drawn(false);
-							if (vd->GetVR()->skip_empty_brick((*bricks2)[j]) ||
+							if (vd->GetVR()->skip_empty_brick((*bricks2)[j], skip_max) ||
 								!vd->GetVR()->test_against_view_clip((*bricks2)[j]->bbox(), (*bricks2)[j]->tbox(), (*bricks2)[j]->dbox(), m_persp) ||
                                 !tex->GetFileName((*bricks2)[j]->getID()) ||
                                 (!tex->GetFileName((*bricks2)[j]->getID())->isvalid && !tex->GetFileName((*bricks2)[j]->getID())->isurl))
@@ -15902,10 +15904,12 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 					vector<TextureBrick*> *bricks = tex->get_sorted_bricks(view_ray, !m_persp);
 					if (!bricks || bricks->size()==0)
 						continue;
+					//"Skip empty bricks": the transfer-function test once per volume
+					const int skip_max = vd->GetVR()->invisible_brick_max((*bricks)[0]->nb(0));
 					for (j=0; j<bricks->size(); j++)
 					{
 						(*bricks)[j]->set_drawn(false);
-						if (vd->GetVR()->skip_empty_brick((*bricks)[j]) ||
+						if (vd->GetVR()->skip_empty_brick((*bricks)[j], skip_max) ||
 							!vd->GetVR()->test_against_view_clip((*bricks)[j]->bbox(), (*bricks)[j]->tbox(), (*bricks)[j]->dbox(), m_persp) ||
                             (tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || (!tex->GetFileName((*bricks)[j]->getID())->isvalid && !tex->GetFileName((*bricks)[j]->getID())->isurl))) )
 						{

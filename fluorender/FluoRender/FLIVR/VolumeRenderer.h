@@ -156,6 +156,9 @@ namespace FLIVR
 		//nothing for zero. Used by draw() and by the streaming loops' brick
 		//counts, which must agree.
 		bool skip_empty_brick(TextureBrick* b);
+		//the same with invisible_brick_max() already computed for this pass
+		//(it depends on the transfer function only, not on the brick)
+		bool skip_empty_brick(TextureBrick* b, int skip_max);
 		//true if brick b of this renderer's data pass can be skipped
 		//(computes the brick maximum on first use)
 		bool brick_invisible(TextureBrick* b, int skip_max);

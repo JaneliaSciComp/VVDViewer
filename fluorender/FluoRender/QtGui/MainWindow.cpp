@@ -499,6 +499,8 @@ MainWindow::MainWindow(QWidget* parent)
 	// (MainWindowLayout.cpp: a restored state is re-applied by Qt while a
 	// maximized window is still growing), and again on another screen
 	m_prop_dock->installEventFilter(this);
+	// a mesh / annotation page needs another height than the volume page
+	connect(m_prop_stack, &QStackedWidget::currentChanged, this, [this](int) { ScheduleDockFit(); });
 	m_movie_dock->installEventFilter(this);
 	m_movie->installEventFilter(this);   // its size need changes with the tab
 	ScheduleDockFit();

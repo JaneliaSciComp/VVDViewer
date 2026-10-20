@@ -688,42 +688,51 @@ FLIVR::Quaternion RenderCanvas::Trackball(int p1x, int p1y, int p2x, int p2y)
 	return q;
 }
 
-// Virtual sphere rotation (Settings "Virtual sphere"). The drag
-// points are put on a sphere of radius R centred in the view (y down, z to
-// the viewer, the frame Trackball uses). R is half the view's diagonal, so
-// the whole view lies on the sphere: a drag anywhere turns the data (with a
-// smaller radius, points beyond the rim were pinned to it and a sideways
-// drag near the left/right side of a wide view did not rotate at all).
-// Towards the edges a drag around the centre turns more about the view axis
-// (roll). The in-plane part runs at the Trackball speed (len / 3 degrees per
-// pixel at the centre); the roll follows the mouse angle 1:1, like a knob.
+// Virtual sphere rotation (Settings "Virtual sphere"). Each drag step is
+// split, relative to the view centre, into the part going around the centre
+// (tangential) and the rest. With r = the distance from the centre over R
+// (R = half the shorter side of the view), a share w(r) of the tangential
+// part turns the data about the view axis (roll), following the mouse angle
+// 1:1 like a knob; everything else turns it like the wx trackball (axis in
+// the screen plane, len / 3 degrees per pixel). w(r) rises smoothly from 0
+// at r = 0.5 to 1 at the rim: the middle of the view is the wx trackball,
+// near the rim a drag around the centre only rolls, and beyond it (the
+// left / right sides of a wide view) a drag towards or away from the centre
+// still turns the data. (A single sphere over the whole view, as tried
+// before, scales the in-plane part by R / 3 and the roll by 1, so an edge
+// drag tumbled the data instead of rolling it.)
 FLIVR::Quaternion RenderCanvas::SphereTrackball(const QPoint& from, const QPoint& to, int w, int h)
 {
 	FLIVR::Quaternion q;
 	if (from == to)
 		return q;
-	const double R = std::max(1.0, 0.5 * std::hypot(double(w), double(h)));
-	auto on_sphere = [&](const QPoint& p) {
-		const double x = (p.x() - 0.5 * w) / R, y = (p.y() - 0.5 * h) / R;
-		const double d2 = x * x + y * y;
-		if (d2 >= 1.0)
-		{
-			const double d = std::sqrt(d2);
-			return Vector(x / d, y / d, 0.0);
-		}
-		return Vector(x, y, std::sqrt(1.0 - d2));
-	};
-	const Vector v1 = on_sphere(from), v2 = on_sphere(to);
-	Vector axis = Cross(v1, v2);
-	const double s = axis.length();
-	if (s < 1e-12)
-		return q;
-	const double theta = std::atan2(s, std::max(-1.0, std::min(1.0, Dot(v1, v2))));
-	axis /= s;
-	// rotation vector (degrees): in-plane part scaled to the wx speed
-	const double g = R / 3.0;   // = (R * pi/180) / 3 per radian, in degrees
-	const double deg = 180.0 / PI;
-	Vector rv(axis.x() * theta * g, axis.y() * theta * g, axis.z() * theta * deg);
+	// y down, as Trackball's frame
+	const double cx = 0.5 * w, cy = 0.5 * h;
+	const double R = std::max(1.0, 0.5 * std::min(w, h));
+	const double x0 = from.x() - cx, y0 = from.y() - cy;
+	const double x1 = to.x() - cx, y1 = to.y() - cy;
+	const double dx = x1 - x0, dy = y1 - y0;
+	// roll share from the midpoint's distance to the centre
+	const double mx = 0.5 * (x0 + x1), my = 0.5 * (y0 + y1);
+	const double mr = std::hypot(mx, my);
+	const double r = mr / R;
+	const double t = std::clamp((r - 0.5) / 0.5, 0.0, 1.0);
+	const double wroll = t * t * (3.0 - 2.0 * t);   // smoothstep
+	// angle swept around the centre (degrees; > 0 = clockwise on screen,
+	// which is +z in this frame)
+	double droll = 0.0;
+	double tdx = 0.0, tdy = 0.0;   // tangential displacement
+	if (wroll > 0.0 && mr > 1e-9)
+	{
+		droll = std::atan2(x0 * y1 - y0 * x1, x0 * x1 + y0 * y1) * 180.0 / PI;
+		const double tx = -my / mr, ty = mx / mr;
+		const double along = dx * tx + dy * ty;
+		tdx = along * tx; tdy = along * ty;
+	}
+	// the remaining motion turns the data as the wx trackball does
+	const double rdx = dx - wroll * tdx, rdy = dy - wroll * tdy;
+	// rotation vector (degrees): Trackball's axis (-dy, dx) with len / 3
+	Vector rv(-rdy / 3.0, rdx / 3.0, wroll * droll);
 	const double phi = rv.length();
 	if (phi < 1e-9)
 		return q;

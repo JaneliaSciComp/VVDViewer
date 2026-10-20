@@ -184,12 +184,14 @@ engine changes that also change the wx app are under "Bug fixes".
   Windows only, and that code is commented out).
 * **Virtual sphere rotation** (new; **on by default**, Settings ->
   Rotations "Virtual sphere: drag near the edge to roll (Z).", saved as
-  `/sphere rotation`): a left drag rotates a virtual sphere filling 90% of the
-  shorter side of the view. Near the centre it turns exactly like the wx
-  trackball (same speed and direction); outside the sphere a drag around the
-  centre only rolls the data about the view axis, following the mouse angle
-  1:1; in between the two blend. Off = the wx trackball; "45 Increments"
-  always uses the wx trackball.
+  `/sphere rotation`): within half the view radius (R = half the shorter
+  side) a left drag turns exactly like the wx trackball (same speed and
+  direction). Further out, the part of the drag that goes around the centre
+  turns the data about the view axis (roll), following the mouse angle 1:1;
+  its share rises smoothly to 1 at R, so near the rim a drag around the
+  centre only rolls. A drag towards or away from the centre always turns
+  like the trackball, also beyond R (the left / right sides of a wide view).
+  Off = the wx trackball; "45 Increments" always uses the wx trackball.
 * **Reduced sampling rate while dragging stays on until the mouse rests**
   (Settings "reduce sample rate during mouse interaction"): wx returns to full
   quality after one frame, so every short pause in a drag started a
@@ -291,6 +293,9 @@ engine changes that also change the wx app are under "Bug fixes".
 * **Graphics-memory setting ignored**: the Settings value never reached the
   Vulkan device, so the texture cache could grow to the whole GPU heap; on
   large projects this exhausted RAM and the view never finished drawing.
+  The limit applies while streaming is on (the Settings dialog greys the
+  value out otherwise); with streaming off every brick must stay resident,
+  so the device maximum is used, as in wx.
 * **Black 3D view in the wx app** (regression from `495e8b5`, "2 frames in
   flight"): after a volume loaded, a swapchain recreation left the MoltenVK
   drawable at 1x1 and every acquire returned `VK_SUBOPTIMAL_KHR` without the
@@ -1171,7 +1176,7 @@ command line.
 | `ui` | Show/Hide UI, menus, check marks, /ui_layout |
 | `tree` | tree, groups, per-group capture (`VVD_QT_GRAB_DIR`, `VVD_QT_GROUP_DEPTH`) |
 | `treescroll` | scroll position and selection after a delete |
-| `sphererot` | virtual sphere rotation: centre drags right / down against the wx trackball, a 45° drag around the centre outside the sphere (pure roll); `sph_0.png` / `sph_1.png` beside `VVD_QT_GRAB` |
+| `sphererot` | virtual sphere rotation: centre drags right / down against the wx trackball, a 45° drag around the centre near the rim (pure roll), drags left / down near the right side of the view; `sph_0.png` / `sph_1.png` beside `VVD_QT_GRAB` |
 | `drop` | drag & drop of `VVD_QT_DROP=a;b` onto the render view (`VVD_QT_DROP_TARGET=frame`: the main window); prints the volumes / rulers opened |
 | `ruler`, `brush`, `dialogs` | ruler tool, brush tool, the analysis dialogs |
 | `paint` | brush strokes, undo / redo, keys, blend modes, Extract / Erase voxel by voxel, mask counts from the GPU; saves `p19_annotations.vrp` (`VVD_QT_PAINT_UNDO` = history depth, default 5; `VVD_QT_TEST_DIFFUSE`, `VVD_QT_TEST_EXTRACT`, `VVD_QT_TEST_ONLY`, `VVD_QT_COLOR`) |

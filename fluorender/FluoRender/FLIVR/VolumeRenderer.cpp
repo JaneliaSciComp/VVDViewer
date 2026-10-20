@@ -1037,6 +1037,13 @@ namespace FLIVR
 	{
 		if (!b || b->get_priority() <= 0)
 			return false;
+		return skip_empty_brick(b, invisible_brick_max(b->nb(0)));
+	}
+
+	bool VolumeRenderer::skip_empty_brick(TextureBrick* b, int skip_max)
+	{
+		if (!b || b->get_priority() <= 0)
+			return false;
 		//pyramid bricks: the flag comes from the brick file (set_priority_brk)
 		if (!tex_ || tex_->isBrxml())
 			return true;
@@ -1046,11 +1053,15 @@ namespace FLIVR
 		int m = b->get_data_max();
 		if (m < 0)
 			m = b->compute_data_max();
+		//... unless the maximum cannot be computed (float data, data not in
+		//memory): then trust the load-time flag, as before the re-check
+		if (m < 0)
+			return true;
 		if (m != 0)
 			return false;
 		//... and the transfer function: with Inv, or gamma / offset making
 		//zero visible, an all-zero brick is not empty on screen
-		return invisible_brick_max(b->nb(0)) >= 0;
+		return skip_max >= 0;
 	}
 
 	bool VolumeRenderer::brick_invisible(TextureBrick* b, int skip_max)
@@ -2038,7 +2049,7 @@ namespace FLIVR
 			}
 
 			if (!b->get_disp() || // Clip against view
-				skip_empty_brick(b)) //nothing to draw
+				skip_empty_brick(b, skip_max)) //nothing to draw
 			{
 				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
 				{
