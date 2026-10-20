@@ -217,3 +217,31 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy ${qtplugin_res} "$<TARGET_FILE_DIR:VVDViewerQt>/"
 		COMMENT "Copying VVDViewerQt resources")
 endif()
+
+if(WIN32)
+	# A runnable build output, as the wx target gets (CMakeLists.txt): the
+	# settings files (fluorender.set, default_*.dft; the wx target copies them
+	# only when it is built), the app-local VC++ runtime, and the Qt DLLs with
+	# the platform plugin (windeployqt). The vcpkg DLLs it uses (ffmpeg,
+	# libCZI) are copied by vcpkg's applocal step (VCPKG_APPLOCAL_DEPS);
+	# copying the whole vcpkg bin directory here as well races with the
+	# plugins' applocal step in a parallel build (permission denied).
+	add_custom_command(TARGET VVDViewerQt POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Settings" "$<TARGET_FILE_DIR:VVDViewerQt>"
+		COMMENT "Copying the settings files next to VVDViewerQt.exe")
+	if(_vvd_crt_libs)   # found by the wx target's block in CMakeLists.txt
+		add_custom_command(TARGET VVDViewerQt POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_vvd_crt_libs} "$<TARGET_FILE_DIR:VVDViewerQt>"
+			COMMAND_EXPAND_LISTS
+			COMMENT "Deploying app-local VC++ runtime (CRT) DLLs next to VVDViewerQt.exe")
+	endif()
+	find_program(VVD_WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin" NO_DEFAULT_PATH)
+	if(VVD_WINDEPLOYQT)
+		add_custom_command(TARGET VVDViewerQt POST_BUILD
+			COMMAND "${VVD_WINDEPLOYQT}" $<IF:$<CONFIG:Debug>,--debug,--release> --no-translations
+				--no-system-d3d-compiler --no-opengl-sw --verbose 0 "$<TARGET_FILE:VVDViewerQt>"
+			COMMENT "windeployqt VVDViewerQt.exe")
+	else()
+		message(WARNING "windeployqt not found next to Qt (${Qt6_DIR}): VVDViewerQt.exe needs Qt's bin directory on PATH")
+	endif()
+endif()

@@ -746,7 +746,13 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
       add_definitions(-DWIN32)
       add_definitions(-D_WIN32)
-	  set_target_properties(VVDMainFrame
+	  # APPEND, not set_target_properties(... COMPILE_DEFINITIONS a
+	  # COMPILE_DEFINITIONS b ...): that replaced each target's definitions
+	  # (TEEM_OBJ lost TEEM_LIBDEFLATE=1, so NRRD gzip decoding fell back to
+	  # zlib on Windows) and kept only its last value. nrrd_EXPORTS /
+	  # teem_EXPORTS were listed but never took effect that way; they stay off
+	  # so the DLL's exports do not change.
+	  set_property(TARGET VVDMainFrame
 					  IMAGES_OBJ
 					  CONVERTERS_OBJ
 					  FLIVR_OBJ
@@ -758,13 +764,7 @@ elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 					  TEEM_OBJ
 					  PLUGINS_OBJ
 					  CORE_OBJ
-					  PROPERTIES
-					  COMPILE_DEFINITIONS 
-					  nrrd_EXPORTS
-					  COMPILE_DEFINITIONS 
-					  teem_EXPORTS
-					  COMPILE_DEFINITIONS 
-					  VVD_DLL_EXPORTS)
+					  APPEND PROPERTY COMPILE_DEFINITIONS VVD_DLL_EXPORTS)
 	  if(MSVC)
 		  add_definitions(-D__STDC_FORMAT_MACROS)
 		  add_definitions(-D_STATICLIBBUILD)
