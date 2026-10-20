@@ -304,7 +304,14 @@ public:
 
 		// Get physical device surface properties and formats
 		VkSurfaceCapabilitiesKHR surfCaps;
-		VK_CHECK_RESULT(fpGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfCaps));
+		// a lost surface (window being destroyed) leaves surfCaps undefined:
+		// keep the old swapchain instead of building one from garbage extents
+		const VkResult capsRes = fpGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfCaps);
+		if (capsRes != VK_SUCCESS)
+		{
+			std::cerr << "VulkanSwapChain::create: surface capabilities query failed (" << capsRes << "), swapchain kept" << std::endl;
+			return;
+		}
 
 		// Get available present modes
 		uint32_t presentModeCount;

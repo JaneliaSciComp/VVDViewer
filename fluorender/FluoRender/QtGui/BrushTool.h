@@ -66,6 +66,8 @@ public:
 	bool MouseRelease(QMouseEvent* e) override;
 	bool Wheel(QWheelEvent* e) override;
 	bool KeyPress(QKeyEvent* e) override;
+	// captures the scene matrices (camera + object transforms) for Segment()
+	void DrawOverlay(RenderCanvas* canvas, int nx, int ny) override;
 	void DrawOverlayPost(RenderCanvas* canvas, int nx, int ny) override;   // after the capture point (wx: painting after PostDraw)
 
 	// ---- interaction / paint modes (wx VRenderVulkanView)

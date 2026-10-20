@@ -747,7 +747,6 @@ void ClipPanel::SetRangeUi(int a)
 void ClipPanel::GetSettings()
 {
 	ClippingLayer* clipping_data = Layer();
-	std::vector<Plane*>* planes = Planes();
 	if (!clipping_data)
 	{
 		SetEnabledAll(false);
@@ -767,6 +766,9 @@ void ClipPanel::GetSettings()
 			return;
 		}
 	}
+	// only now: Planes() dereferences m_vd / m_md, which may have been freed
+	// when the selection is no longer loaded (checked above)
+	std::vector<Plane*>* planes = Planes();
 	SetEnabledAll(true);
 	if (!planes)
 		return;

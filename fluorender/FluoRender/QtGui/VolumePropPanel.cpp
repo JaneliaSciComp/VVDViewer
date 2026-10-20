@@ -84,16 +84,19 @@ VolumePropPanel::VolumePropPanel(QWidget* parent)
 	setStyleSheet("QWidget { font-size: 11px; } QLineEdit, QComboBox, QPushButton { min-height: 18px; }");
 
 	// ---- sliders (same set as VPropView; the hidden ones keep the appliers uniform)
-	m_gamma       = MakeRow(":Gamma",             10, 400, 100.0, 2, 0.1, 4.0);
-	m_boundary    = MakeRow("Extract Boundary:",   0, 1000, 2000.0, 4, 0.0, 0.5);
+	// The text boxes accept the wx ranges (VPropView), wider than the
+	// sliders: a value set in wx or loaded from a project must not be
+	// clamped here, then written back by Sync / Save as Default.
+	m_gamma       = MakeRow(":Gamma",             10, 400, 100.0, 2, 0.0, 10.0);
+	m_boundary    = MakeRow("Extract Boundary:",   0, 1000, 2000.0, 4, 0.0, 1.0);
 	m_saturation  = MakeRow(":Saturation Point",   0, 255, 1.0, 0, 0.0, 65535.0);
 	m_left_thresh = MakeRow("Threshold:",          0, 255, 1.0, 0, 0.0, 65535.0);
 	m_right_thresh= MakeRow(QString(),             0, 255, 1.0, 0, 0.0, 65535.0);
 	m_luminance   = MakeRow(":Luminance",          0, 255, 1.0, 0, 0.0, 65535.0);
 	m_alpha       = MakeRow(":",                   0, 255, 1.0, 0, 0.0, 65535.0);
-	m_low_shading = MakeRow(":",                   0, 200, 100.0, 2, 0.0, 2.0);
-	m_shadow      = MakeRow(QString(),             0, 100, 100.0, 2, 0.0, 1.0);
-	m_sample_rate = MakeRow("Sample Rate:",        0, 100, 100.0, 2, 0.0, 1.0);
+	m_low_shading = MakeRow(":",                   0, 200, 100.0, 2, 0.0, 10.0);
+	m_shadow      = MakeRow(QString(),             0, 100, 100.0, 2, 0.0, 100.0);
+	m_sample_rate = MakeRow("Sample Rate:",        0, 100, 100.0, 2, 0.0, 100.0);
 	m_colormap_low  = MakeRow(QString(),           0, 255, 1.0, 0, 0.0, 65535.0);
 	m_colormap_high = MakeRow("High (R)",          0, 255, 1.0, 0, 0.0, 65535.0);
 	m_hi_shading  = MakeRow(QString(),             0, 100, 10.0, 2, 0.0, 10.0);   // hidden in the wx UI too
@@ -449,6 +452,8 @@ void VolumePropPanel::GetSettings()
 		r->spin->setDecimals(m_is_float ? 2 : 0);
 		r->spin->setRange(0.0, m_max_val);
 	}
+	// wx: the saturation point text accepts up to 10x the maximum
+	m_saturation.spin->setRange(0.0, m_max_val * 10.0);
 
 	SetRow(m_gamma, m_vd->Get3DGamma());
 	SetRow(m_boundary, m_vd->GetBoundary());

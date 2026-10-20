@@ -827,7 +827,11 @@ void MainWindow::BuildDocks()
 			m_prop_stack->setCurrentWidget(m_prop_empty);
 			m_prop_dock->setWindowTitle(tr("Properties"));
 		}
-		m_canvas->RemoveAnnotations(ann);
+		// every view, not only the active one (m_canvas): the tree item may
+		// belong to another view, which kept a dangling pointer after the
+		// delete below (wx removes it from the item's own view)
+		for (const auto& v : m_views)
+			v->canvas->RemoveAnnotations(ann);
 		m_data_mgr->RemoveAnnotations(ann->GetName());
 	});
 	// wx RefreshVRenderViews: every view
@@ -1084,7 +1088,9 @@ void MainWindow::SetStatus(const QString& s)
 // (the .zattrs / .json that was opened, else empty).
 void MainWindow::ExpandZarrN5(const QStringList& files, QStringList& out, QStringList& meta)
 {
-	const wchar_t slash = L'/';
+	// the readers split on GETSLASH() (a backslash on Windows): native
+	// separators in, and either separator accepted here (command line, vvd:)
+	const wchar_t* slashes = L"/\\";
 	auto relative = [](const std::wstring& p, const std::wstring& root) {
 		try { return QString::fromStdWString(std::filesystem::relative(p, root).wstring()); }
 		catch (...) { return QString::fromStdWString(p); }
@@ -1093,14 +1099,14 @@ void MainWindow::ExpandZarrN5(const QStringList& files, QStringList& out, QStrin
 	{
 		const int dot = f.lastIndexOf('.');
 		const QString suffix = (dot >= 0 ? f.mid(dot) : f).toLower();
-		const std::wstring fw = f.toStdWString();
+		const std::wstring fw = vvd::NativeSeparators(VVDString(f.toStdWString())).ToStdWstring();
 		if (suffix == ".zarr" || suffix == ".zgroup" || suffix == ".zattrs")
 		{
 			std::vector<std::wstring> zpaths;
 			BRKXMLReader::GetZarrChannelPaths(fw, zpaths);
 			std::wstring root = fw;
 			if (suffix == ".zgroup" || suffix == ".zattrs")
-				root = fw.substr(0, fw.find_last_of(slash));
+				root = fw.substr(0, fw.find_last_of(slashes));
 			if (zpaths.empty())
 				zpaths.push_back(root);
 			QStringList list;
@@ -1131,7 +1137,7 @@ void MainWindow::ExpandZarrN5(const QStringList& files, QStringList& out, QStrin
 			BRKXMLReader::GetN5ChannelPaths(fw, n5paths);
 			std::wstring root = fw;
 			if (suffix == ".json")
-				root = fw.substr(0, fw.find_last_of(slash));
+				root = fw.substr(0, fw.find_last_of(slashes));
 			if (n5paths.empty())
 				n5paths.push_back(root);
 			QStringList list;
@@ -1159,7 +1165,14 @@ void MainWindow::LoadVolumes(const QStringList& files_in, const QStringList& des
 
 	if (files_in.isEmpty()) return;
 	QStringList files, metadata;
-	ExpandZarrN5(files_in, files, metadata);
+	// a filesystem error in the Zarr / N5 scan must not leave the event loop
+	// (an uncaught exception there ends the app)
+	try { ExpandZarrN5(files_in, files, metadata); }
+	catch (const std::exception& e)
+	{
+		QMessageBox::warning(this, tr("Open Volume"), tr("Cannot open the dataset:\n%1").arg(QString::fromLocal8Bit(e.what())));
+		return;
+	}
 	if (files.isEmpty()) return;
 	// The volume renderer is created on load and needs the Vulkan context.
 	if (!canvas->EnsureVulkan())
@@ -1374,7 +1387,9 @@ void MainWindow::ClearScene()
 	m_mesh_manip->SetMeshData(nullptr);
 	m_ann_prop->SetAnnotations(nullptr);
 	m_prop_stack->setCurrentWidget(m_prop_empty);
-	m_clip->SetVolume(nullptr);
+	// ClearData, not SetVolume(nullptr): that is a no-op while a mesh is the
+	// clip target, and the pane then kept the freed mesh
+	m_clip->ClearData();
 	m_view->SetCurrentVolume(nullptr);
 	m_canvas->SetCurrentMesh(nullptr);
 	m_canvas->ClearMeshes();     // waits for the GPU
@@ -2027,6 +2042,10 @@ void MainWindow::ForgetMesh(MeshData* md)
 		if (m_prop_stack->currentWidget() == m_mesh_manip)
 			m_prop_stack->setCurrentWidget(m_prop_empty);
 	}
+	// as ForgetVolume: the Clipping Planes pane must not keep the mesh (its
+	// sliders, Link, S/W, Align, Fix and Reset write into it)
+	if (m_clip->GetMeshData() == md)
+		m_clip->SetMeshData(nullptr);
 	for (const auto& v : m_views)
 		v->canvas->RemoveMesh(md);               // waits for the GPU; before the delete
 	m_data_mgr->RemoveMeshData(md->GetName());   // deletes md

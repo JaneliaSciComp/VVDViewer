@@ -623,15 +623,26 @@ void BrushTool::FlushStrokes()
 // drawing (inside the canvas frame)
 // ---------------------------------------------------------------------------
 
-// VRenderVulkanView::UpdateScreen, painting part
-void BrushTool::DrawOverlayPost(RenderCanvas* canvas, int nx, int ny)
+// The matrices Segment() hands to the group / select-both volumes: captured
+// here, while the canvas has the object transforms applied (camera +
+// translate/rotate/-centre, as wx recomputes before SetMatrices). In
+// DrawOverlayPost the canvas has already restored the camera-only matrix, so
+// group strokes were projected shifted by the object centre.
+void BrushTool::DrawOverlay(RenderCanvas* canvas, int /*nx*/, int /*ny*/)
 {
-	if (!canvas || !canvas->GetV2DRender())
+	if (!canvas)
 		return;
 	m_mv_mat = canvas->GetMvMat();
 	m_proj_mat = canvas->GetProjMat();
 	m_tex_mat = canvas->GetTexMat();
 	m_have_matrices = true;
+}
+
+// VRenderVulkanView::UpdateScreen, painting part
+void BrushTool::DrawOverlayPost(RenderCanvas* canvas, int nx, int ny)
+{
+	if (!canvas || !canvas->GetV2DRender())
+		return;
 
 	bool paint_enable = !m_strokes.empty();
 	if (m_int_mode == 2 ||

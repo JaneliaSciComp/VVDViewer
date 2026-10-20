@@ -1510,6 +1510,10 @@ void RenderCanvas::OnExpose(bool exposed)
 
 void RenderCanvas::OnSurfaceResized()
 {
+	// closing: the resize events of the window being torn down must not
+	// rebuild the swapchain on a surface that is going away (Windows:
+	// VK_ERROR_SURFACE_LOST_KHR, then a crash in vkCreateSwapchainKHR)
+	if (m_shutdown) return;
 	m_frame_presented = false;
 	if (!m_vulkan) return;
 	QSize s = DeviceSize();

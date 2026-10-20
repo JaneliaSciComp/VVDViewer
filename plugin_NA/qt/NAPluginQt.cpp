@@ -142,7 +142,8 @@ bool NAPluginQt::OnRun(const VVDString& options)
 	v = OptionValue(args, "c", f); if (f) ch = v;
 	v = OptionValue(args, "s", f); if (f) spacings = v;
 	v = OptionValue(args, "d", f); if (f) prefix = v;
-	runNALoader(label, volume, ch, spacings, prefix, true);
+	if (!runNALoader(label, volume, ch, spacings, prefix, true))
+		fprintf(stderr, "[NA] could not load label %s / volume %s\n", label.toLocal8Bit().constData(), volume.toLocal8Bit().constData());
 	return true;
 }
 
@@ -320,6 +321,20 @@ bool NAPluginQt::runNALoader(const QString& id_path, const QString& vol_path, co
 	BrushToolDialog* brushdlg = m_host->PluginBrushDialog();
 	if (!dm || !vrv || !tree || !brushdlg) return false;
 
+	// the label file first: if it cannot be read, the previous NA data stay.
+	// Native separators: the reader splits the path on GETSLASH() (a
+	// backslash on Windows) and the dialogs return '/'.
+	auto* lbl_reader = new V3DPBDReader();
+	std::wstring str_w = QDir::toNativeSeparators(id_path).toStdWString();
+	lbl_reader->SetFile(str_w);
+	lbl_reader->Preprocess();
+	auto v3d_nrrd = lbl_reader->Convert(0, 0, true);
+	if (!v3d_nrrd || !v3d_nrrd->getNrrd())
+	{
+		delete lbl_reader;
+		return false;
+	}
+
 	Lock();
 	// the groups of the previous NA data leave the view
 	if (DataGroup* group = vrv->GetParentGroup(VVDString(m_vol_s[0])))
@@ -352,16 +367,7 @@ bool NAPluginQt::runNALoader(const QString& id_path, const QString& vol_path, co
 	m_prefix = prefix;
 	if (!m_prefix.isEmpty()) m_prefix += " ";
 
-	m_lbl_reader = new V3DPBDReader();
-	std::wstring str_w = id_path.toStdWString();
-	m_lbl_reader->SetFile(str_w);
-	m_lbl_reader->Preprocess();
-	auto v3d_nrrd = m_lbl_reader->Convert(0, 0, true);
-	if (!v3d_nrrd || !v3d_nrrd->getNrrd())
-	{
-		Unlock();
-		return false;
-	}
+	m_lbl_reader = lbl_reader;
 
 	const size_t avmem = (size_t)(vrv->GetAvailableGraphicsMemory(0) * 1024.0 * 1024.0 * 0.8);
 	LoadFiles(vol_path, avmem, prefix);
@@ -1083,7 +1089,12 @@ void NAResultList::Append(int imgid, const QString& name, int mipid, bool visibi
 void NAResultList::LoadResults(const QString& idpath, const QString& volpath, const QString& chspec, const QString& prefix)
 {
 	if (!m_plugin) return;
-	m_plugin->runNALoader(idpath, volpath, chspec, QString(), prefix);
+	if (!m_plugin->runNALoader(idpath, volpath, chspec, QString(), prefix))
+	{
+		QMessageBox::warning(this, tr("Neuron Annotator"),
+			tr("Could not load the results:\n%1\n%2").arg(QDir::toNativeSeparators(idpath), QDir::toNativeSeparators(volpath)));
+		return;
+	}
 	m_plugin->SetSegmentVisibility(IMG_ID_REF, false);
 	for (int i = 0; i < m_plugin->getSegCount(); i++)
 		m_plugin->SetSegmentVisibility(i, true);
