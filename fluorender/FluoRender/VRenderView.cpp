@@ -6938,11 +6938,16 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(WXK_DOWN)))
 			m_move_down = false;
 
+		//keys that act on frame-wide panels (Record/Export, Clipping Planes):
+		//every view polls the same key state, so only the current view acts,
+		//or each press stepped the movie / slab once per view
+		const bool frame_keys = !cur_glview || cur_glview == this;
 		//move time sequence
-		//forward
-		if (!m_tseq_forward &&
-			VRenderFrame::GetKeyState(wxKeyCode('d')) ||
-			VRenderFrame::GetKeyState(WXK_SPACE))
+		//forward (on the press edge of either key; "!a && b || c" fired on
+		//every poll while Space was held)
+		if (frame_keys && !m_tseq_forward &&
+			(VRenderFrame::GetKeyState(wxKeyCode('d')) ||
+			VRenderFrame::GetKeyState(WXK_SPACE)))
 		{
 			m_tseq_forward = true;
 			if (frame && frame->GetMovieView())
@@ -6954,7 +6959,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(WXK_SPACE))
 			m_tseq_forward = false;
 		//backforward
-		if (!m_tseq_backward &&
+		if (frame_keys && !m_tseq_backward &&
 			VRenderFrame::GetKeyState(wxKeyCode('a')))
 		{
 			m_tseq_backward = true;
@@ -6968,7 +6973,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 
 		//move clip
 		//up
-		if (!m_clip_up &&
+		if (frame_keys && !m_clip_up &&
 			VRenderFrame::GetKeyState(wxKeyCode('s')))
 		{
 			m_clip_up = true;
@@ -6980,7 +6985,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(wxKeyCode('s')))
 			m_clip_up = false;
 		//down
-		if (!m_clip_down &&
+		if (frame_keys && !m_clip_down &&
 			VRenderFrame::GetKeyState(wxKeyCode('w')))
 		{
 			m_clip_down = true;
@@ -9312,7 +9317,11 @@ void VRenderVulkanView::Get4DSeqFrames(int &start_frame, int &end_frame, int &cu
 
 			int vd_start_frame = 0;
 			int vd_end_frame = reader->GetTimeNum()-1;
-			int vd_cur_frame = reader->GetCurTime();
+			// the volume's own time (Set4DSeqFrame sets it), not the reader's:
+			// a time point the brick loader prefetched (Convert_ThreadSafe)
+			// leaves reader->GetCurTime() behind, so going back to that frame
+			// (e.g. the start frame of a playback) was skipped
+			int vd_cur_frame = vd->GetCurTime();
 
 			if (i==0)
 			{
@@ -15844,7 +15853,7 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 						for (j=0; j<bricks2->size(); j++)
 						{
 							(*bricks2)[j]->set_drawn(false);
-							if ((*bricks2)[j]->get_priority()>0 ||
+							if (vd->GetVR()->skip_empty_brick((*bricks2)[j]) ||
 								!vd->GetVR()->test_against_view_clip((*bricks2)[j]->bbox(), (*bricks2)[j]->tbox(), (*bricks2)[j]->dbox(), m_persp) ||
                                 !tex->GetFileName((*bricks2)[j]->getID()) ||
                                 (!tex->GetFileName((*bricks2)[j]->getID())->isvalid && !tex->GetFileName((*bricks2)[j]->getID())->isurl))
@@ -15896,7 +15905,7 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 					for (j=0; j<bricks->size(); j++)
 					{
 						(*bricks)[j]->set_drawn(false);
-						if ((*bricks)[j]->get_priority()>0 ||
+						if (vd->GetVR()->skip_empty_brick((*bricks)[j]) ||
 							!vd->GetVR()->test_against_view_clip((*bricks)[j]->bbox(), (*bricks)[j]->tbox(), (*bricks)[j]->dbox(), m_persp) ||
                             (tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || (!tex->GetFileName((*bricks)[j]->getID())->isvalid && !tex->GetFileName((*bricks)[j]->getID())->isurl))) )
 						{

@@ -151,6 +151,11 @@ namespace FLIVR
 		//changing a single output bit; -1 if no brick can be skipped.
 		//nbytes: bytes per voxel of the data (1 or 2). Call after eval_ml_mode.
 		int invisible_brick_max(int nbytes);
+		//"Skip empty bricks" (bricks flagged by Texture::build): skip one
+		//only while it is still all zero and the transfer function shows
+		//nothing for zero. Used by draw() and by the streaming loops' brick
+		//counts, which must agree.
+		bool skip_empty_brick(TextureBrick* b);
 		//true if brick b of this renderer's data pass can be skipped
 		//(computes the brick maximum on first use)
 		bool brick_invisible(TextureBrick* b, int skip_max);

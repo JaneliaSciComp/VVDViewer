@@ -3454,7 +3454,8 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 		if (m_link_y)
 		{
 			dist = (long)(m_y2_clip_sldr->GetValue() - m_y1_clip_sldr->GetValue());
-			str.ToLong(&dist);
+			// (a stray str.ToLong(&dist) here overwrote the slab thickness
+			// with the previous axis's text)
 			str = m_y2_clip_text->GetValue();
 			long y2;
 			double dval;
@@ -3468,7 +3469,6 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 		if (m_link_z)
 		{
 			dist = (long)(m_z2_clip_sldr->GetValue() - m_z1_clip_sldr->GetValue());
-			str.ToLong(&dist);
 			str = m_z2_clip_text->GetValue();
 			long z2;
 			double dval;

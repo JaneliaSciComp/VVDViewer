@@ -120,6 +120,11 @@ namespace vks
 		bool use_mem_limit = false;
 		double mem_limit = 0.0;
 		double available_mem = 0.0;
+		// the device's maximum for the brick pool (MB), measured once at the
+		// first setMemoryLimit (device creation). Re-measuring later counted
+		// the pool's own textures as used memory, so every settings apply
+		// shrank the limit.
+		double dev_max_mem_ = -1.0;
 		std::vector<TexParam> tex_pool;
 
 		void setMemoryLimit(double limit=0);

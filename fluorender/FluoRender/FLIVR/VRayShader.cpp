@@ -1199,7 +1199,13 @@ VRayShader::VRayShader(
 			if (mask_hide_mode_ > 0)
 				z << VRAY_MASK_RAY_ORTHO;
 		}
-		if (peel_ != 0)
+		//the clip-space ray for depth peeling. The depth-map heads
+		//(colour mode 2) already declare dmap_ray / dmap_st / proj_mat, from
+		//the same start as their st (loc4.y): emitting both declared them
+		//twice, the shader failed to compile on every call, and the depth-map
+		//(shadow) pass of Depth mode with meshes drew nothing and never
+		//finished its brick loop
+		if (peel_ != 0 && color_mode_ != 2)
 		{
 			if (persp_)
 				z << VRAY_HEAD_CLIP_COORD_PERSP;

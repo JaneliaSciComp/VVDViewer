@@ -1033,6 +1033,26 @@ namespace FLIVR
 		return best;
 	}
 
+	bool VolumeRenderer::skip_empty_brick(TextureBrick* b)
+	{
+		if (!b || b->get_priority() <= 0)
+			return false;
+		//pyramid bricks: the flag comes from the brick file (set_priority_brk)
+		if (!tex_ || tex_->isBrxml())
+			return true;
+		//the flag was computed once, from the first data (Texture::build):
+		//re-check the data now (4D frames, flips replace it; the cached max
+		//is dropped when the data change) ...
+		int m = b->get_data_max();
+		if (m < 0)
+			m = b->compute_data_max();
+		if (m != 0)
+			return false;
+		//... and the transfer function: with Inv, or gamma / offset making
+		//zero visible, an all-zero brick is not empty on screen
+		return invisible_brick_max(b->nb(0)) >= 0;
+	}
+
 	bool VolumeRenderer::brick_invisible(TextureBrick* b, int skip_max)
 	{
 		if (skip_max < 0 || !b)
@@ -2018,7 +2038,7 @@ namespace FLIVR
 			}
 
 			if (!b->get_disp() || // Clip against view
-				b->get_priority() > 0) //nothing to draw
+				skip_empty_brick(b)) //nothing to draw
 			{
 				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
 				{
@@ -2955,6 +2975,29 @@ namespace FLIVR
         }
 
 		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
+		//in-place noise removal (type 2) writes the data volume, which is then
+		//read back: its bricks must not be compressed (BC4 has no storage
+		//usage, and the readback would copy compressed blocks over the
+		//voxels). Uncompressed for this pass, as in calculate() / warp(), and
+		//restored on every return.
+		struct CompressionRestore
+		{
+			VolumeRenderer* vr = nullptr;
+			vector<TextureBrick*>* bricks = nullptr;
+			~CompressionRestore()
+			{
+				if (!vr) return;
+				m_vulkan->eraseBricksFromTexpools(bricks, 0);
+				vr->compression_ = true;
+			}
+		} compression_restore;
+		if (write_to_vol && compression_)
+		{
+			m_vulkan->eraseBricksFromTexpools(bricks, 0);
+			compression_ = false;
+			compression_restore.vr = this;
+			compression_restore.bricks = bricks;
+		}
 
 		if (m_segUniformBuffers.empty())
 			m_vulkan->seg_shader_factory_->prepareUniformBuffers(m_segUniformBuffers);

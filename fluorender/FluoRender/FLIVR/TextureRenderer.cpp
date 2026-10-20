@@ -1520,8 +1520,11 @@ namespace FLIVR
 	{
 		if (!m_vulkan)
 			return;
-		//0: the device's own maximum (heap budget less a reserve)
-		const double limit = (use_mem_limit_ && mem_limit_ > 0.0) ? mem_limit_ : 0.0;
+		//0: the device's own maximum (heap budget less a reserve). The
+		//Graphics Memory setting applies only while streaming is on (the
+		//settings dialog greys it out otherwise); before this was forwarded,
+		//the wx app always used the device maximum.
+		const double limit = (streaming_ && use_mem_limit_ && mem_limit_ > 0.0) ? mem_limit_ : 0.0;
 		for (vks::VulkanDevice* dev : m_vulkan->devices)
 			if (dev)
 				dev->setMemoryLimit(limit);

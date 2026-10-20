@@ -15,6 +15,8 @@ namespace vks
 {
 	void VulkanDevice::setMemoryLimit(double limit)
 	{
+	  if (dev_max_mem_ < 0.0)
+	  {
 		uint32_t extensionCount = 0;
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
         std::vector<VkExtensionProperties> extensions(extensionCount);
@@ -77,6 +79,9 @@ namespace vks
 		if (dev_max_mem >= 4096.0) dev_max_mem -= 1024.0;
 		else if (dev_max_mem >= 1024.0) dev_max_mem -= 512.0;
 		else dev_max_mem *= 0.8;
+		dev_max_mem_ = dev_max_mem;
+	  }
+		const double dev_max_mem = dev_max_mem_;
 
 		double new_mem_limit = 0.0;
 
@@ -125,7 +130,15 @@ namespace vks
 		zpitch = (VkDeviceSize)b->sy() * b->sx() * b->nb(c);
 
 		vks::VulkanDevice *device = texp.tex->device;
-		void* data = b->get_nrrd_raw(c)->data;
+		//no CPU copy to read back into (e.g. a pyramid level that is not
+		//resident: its nrrd has no data): nothing to write
+		Nrrd* nd = b->get_nrrd_raw(c);
+		if (!nd || !nd->data)
+		{
+			b->set_dirty(c, false);
+			return false;
+		}
+		void* data = nd->data;
 		device->DownloadTexture3D(texp.tex, data, offset, ypitch, zpitch);
 
 		b->set_dirty(c, false);

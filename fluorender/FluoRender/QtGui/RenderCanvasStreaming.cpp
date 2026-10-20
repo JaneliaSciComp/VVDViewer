@@ -848,7 +848,7 @@ void RenderCanvas::StartLoopUpdate(bool reset_peeling_layer)
 				for (j = 0; j < bricks2->size(); j++)
 				{
 					(*bricks2)[j]->set_drawn(false);
-					if ((*bricks2)[j]->get_priority() > 0 ||
+					if (vd->GetVR()->skip_empty_brick((*bricks2)[j]) ||
 						!vd->GetVR()->test_against_view_clip((*bricks2)[j]->bbox(), (*bricks2)[j]->tbox(), (*bricks2)[j]->dbox(), m_persp) ||
 						!tex->GetFileName((*bricks2)[j]->getID()) ||
 						(!tex->GetFileName((*bricks2)[j]->getID())->isvalid && !tex->GetFileName((*bricks2)[j]->getID())->isurl))
@@ -901,7 +901,7 @@ void RenderCanvas::StartLoopUpdate(bool reset_peeling_layer)
 			for (j = 0; j < bricks->size(); j++)
 			{
 				(*bricks)[j]->set_drawn(false);
-				if ((*bricks)[j]->get_priority() > 0 ||
+				if (vd->GetVR()->skip_empty_brick((*bricks)[j]) ||
 					!vd->GetVR()->test_against_view_clip((*bricks)[j]->bbox(), (*bricks)[j]->tbox(), (*bricks)[j]->dbox(), m_persp) ||
 					(tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || (!tex->GetFileName((*bricks)[j]->getID())->isvalid && !tex->GetFileName((*bricks)[j]->getID())->isurl))))
 				{

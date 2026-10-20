@@ -201,7 +201,7 @@ namespace FLIVR
          static void set_mem_swap(bool val) {mem_swap_ = val;}
          static bool get_mem_swap() {return mem_swap_;}
          //streamoing
-         static void set_streaming(bool val) { streaming_ = val; }
+         static void set_streaming(bool val) { if (streaming_ != val) { streaming_ = val; apply_device_mem_limit(); } }
          static bool get_streaming() { return streaming_; }
          //use memory limit (otherwise get available memory from graphics card)
          static void set_use_mem_limit(bool val) {use_mem_limit_ = val; apply_device_mem_limit();}

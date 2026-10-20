@@ -1254,11 +1254,8 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 			vd->Set2dDmap(m_tex_ol1);
 			//draw
 			vd->SetStreamMode(3);
-			// no depth peeling in the depth-map pass: the VRay shader cannot
-			// combine both (it declares dmap_ray / dmap_st twice and fails to
-			// compile; wx draws nothing then and its brick loop never ends)
-			const int peel = vd->GetVR()->get_depth_peel();
-			vd->GetVR()->set_depth_peel(0);
+			// (depth peeling stays on, as in wx: the shader generator now
+			// combines the depth-map head with the peeling tests)
 			int uporder = TextureRenderer::get_update_order();
 			TextureRenderer::set_update_order(0);
 			vd->GetTexture()->set_sort_bricks();
@@ -1272,7 +1269,6 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 			vd->GetShadowParams(shadow_darkness);
 			TextureRenderer::set_update_order(uporder);
 			vd->GetTexture()->set_sort_bricks();
-			vd->GetVR()->set_depth_peel(peel);
 		}
 	}
 	else

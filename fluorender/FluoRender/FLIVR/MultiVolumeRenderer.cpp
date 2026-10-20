@@ -380,6 +380,18 @@ namespace FLIVR
 						if (disp)
 							TextureRenderer::cur_brick_num_++;
 					}
+					//but kept in the slice range: on later calls of the loop it
+					//is drawn(stmode) and goes through the branch below, so
+					//leaving it out here made the range differ between calls,
+					//and cur_tid_offset_multi_ (relative to the first call's
+					//range) then re-recorded and double-composited a slab
+					if (b->compute_t_index_min_max(view_ray, vr_dt))
+					{
+						int tmp = b->timin();   //(int, as in the branch below)
+						all_timin = (all_timin > tmp) ? tmp : all_timin;
+						tmp = b->timax();
+						all_timax = (all_timax < tmp) ? tmp : all_timax;
+					}
 				}
 				else if (b->compute_t_index_min_max(view_ray, vr_dt))
 				{
@@ -406,15 +418,19 @@ namespace FLIVR
 		if (TextureRenderer::get_mem_swap() && remain_brk == 0)
 		{
 			//every brick left was culled or skipped above (e.g. a capture tile
-			//that shows no data): the loop is complete without a draw, or it
-			//would never be marked done
-			if (updating &&
-				TextureRenderer::get_cur_brick_num() == TextureRenderer::get_total_brick_num())
+			//that shows no data): this pass is complete without a draw. Mark
+			//it done even when other counted passes remain (Shadow / mask:
+			//StartLoopUpdate counts their bricks too, and the shadow pass waits
+			//for get_done_loop(0), so waiting for cur == total here hung the
+			//loop); the whole loop is done once every counted brick is
+			if (updating)
 			{
 				for (i = 0; i < (int)vr_list_.size(); i++)
 					if (vr_list_[i]) vr_list_[i]->done_loop_[stmode] = true;
-				TextureRenderer::set_done_update_loop(true);
-
+				if (TextureRenderer::get_cur_brick_num() == TextureRenderer::get_total_brick_num())
+					TextureRenderer::set_done_update_loop(true);
+			}
+			{
 				//nothing is drawn: clear the target as requested (as
 				//VolumeRenderer::draw_volume_ray), or the caller composites
 				//what it held before (the previous capture tile)
