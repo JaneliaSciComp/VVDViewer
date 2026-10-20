@@ -267,7 +267,7 @@ namespace
 			str = ctx.FilesDir() + sep + vd->GetName() + ext;
 			vd->Save(str, 2, false, opts.compress);
 		}
-		s.W(L"path", str);
+		s.W(L"path", vvd::NativeSeparators(str));
 		if (BaseReader* r = vd->GetReader())
 		{
 			s.W(L"slice_seq", r->GetSliceSeq());
@@ -654,7 +654,7 @@ namespace
 			}
 		}
 		s.W(L"name", md->GetName());
-		s.W(L"path", path);
+		s.W(L"path", vvd::NativeSeparators(path));
 
 		Sec p = s.Sub(L"properties");
 		p.W(L"display", md->GetDisp());
@@ -1290,7 +1290,9 @@ namespace ProjectIO
 		}
 		vvd::IniFile ini;
 		Ctx ctx;
-		ctx.prj_path = Q2S(path);
+		// native separators: paths in the file are composed from this one,
+		// and the wx project loader splits them on GETSLASH()
+		ctx.prj_path = vvd::NativeSeparators(Q2S(path));
 		ctx.files_dir = ctx.prj_path + L"_files";
 
 		Sec root(ini, L"/");
@@ -1339,7 +1341,7 @@ namespace ProjectIO
 					ann->Save(ctx.FilesDir() + vvd::PathSeparator() + ann->GetName() + L".txt");
 				Sec a = da.Sub(Idx(L"%d", i));
 				a.W(L"name", ann->GetName());
-				a.W(L"path", ann->GetPath());
+				a.W(L"path", vvd::NativeSeparators(ann->GetPath()));
 				if (MeshData* md = ann->GetMesh())
 				{
 					FLIVR::Color amb, diff, spec;

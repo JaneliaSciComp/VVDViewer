@@ -2716,7 +2716,9 @@ void VolumeData::Save(const VVDString &filename, int mode, bool bake, bool compr
 		if ( isBrxml() )
 			SetLevel(curlv);
 
-		if ( !isBrxml() ) m_tex_path = filename;
+		// stored (and written to projects) with native separators: the wx
+		// project loader splits paths on GETSLASH()
+		if ( !isBrxml() ) m_tex_path = vvd::NativeSeparators(filename);
 	}
 }
 
@@ -2758,7 +2760,9 @@ void VolumeData::ImportMask(const VVDString &filename)
 {
 	MSKReader msk_reader;
 	msk_reader.SetAddExt(false);
-    std::string str = filename.ToStdString();
+	// the wide overload: SetFile(string&) widens byte by byte, which breaks
+	// UTF-8 (non-ASCII) names
+    std::wstring str = filename.ToStdWstring();
 	msk_reader.SetFile(str);
 	auto mask = msk_reader.Convert(0, 0, true);
 	if (mask)
@@ -2940,7 +2944,7 @@ BBox VolumeData::GetBounds()
 //path
 void VolumeData::SetPath(VVDString path)
 {
-	m_tex_path = path;
+	m_tex_path = vvd::NativeSeparators(path);
 }
 
 VVDString VolumeData::GetPath()
@@ -6094,7 +6098,7 @@ void MeshData::Save(const VVDString &filename)
 		str[filename.length()] = 0;
 		glmWriteOBJ(m_data, str, GLM_SMOOTH);
 		delete []str;
-		m_data_path = filename;
+		m_data_path = vvd::NativeSeparators(filename);
 	}
 }
 
@@ -7109,6 +7113,11 @@ void Annotations::SetVolume(VolumeData *vd)
 	m_vd = vd;
 	if (m_vd)
 		m_name += "_FROM_" + m_vd->GetName();
+	else
+		//m_tform points into the volume's texture (SetTransform / Load): the
+		//volume is going away (DataManager::RemoveVolumeData), and the next
+		//draw read the freed transform (GetTextTransformedPos)
+		m_tform = nullptr;
 }
 
 VolumeData* Annotations::GetVolume()
@@ -9485,6 +9494,8 @@ void DataManager::SetVolumeDefault(VolumeData* vd)
 void DataManager::SetProjectPath(VVDString path)
 {
 	m_prj_path.Clear();
+	// the Qt app passes '/' paths; GETSLASH() is a backslash on Windows
+	path = vvd::NativeSeparators(path);
 	int sep = path.Find(GETSLASH(), true);
 	if (sep != VVDString::npos)
 		m_prj_path = path.Left(sep);
@@ -12151,7 +12162,9 @@ vvd::Thread::ExitCode ProjectDataLoaderThread::Entry()
             break;
         }
         
-        VVDString filename = m_pdl->m_queues[0].path;
+        // a project saved by the Qt app on Windows stores '/' paths; the
+        // readers split on GETSLASH() (a backslash there)
+        VVDString filename = vvd::NativeSeparators(m_pdl->m_queues[0].path);
         VVDString name = m_pdl->m_queues[0].name;
         VVDString metadata = m_pdl->m_queues[0].metadata;
         int ch_num = m_pdl->m_queues[0].ch;
@@ -12162,8 +12175,8 @@ vvd::Thread::ExitCode ProjectDataLoaderThread::Entry()
         bool time_seq = m_pdl->m_queues[0].time_seq;
         VVDString time_id = m_pdl->m_queues[0].time_id;
         bool load_mask = m_pdl->m_queues[0].load_mask;
-        VVDString mskpath = m_pdl->m_queues[0].mskpath;
-        VVDString lblpath = m_pdl->m_queues[0].lblpath;
+        VVDString mskpath = vvd::NativeSeparators(m_pdl->m_queues[0].mskpath);
+        VVDString lblpath = vvd::NativeSeparators(m_pdl->m_queues[0].lblpath);
         int type = m_pdl->m_queues[0].type;
         size_t queue_index = m_pdl->m_next_index++;
         

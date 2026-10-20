@@ -241,6 +241,12 @@ namespace vvd
 	{
 #if defined(__APPLE__)
 		return JoinPath(JoinPath(JoinPath(HomeDir(), L"Library"), L"Caches"), L"VVDViewer");
+#elif defined(_WIN32)
+		// a cache belongs in the local profile, not the roaming one (APPDATA)
+		wchar_t buf[MAX_PATH];
+		if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, buf)))
+			return JoinPath(String(buf), GetAppName());
+		return GetUserDataDir();
 #else
 		return GetUserDataDir();
 #endif
@@ -491,7 +497,11 @@ namespace vvd
 
 	String TextFileReader::ReadLine()
 	{
-		if (m_next >= m_lines.size()) return String();
+		if (m_next >= m_lines.size())
+		{
+			m_eof = true;
+			return String();
+		}
 		return m_lines[m_next++];
 	}
 

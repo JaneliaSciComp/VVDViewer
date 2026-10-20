@@ -58,7 +58,8 @@ bool BRKXMLReader::DownloadFile(std::string& url)
     {
         vvd::String pathname = url;
         vvd::String tmpfname = vvd::JoinPath(vvd::GetTempDir(), pathname.AfterLast(L'/'));
-        std::ofstream outputFile(tmpfname.ToStdString(), std::ios::binary);
+        // wide path: ToStdString is UTF-8, which a narrow ofstream reads as ANSI
+        std::ofstream outputFile(fs::path(tmpfname.ToStdWstring()), std::ios::binary);
         if (!outputFile.is_open())
         {
             std::cerr << "Could not open file to write: " << tmpfname.ToStdString() << std::endl;
@@ -2344,7 +2345,13 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
     }
 
     if (!skip) {
-        fs::recursive_directory_iterator ite(root_path.string());
+        std::error_code ec;
+        fs::recursive_directory_iterator ite(fs::path(root_path.wstring()), fs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+            std::cerr << "GetZarrChannelPaths: cannot list " << root_path.string() << ": " << ec.message() << std::endl;
+            return false;
+        }
+        try {
         for (const auto& entry : ite) {
             try {
                 if (fs::is_directory(entry.status())) {
@@ -2376,6 +2383,10 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
                 std::cerr << "Error: " << ex.what() << std::endl;
             }
         }
+        }
+        catch (const std::exception & ex) {
+            std::cerr << "GetZarrChannelPaths: " << ex.what() << std::endl;
+        }
     }
 
     std::sort(output.begin(), output.end());
@@ -2394,7 +2405,8 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
     size_t ext_pos = n5path.find_last_of(L".");
     wstring ext = n5path.substr(ext_pos+1);
     transform(ext.begin(), ext.end(), ext.begin(), towlower);
-    wstring dir_name = n5path.substr(0, n5path.find_last_of(slash)+1);
+    // either separator (the Qt app passes '/' paths on Windows)
+    wstring dir_name = n5path.substr(0, n5path.find_last_of(L"/\\")+1);
     
     if (dir_name.size() > 1 && ext == L"n5")
         dir_name = n5path + slash;
@@ -2419,7 +2431,16 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
     
     std::regex pattern(R"((^|\bs)\d+$)");
     
-    fs::recursive_directory_iterator ite(root_path.string());
+    // a missing / unreadable root must not throw out of the GUI's event
+    // loop (it used to terminate the Qt app): error_code construction, and
+    // the iteration itself guarded below
+    std::error_code ec;
+    fs::recursive_directory_iterator ite(fs::path(root_path.wstring()), fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        std::cerr << "GetN5ChannelPaths: cannot list " << root_path.string() << ": " << ec.message() << std::endl;
+        return false;
+    }
+    try {
     for (const auto& entry : ite) {
         try {
             if (fs::is_directory(entry.status())) {
@@ -2447,6 +2468,10 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
         catch (const fs::filesystem_error & ex) {
             std::cerr << "Error: " << ex.what() << std::endl;
         }
+    }
+    }
+    catch (const std::exception & ex) {
+        std::cerr << "GetN5ChannelPaths: " << ex.what() << std::endl;
     }
     
     std::sort(output.begin(), output.end());

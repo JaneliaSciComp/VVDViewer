@@ -144,11 +144,15 @@ namespace vvd
 		explicit TextFileReader(const String& path);
 		bool IsOk() const { return m_ok; }
 		bool Ok() const { return m_ok; }
-		bool Eof() const { return m_next >= m_lines.size(); }
+		// true after a ReadLine() past the last line (wxInputStream::Eof
+		// semantics, which the readers' loops were written for), not as
+		// soon as the last line has been read
+		bool Eof() const { return m_eof; }
 		String ReadLine();
 		const std::vector<String>& Lines() const { return m_lines; }
 	private:
 		bool m_ok = false;
+		bool m_eof = false;
 		size_t m_next = 0;
 		std::vector<String> m_lines;
 	};

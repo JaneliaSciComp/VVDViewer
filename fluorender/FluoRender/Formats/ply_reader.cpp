@@ -29,13 +29,18 @@ GLMmodel *PLYReader::GetSolidModel()
     
     vector<unsigned int> model_tris;
 	GLMmodel *model = (GLMmodel*)malloc(sizeof(GLMmodel));
-	float *verts = (float*)malloc( (sizeof(float)*vPos.size() + 1) * 3 );
+	// 1-based, like the OBJ loader (glmReadOBJ): vertices[0..2] unused,
+	// vertex k at [3k..3k+2] for k = 1..numvertices. The glm routines
+	// (glmBoundingBox, glmVertexNormals, glmWriteOBJ, ...) all assume this;
+	// a 0-based array made them read past its end.
+	float *verts = (float*)malloc(sizeof(float) * 3 * (vPos.size() + 1));
+	verts[0] = verts[1] = verts[2] = 0.0f;
 
-    for (int i = 0; i < vPos.size(); i++)
+    for (size_t i = 0; i < vPos.size(); i++)
     {
-        verts[3*i]   = vPos[i][0];
-        verts[3*i+1] = vPos[i][1];
-        verts[3*i+2] = vPos[i][2];
+        verts[3*(i+1)]   = vPos[i][0];
+        verts[3*(i+1)+1] = vPos[i][1];
+        verts[3*(i+1)+2] = vPos[i][2];
     }
 	
     size_t count = 0;
@@ -43,9 +48,10 @@ GLMmodel *PLYReader::GetSolidModel()
 	{
         for (int j = 2; j < fInd[i].size(); j++)
         {
-            model_tris.push_back(fInd[i][0]);
-            model_tris.push_back(fInd[i][j-1]);
-            model_tris.push_back(fInd[i][j]);
+            // 1-based vertex indices (see verts above)
+            model_tris.push_back(fInd[i][0] + 1);
+            model_tris.push_back(fInd[i][j-1] + 1);
+            model_tris.push_back(fInd[i][j] + 1);
             count++;
         }
 	}

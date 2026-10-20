@@ -26,6 +26,7 @@
 //  DEALINGS IN THE SOFTWARE.
 //
 
+#include <filesystem>
 #include <math.h>
 
 #include <FLIVR/TextureBrick.h>
@@ -1437,7 +1438,7 @@ z
 			   dft += s;
 
 			   wstring cfname = dft;
-			   ofstream ofs(ws2s(cfname), ios::binary);
+			   ofstream ofs(std::filesystem::path(cfname), ios::binary);   // wide: non-ASCII user / cache paths
 			   if (!ofs) return false;
 			   curl_easy_setopt(s_curl_, CURLOPT_WRITEDATA, &ofs);
 			   ret = curl_easy_perform(s_curl_);
@@ -1466,7 +1467,7 @@ z
 
 	   ifstream ifs;
 	   wstring fn = finfo->cached ? finfo->cache_filename : finfo->filename;
-	   ifs.open(ws2s(fn), ios::binary);
+	   ifs.open(std::filesystem::path(fn), ios::binary);
 	   if (!ifs) 
 		   return false;
        
@@ -2240,7 +2241,7 @@ z
 	   try
 	   {
 		   ifstream ifs;
-		   ifs.open(ws2s(finfo->filename), ios::binary);
+		   ifs.open(std::filesystem::path(finfo->filename), ios::binary);   // wide: non-ASCII paths
 		   if (!ifs) return false;
 		   if (finfo->datasize > 0 && size != finfo->datasize) return false;
 		   size_t read_size = finfo->datasize > 0 ? finfo->datasize : size;
@@ -2423,7 +2424,7 @@ z
 	   try
 	   {
 		   ifstream ifs;
-		   ifs.open(ws2s(finfo->filename), ios::binary);
+		   ifs.open(std::filesystem::path(finfo->filename), ios::binary);   // wide: non-ASCII paths
 		   if (!ifs) return false;
 		   
 		   size_t zsize = finfo->datasize;

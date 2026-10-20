@@ -146,6 +146,21 @@ inline TIFF* TIFFOpenW(std::wstring fname, const char* opt) {
 }
 
 inline FILE* FOPEN(FILE** fp, const char *fname, const char* mode) {
+	// The engine's narrow file names are UTF-8 (ws2s, vvd::String::ToStdString),
+	// which fopen_s would read as the ANSI code page: open them as wide names.
+	// Bytes that are not valid UTF-8 (an ANSI name from older wx code) keep
+	// the ANSI fopen_s.
+	*fp = nullptr;
+	if (!fname || !mode) return nullptr;
+	const int wn = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, fname, -1, nullptr, 0);
+	if (wn > 0)
+	{
+		std::wstring wname(wn, L'\0');
+		MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, fname, -1, &wname[0], wn);
+		std::wstring wmode(mode, mode + strlen(mode));
+		_wfopen_s(fp, wname.c_str(), wmode.c_str());
+		return *fp;
+	}
 	fopen_s(fp, fname, mode);
 	return *fp;
 }
