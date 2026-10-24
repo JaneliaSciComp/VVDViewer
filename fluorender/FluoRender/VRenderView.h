@@ -1172,6 +1172,11 @@ private:
 	std::unique_ptr<vks::VFrameBuffer> m_fbo_ol2;
 	std::shared_ptr<vks::VTexture> m_tex_ol1;
 	std::shared_ptr<vks::VTexture> m_tex_ol2;
+	//a copy of a render target that the next pass also samples (the shadow
+	//passes read the colour they darken: sampling the attachment being written
+	//is a feedback loop, VUID-vkCmdDrawIndexed-imageLayout-00344)
+	std::unique_ptr<vks::VFrameBuffer> m_fbo_snap;
+	std::shared_ptr<vks::VTexture> m_tex_snap;
 	//paint buffer
 	std::unique_ptr<vks::VFrameBuffer> m_fbo_paint;
 	std::shared_ptr<vks::VTexture> m_tex_paint;
@@ -1536,6 +1541,9 @@ private:
 	void DrawOLShading(VolumeData* vd, std::unique_ptr<vks::VFrameBuffer>& fb);
 	void DrawOLShadows(vector<VolumeData*> &vlist, std::unique_ptr<vks::VFrameBuffer>& fb);
 	void DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& tex_depth, double darkness);
+	//empty: the pass clears the target first (an empty copy); chain: take a
+	//slot in the render-semaphore chain, as the pass that reads it does
+	vks::VTexture* SnapshotTarget(const std::unique_ptr<vks::VFrameBuffer>& fb, bool empty, bool chain);
 	
 	void StartTileRendering(int w, int h, int tilew, int tileh);
 	void EndTileRendering();

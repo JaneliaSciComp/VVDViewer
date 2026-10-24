@@ -1573,7 +1573,16 @@ void VRenderFrame::LoadVolumes(wxArrayString files, VRenderView* view, vector<ve
 			//else if (suffix==".xml")
 			//	ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_PVXML, -1, -1, datasize, prefix);
 			else if (suffix==".vvd" || suffix==".n5" || suffix==".json" || suffix==".n5fs_ch" || suffix==".xml" || suffix==".zarr" || suffix == ".zattrs" || suffix==".zfs_ch")
-				ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_BRKXML, -1, -1, datasize, prefix, metadatafiles[j]);
+			{
+				//the reader parses JSON / XML metadata while loading: a malformed
+				//file must fail this dataset, not end the app (std::terminate)
+				try { ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_BRKXML, -1, -1, datasize, prefix, metadatafiles[j]); }
+				catch (const std::exception& e)
+				{
+					ch_num = 0;
+					wxMessageBox(wxString::Format("Cannot open the dataset:\n%s\n%s", filename, wxString(e.what())), "Open Volume", wxOK | wxICON_WARNING);
+				}
+			}
 			else if (suffix == ".h5j")
 				ch_num = m_data_mgr.LoadVolumeData(filename, LOAD_TYPE_H5J, -1, -1, datasize, prefix);
 			else if (suffix == ".v3dpbd")
@@ -6091,8 +6100,11 @@ void VRenderFrame::OpenProject(wxString& filename)
 	m_vrv_list[0]->Clear();
 	for (i=m_vrv_list.size()-1; i>0; i--)
 		DeleteVRenderView(i);
+	//ClearAll frees every annotation: the analysis must not keep its pointer
+	if (m_vrv_list[0] && m_vrv_list[0]->GetVolumeSelector())
+		m_vrv_list[0]->GetVolumeSelector()->ForgetAnnotations();
 	m_data_mgr.ClearAll();
-	
+
 	wxFileInputStream is(filename);
 	if (!is.IsOk())
 		return;
