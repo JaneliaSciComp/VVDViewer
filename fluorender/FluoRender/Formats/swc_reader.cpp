@@ -2,6 +2,7 @@
 #include "swc_reader.h"
 #include "../compatibility.h"
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <locale>
@@ -584,7 +585,8 @@ void SWCReader::Preprocess()
     wstring path = m_path_name.substr(0, pos+1);
     wstring name = m_path_name.substr(pos+1);
 
-    ifstream ifs(ws2s(m_path_name));
+    //wide path: a narrow ifstream reads the UTF-8 name in the ANSI code page
+    ifstream ifs{std::filesystem::path(m_path_name)};
     if (ifs.fail())
     {
         cerr << "file open error: " << ws2s(m_path_name) << endl;

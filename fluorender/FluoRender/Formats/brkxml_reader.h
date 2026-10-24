@@ -378,7 +378,7 @@ private:
 		int copyableLv;
         int maskLv;
 	};
-	ImageInfo m_imageinfo;
+	ImageInfo m_imageinfo = {};   //(Preprocess resets it: loaders read nChannel / nFrame)
     
     vector<vector<double>> m_bdv_resolutions;
     vector<vector<FLIVR::Transform>> m_bdv_view_transforms;

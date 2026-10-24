@@ -810,6 +810,12 @@ public:
 	//type: 0-initial; 1-diffusion-based growing
 	//paint_mode: 1-select; 2-append; 3-erase; 4-diffuse; 5-flood; 6-clear
 	//hr_mode (hidden removal): 0-none; 1-ortho; 2-persp
+	//in-place Noise Removal (DrawMask type 2) over several calls: the data
+	//bricks of the level DrawMask writes (the mask level of pyramid data)
+	//stay uncompressed until EndVolumeWrites (VolumeRenderer::begin/
+	//end_volume_writes)
+	void BeginVolumeWrites();
+	void EndVolumeWrites();
 	void DrawMask(int type, int paint_mode, int hr_mode,
 		double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
 		double w2d, double bins, bool ortho = false, Texture* ext_msk = NULL, bool clear_msk_cache = true, bool use_absolute_value = false, bool save_stroke = true, bool force_clear_stroke = false);
@@ -1324,6 +1330,12 @@ public:
 	void SetTransform(Transform *tform);
 	void SetVolume(VolumeData* vd);
 	VolumeData* GetVolume();
+	//the volume was replaced by vd (DataManager::ReplaceVolumeData)
+	void RebindVolume(VolumeData* vd);
+	//the transform of the label positions (the volume's texture, else
+	//SetTransform's); false once the volume is deleted: nothing to draw
+	Transform* GetCurTransform();
+	bool HasTransform();
     void SetMesh(MeshData* md);
     MeshData* GetMesh();
 

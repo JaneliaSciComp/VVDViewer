@@ -127,6 +127,14 @@ public:
 	//annotations
 	void GenerateAnnotations(bool use_sel);
 	Annotations* GetAnnotations();
+	//the last analysis' annotations belong to DataManager once shown: forget
+	//them when they are deleted (nullptr: whichever they are, e.g. ClearAll),
+	//so Show Annotations does not hand the freed object back
+	void ForgetAnnotations(Annotations* ann = nullptr)
+	{
+		if (!ann || m_annotations == ann)
+			m_annotations = 0;
+	}
 
 	//estimate threshold
 	void SetEstimateThreshold(bool value)

@@ -3,6 +3,8 @@
 #include "happly.h"
 #include "../compatibility.h"
 #include <fstream>
+#include <filesystem>
+#include <stdexcept>
 #include <iostream>
 #include <sstream>
 #include <locale>
@@ -15,7 +17,12 @@ GLMmodel *PLYReader::GetSolidModel()
     std::vector<std::vector<size_t>> fInd;
     
     try {
-        happly::PLYData plyIn(ws2s(m_path_name).c_str());
+        // opened from the wide path (happly's own narrow ifstream reads the
+        // UTF-8 name in the ANSI code page on Windows: non-ASCII folders failed)
+        std::ifstream is(std::filesystem::path(m_path_name), std::ios::binary);
+        if (!is.is_open())
+            throw std::runtime_error("PLY parser: Could not open file " + ws2s(m_path_name));
+        happly::PLYData plyIn(is);
         plyIn.validate();
     
         vPos = plyIn.getVertexPositions();

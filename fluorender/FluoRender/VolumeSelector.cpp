@@ -1453,6 +1453,8 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 
 	if (mode == 0)
 	{
+		//uncompressed once for all iterations (not re-uploaded per DrawMask)
+		m_vd->BeginVolumeWrites();
 		for (int i=0; i<iter; i++)
 		{
 			m_vd->DrawMask(2, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -1464,6 +1466,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		}
 		m_vd->DrawMask(0, 6, 0, ini_thresh, gm_falloff, scl_falloff, thresh, m_w2d, 0.0);
 		m_vd->GetVR()->return_volume();
+		m_vd->EndVolumeWrites();
 	}
 	else if (mode == 1)
 	{
@@ -1485,6 +1488,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		unsigned long long mem_size = (unsigned long long)res_x*
 			(unsigned long long)res_y*(unsigned long long)res_z*(unsigned long long)bytes;
 
+		vd_new->BeginVolumeWrites();
 		for (int i=0; i<iter; i++)
 		{
 			vd_new->DrawMask(2, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -1496,6 +1500,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		}
 		vd_new->DrawMask(0, 6, 0, ini_thresh, gm_falloff, scl_falloff, thresh, m_w2d, 0.0);
 		vd_new->GetVR()->return_volume();
+		vd_new->EndVolumeWrites();
 
 		if (nrrd_new)
 		{
@@ -1522,9 +1527,10 @@ void VolumeSelector::EVEAnalysis(int min_radius, int max_radius, double thresh, 
 	if (!m_vd)
 		return;
 
-	bool use_sel = false;
-	if (select && m_vd->GetTexture() && m_vd->GetTexture()->nmask() != -1)
-		use_sel = true;
+	//EVE counts on the whole volume: it has no selection mode (the
+	//selection-only block below is disabled). The use_sel lines copied from
+	//CompAnalysis tested ::select, the address of the system select()
+	//function (always true; C4551), and their result was never used.
 
 	m_prog_diag = vvd::UI::CreateProgress("VVDViewer: EVE Analysis...", "Analyzing... Please wait.", 100, vvd::PROGRESS_APP_MODAL | vvd::PROGRESS_SMOOTH | vvd::PROGRESS_ELAPSED | vvd::PROGRESS_AUTO_HIDE).release();
 	m_progress = 0;
@@ -1548,7 +1554,7 @@ void VolumeSelector::EVEAnalysis(int min_radius, int max_radius, double thresh, 
 	m_vd->GetVR()->return_mask();
 */
 
-	EVECount(min_radius, max_radius, thresh);
+	EVECount(min_radius, max_radius, thresh, target_lv);
 
 	if (m_prog_diag)
 	{

@@ -95,11 +95,8 @@ void NRRDWriter::Save(wstring filename, int mode)
 		nrrdAxisInfoSet(data, nrrdAxisInfoMin, AIR_NAN, AIR_NAN, AIR_NAN);
 	}
 
-	string str;
-	str.assign(filename.length(), 0);
-	for (int i=0; i<(int)filename.length(); i++)
-		str[i] = (char)filename[i];
-	nrrdSave(str.c_str(), data, nio);
+	if (SaveNrrdFile(filename, data, nio))
+		fprintf(stderr, "NRRDWriter: could not save %ls\n", filename.c_str());
 
 	nrrdIoStateNix(nio);
 

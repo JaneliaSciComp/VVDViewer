@@ -3209,6 +3209,36 @@ void VolumeData::DrawBounds()
 //paint_mode: 1-select; 2-append; 3-erase; 4-diffuse; 5-flood; 6-clear, 7-all
 //			  11-posterize
 //hr_mode (hidden removal): 0-none; 1-ortho; 2-persp
+void VolumeData::BeginVolumeWrites()
+{
+	if (!m_vr)
+		return;
+	int curlv = -1;
+	if (isBrxml())
+	{
+		curlv = GetLevel();
+		SetLevel(GetMaskLv());
+	}
+	m_vr->begin_volume_writes();
+	if (curlv >= 0)
+		SetLevel(curlv);
+}
+
+void VolumeData::EndVolumeWrites()
+{
+	if (!m_vr)
+		return;
+	int curlv = -1;
+	if (isBrxml())
+	{
+		curlv = GetLevel();
+		SetLevel(GetMaskLv());
+	}
+	m_vr->end_volume_writes();
+	if (curlv >= 0)
+		SetLevel(curlv);
+}
+
 void VolumeData::DrawMask(int type, int paint_mode, int hr_mode,
 						  double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
 						  double w2d, double bins, bool ortho, Texture* ext_msk, bool clear_msk_cache, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
@@ -6092,12 +6122,11 @@ void MeshData::Save(const VVDString &filename)
 {
 	if (m_data)
 	{
-		char* str = new char[filename.length()+1];
-		for (int i=0; i<(int)filename.length(); i++)
-			str[i] = (char)filename[i];
-		str[filename.length()] = 0;
-		glmWriteOBJ(m_data, str, GLM_SMOOTH);
-		delete []str;
+		//UTF-8, as MeshData::Load passes it: glm opens it with FOPEN, which
+		//takes UTF-8 on Windows (a (char) cast of each UTF-16 unit wrote
+		//nothing, or a stray file, for names outside Latin-1)
+		std::string str = filename.ToStdString();
+		glmWriteOBJ(m_data, &str[0], GLM_SMOOTH);
 		m_data_path = vvd::NativeSeparators(filename);
 	}
 }
@@ -7079,8 +7108,9 @@ Point Annotations::GetTextTransformedPos(int index)
 	if (index>=0 && index<(int)m_alist.size())
 	{
 		AText* atext = m_alist[index];
-		if (atext && m_tform)
-			return m_tform->transform(atext->m_pos);
+		Transform* tform = GetCurTransform();
+		if (atext && tform)
+			return tform->transform(atext->m_pos);
 	}
 	return Point(Vector(0.0));
 }
@@ -7123,6 +7153,28 @@ void Annotations::SetVolume(VolumeData *vd)
 VolumeData* Annotations::GetVolume()
 {
 	return m_vd;
+}
+
+void Annotations::RebindVolume(VolumeData *vd)
+{
+	//the name keeps its "_FROM_<volume>" part (SetVolume would append again)
+	m_vd = vd;
+	m_tform = (vd && vd->GetTexture()) ? vd->GetTexture()->transform() : nullptr;
+}
+
+Transform* Annotations::GetCurTransform()
+{
+	//from the volume when there is one: VolumeData::Replace(data, true)
+	//(3D batch frames) builds a new texture, and a cached m_tform pointed
+	//into the deleted one
+	if (m_vd)
+		return m_vd->GetTexture() ? m_vd->GetTexture()->transform() : nullptr;
+	return m_tform;
+}
+
+bool Annotations::HasTransform()
+{
+	return GetCurTransform() != nullptr;
 }
 
 void Annotations::SetMesh(MeshData *md)
@@ -7367,7 +7419,7 @@ void Annotations::SetInfoMeaning(const VVDString &str)
 //test if point is inside the clipping planes
 bool Annotations::InsideClippingPlanes(Point &pos)
 {
-	if (!m_vd)
+	if (!m_vd || !m_vd->GetVR())
 		return true;
 
 	vector<Plane*> *planes = m_vd->GetVR()->get_planes();
@@ -9712,7 +9764,21 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
 	int i;
 	int result = 0;
 	BaseReader* reader = 0;
-    
+	//a reader made by this call: dropped again if nothing loads (a failed
+	//reader matched the path on the next open and was reused without a new
+	//Preprocess, so a fixed file still failed)
+	bool new_reader = false;
+	auto drop_new_reader = [&]() {
+		if (!new_reader || !reader)
+			return;
+		auto it = std::find(m_reader_list.begin(), m_reader_list.end(), reader);
+		if (it != m_reader_list.end())
+			m_reader_list.erase(it);
+		delete reader;
+		reader = 0;
+		new_reader = false;
+	};
+
     VVDString idi_metadata_path;
     int idi_type = 0;
     if (type == LOAD_TYPE_IDI)
@@ -9748,6 +9814,7 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
 		reader = pre->reader;
 		pre->reader = nullptr;
 		m_reader_list.push_back(reader);
+		new_reader = true;
 	}
 	else
 	for (i=0; i<(int)m_reader_list.size(); i++)
@@ -9824,6 +9891,7 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
 			reader = new V3DPBDReader();
 
 		m_reader_list.push_back(reader);
+		new_reader = true;
 		wstring str_w = pathname.ToStdWstring();
 		reader->SetFile(str_w);
 		reader->SetSliceSeq(m_sliceSequence);
@@ -9870,6 +9938,7 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
     if (!msg.IsEmpty())
     {
         vvd::UI::MessageBox(msg);
+        drop_new_reader();
         return result;
     }
 
@@ -10133,6 +10202,8 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
 	if (downloaded) vvd::RemoveFile(downloaded_filepath);
 	if (downloaded_metadata) vvd::RemoveFile(downloaded_metadatafilepath);
 
+	if (result == 0)
+		drop_new_reader();
 	return result;
 }
 
@@ -10256,6 +10327,14 @@ void DataManager::ReplaceVolumeData(int index, VolumeData *vd)
 	VolumeData* data = m_vd_list[index];
 	if (data)
 	{
+		//annotations of the old volume follow its replacement (Fiji round
+		//trip): they kept m_vd / m_tform into the deleted volume
+		for (int i = 0; i < (int)m_annotation_list.size(); i++)
+		{
+			if (m_annotation_list[i] && data == m_annotation_list[i]->GetVolume())
+				m_annotation_list[i]->RebindVolume(vd);
+		}
+
 		auto p = find(m_latest_vols.begin(), m_latest_vols.end(), data);
 		if (p != m_latest_vols.end())
 			m_latest_vols.erase(p);

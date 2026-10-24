@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <regex>
+#include <memory>
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include "boost/filesystem.hpp"
@@ -28,6 +29,14 @@ template <typename _T> void clear2DVector(std::vector<std::vector<_T>> &vec2d)
 	if(vec2d.empty())return;
 	for(int i = 0; i < vec2d.size(); i++)std::vector<_T>().swap(vec2d[i]);
 	std::vector<std::vector<_T>>().swap(vec2d);
+}
+
+// DownloadFile returns the temp file's name in UTF-8; a narrow boost path or
+// ifstream would read it in the ANSI code page (a non-ASCII %TEMP% missed
+// every reopen), so the readers reopen it through this wide path
+static boost::filesystem::path TempFilePath(const std::string& utf8)
+{
+	return boost::filesystem::path(s2ws(utf8));
 }
 
 template <typename _T> inline void SafeDelete(_T* &p)
@@ -316,7 +325,9 @@ void BRKXMLReader::Preprocess()
 	Clear();
 	m_slice_num = 0;
 	m_chan_num = 0;
+	m_time_num = 0;
 	m_max_value = 0.0;
+	m_imageinfo = ImageInfo{};
 
 #ifdef _WIN32
 	wchar_t slash = L'\\';
@@ -332,6 +343,11 @@ void BRKXMLReader::Preprocess()
     wstring ext = m_path_name.substr(ext_pos+1);
     transform(ext.begin(), ext.end(), ext.begin(), towlower);
     
+    // the N5 / Zarr / BDV loaders parse JSON / XML and walk folders: an
+    // exception there (a malformed or truncated file, a moved folder) fails
+    // this dataset. Callers include Open Project and the wx multi-threaded
+    // project loader, whose worker thread no GUI handler covers.
+    try {
     if (ext == L"n5" || ext == L"json" || ext == L"n5fs_ch" || ext == L"xml") {
         loadFSN5();
     }
@@ -402,6 +418,23 @@ void BRKXMLReader::Preprocess()
             else
                 loadMetadata(m_ex_metadata_path);
         }
+    }
+    }
+    catch (const std::exception& e) {
+        std::wcerr << L"BRKXMLReader: cannot read " << m_path_name << std::endl;
+        std::cerr << "  " << e.what() << std::endl;
+        // byte-wise (s2ws throws on non-UTF-8 text, e.g. a path in a
+        // filesystem error message)
+        const std::string what = e.what();
+        m_error_msg = L"Error (BRKXMLReader): cannot read the dataset: " + std::wstring(what.begin(), what.end());
+        Clear();
+        m_slice_num = 0;
+        m_chan_num = 0;
+        m_time_num = 0;
+        m_x_size = m_y_size = 0;
+        m_level_num = 0;
+        m_cur_level = 0;
+        return;
     }
 
     for (int i = 0; i < m_pyramid.size(); i++)
@@ -1084,11 +1117,14 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 		m_zspc = 1.0;
 	}
 
+	//no level: the dataset's metadata could not be read (an N5 / Zarr level
+	//without valid attributes): fail the load instead of indexing m_pyramid
 	if (t>=0 && t<m_time_num &&
 		c>=0 && c<m_chan_num &&
 		m_slice_num>0 &&
 		m_x_size>0 &&
-		m_y_size>0)
+		m_y_size>0 &&
+		m_cur_level >= 0 && m_cur_level < (int)m_pyramid.size())
 	{
 		char dummy = 0;
 		data = nrrdNew();
@@ -1103,7 +1139,7 @@ Nrrd* BRKXMLReader::ConvertNrrd(int t, int c, bool get_max)
 		m_cur_time = t;
 	}
 
-	if(get_max)
+	if(get_max && data)
 	{
         if (c >= 0 && c < m_chan_maxs.size() && m_chan_maxs[c] > 0.0) m_max_value = m_chan_maxs[c];
 		else if(m_pyramid[m_cur_level].bit_depth == 8) m_max_value = 255.0;
@@ -1414,7 +1450,7 @@ void BRKXMLReader::loadFSZarr()
         string wxpath = root_attrpath.generic_string();
         if (DownloadFile(wxpath)) {
             m_isURL = true;
-            root_attrpath = wxpath;
+            root_attrpath = TempFilePath(wxpath);
         }
     }
 
@@ -1422,10 +1458,10 @@ void BRKXMLReader::loadFSZarr()
     vector<double> ch_maxs;
     vector<double> ch_offsets;
 
-    std::ifstream ifs(root_attrpath.string());
+    std::ifstream ifs(fs::path(root_attrpath.wstring()));
     if (ifs.is_open()) {
-        auto jf = json::parse(ifs);
-        if (!jf.is_null()) {
+        auto jf = json::parse(ifs, nullptr, false);
+        if (!jf.is_discarded() && !jf.is_null()) {
             if (jf.contains(MultiScalesKey) && jf[MultiScalesKey][0].contains(CoordinateTransformationsKey)) {
                 for (auto& elem : jf[MultiScalesKey][0][CoordinateTransformationsKey]) {
                     if (elem.contains(ScaleKey)) {
@@ -1479,7 +1515,12 @@ void BRKXMLReader::loadFSZarr()
 
     m_cur_time = 0;
 
-    if (m_pyramid.empty()) return;
+    if (m_pyramid.empty()) {
+        // nothing readable: no channel to load
+        m_time_num = 0;
+        m_chan_num = 0;
+        return;
+    }
 
     m_xspc = m_pyramid[0].xspc;
     m_yspc = m_pyramid[0].yspc;
@@ -1648,7 +1689,12 @@ void BRKXMLReader::loadFSN5()
 
 	m_cur_time = 0;
 
-	if (m_pyramid.empty()) return;
+	if (m_pyramid.empty()) {
+		// nothing readable: no channel to load
+		m_time_num = 0;
+		m_chan_num = 0;
+		return;
+	}
 
 	m_xspc = m_pyramid[0].xspc;
 	m_yspc = m_pyramid[0].yspc;
@@ -1690,14 +1736,15 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
         string wxpath = root_attrpath.generic_string();
         if (DownloadFile(wxpath)) {
             is_url = true;
+            root_attrpath = TempFilePath(wxpath);
         }
-        root_attrpath = wxpath;
     }
 
-    std::ifstream ifs(root_attrpath.string());
+    std::ifstream ifs(fs::path(root_attrpath.wstring()));
     if (ifs.is_open()) {
-        auto jf = json::parse(ifs);
-        if (!jf.is_null() && jf.contains(MultiScalesKey) && jf[MultiScalesKey][0].contains(DatasetsKey)) {
+        auto jf = json::parse(ifs, nullptr, false);
+        if (!jf.is_discarded() && !jf.is_null() && jf.contains(MultiScalesKey) && jf[MultiScalesKey].is_array() &&
+            !jf[MultiScalesKey].empty() && jf[MultiScalesKey][0].contains(DatasetsKey)) {
             for (auto& elem : jf[MultiScalesKey][0][DatasetsKey]) {
                 if (elem.contains(PathKey)) {
                     string path_val = elem[PathKey].get<string>();
@@ -1723,8 +1770,8 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
             string wxpath = metadata_path.generic_string();
             if (DownloadFile(wxpath)) {
                 is_url = true;
+                metadata_path = TempFilePath(wxpath);
             }
-            metadata_path = wxpath;
         }
         if (boost::filesystem::exists(metadata_path)) {
             scale_dirs.push_back(L".");
@@ -1752,10 +1799,16 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleZarrDataset(wstring root_dir, 
             string wxpath = attrpath.generic_string();
             if (DownloadFile(wxpath)) {
                 is_url = true;
+                attrpath = TempFilePath(wxpath);
             }
-            attrpath = wxpath;
         }
         DatasetAttributes* attr = parseDatasetMetadataZarr(attrpath.wstring());
+        if (!attr) {
+            // missing / invalid .zarray: fail this dataset (was a null dereference)
+            std::cerr << "Zarr: no valid .zarray in " << (root_path / scale_dirs[j]).string() << std::endl;
+            Clear();
+            return;
+        }
 
         if (j == 0) {
             if (attr->m_dimensions.size() >= 4)
@@ -2011,16 +2064,31 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
     
     sort(scale_dirs.begin(), scale_dirs.end(),
          [](const wstring& x, const wstring& y) { return WSTOI(x.substr(1)) < WSTOI(y.substr(1)); });
-    
+
+    // the level metadata (used for the first channel / frame only, which
+    // sets up the levels): every level needs a readable attributes.json (a
+    // numbered folder without one, or one without dimensions / dataType /
+    // blockSize, gives nullptr): fail the dataset before anything is set up.
+    // Parsed once and reused below.
+    std::vector<std::unique_ptr<DatasetAttributes>> level_attrs;
+    if (c == 0 && f == 0) {
+        for (const auto& sd : scale_dirs) {
+            level_attrs.emplace_back(parseDatasetMetadataN5((root_path / sd / "attributes.json").wstring()));
+            if (!level_attrs.back()) {
+                std::cerr << "N5: no valid attributes.json in " << (root_path / sd).string() << std::endl;
+                return;
+            }
+        }
+    }
+
     int orgw = 0;
     int orgh = 0;
     int orgd = 0;
     if (m_pyramid.size() < scale_dirs.size())
         m_pyramid.resize(scale_dirs.size());
     for (int j = 0; j < scale_dirs.size(); j++) {
-        auto attrpath = root_path / scale_dirs[j] / "attributes.json";
-        DatasetAttributes* attr = parseDatasetMetadataN5(attrpath.wstring());
-        
+        DatasetAttributes* attr = (c == 0 && f == 0) ? level_attrs[j].get() : nullptr;
+
         LevelInfo& lvinfo = m_pyramid[j];
         if (c == 0 && f == 0) {
             lvinfo.endianness = attr->m_is_big_endian ? BRICK_ENDIAN_BIG : BRICK_ENDIAN_LITTLE;
@@ -2233,8 +2301,6 @@ void BRKXMLReader::ReadResolutionPyramidFromSingleN5Dataset(wstring root_dir, in
             fi = new FLIVR::FileLocInfo(br_file_path.wstring(), 0, 0, lvinfo.file_type, false, true, lvinfo.blosc_blocksize, lvinfo.blosc_blocksize, lvinfo.blosc_blocksize, lvinfo.blosc_clevel, lvinfo.blosc_ctype, lvinfo.blosc_suffle, lvinfo.endianness, lvinfo.is_row_major);
             lvinfo.filename[f][c][pid] = fi;
         }
-        
-        delete attr;
     }
 }
 
@@ -2276,10 +2342,10 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
         if (DownloadFile(wxpath)) {
 
             bool bioformats = false;
-            std::ifstream root_ifs(wxpath);
+            std::ifstream root_ifs(fs::path(s2ws(wxpath)));
             if (root_ifs.is_open()) {
-                auto jf = json::parse(root_ifs);
-                if (!jf.is_null() && jf.contains(BioformatsKey)) {
+                auto jf = json::parse(root_ifs, nullptr, false);
+                if (!jf.is_discarded() && !jf.is_null() && jf.contains(BioformatsKey)) {
                     bioformats = true;
                 }
             }
@@ -2292,7 +2358,9 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
                     str_path = ch_attrs_path.generic_string();
                     end = DownloadFile(str_path);
                     try {
-                        std::ifstream ch_ifs(str_path);
+                        std::ifstream ch_ifs;
+                        if (end)
+                            ch_ifs.open(fs::path(s2ws(str_path)));
                         if (ch_ifs.is_open()) {
                             auto jf = json::parse(ch_ifs);
                             if (jf.is_null())
@@ -2329,10 +2397,10 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
     
     if (!skip) {
         auto root_attrpath = root_path / ".zattrs";
-        std::ifstream root_ifs(root_attrpath.string());
+        std::ifstream root_ifs(fs::path(root_attrpath.wstring()));
         if (root_ifs.is_open()) {
-            auto jf = json::parse(root_ifs);
-            if (!jf.is_null() && jf.contains(MultiScalesKey)) {
+            auto jf = json::parse(root_ifs, nullptr, false);
+            if (!jf.is_discarded() && jf.is_object() && jf.contains(MultiScalesKey)) {
                 output.push_back(root_path.wstring());
                 skip = true;
             }
@@ -2347,45 +2415,50 @@ bool BRKXMLReader::GetZarrChannelPaths(wstring zarr_path, vector<wstring>& outpu
     if (!skip) {
         std::error_code ec;
         fs::recursive_directory_iterator ite(fs::path(root_path.wstring()), fs::directory_options::skip_permission_denied, ec);
+        const fs::recursive_directory_iterator ite_end;
         if (ec) {
             std::cerr << "GetZarrChannelPaths: cannot list " << root_path.string() << ": " << ec.message() << std::endl;
             return false;
         }
-        try {
-        for (const auto& entry : ite) {
+        // an explicit loop: disable_recursion_pending() must reach the loop's
+        // own iterator (a range-for walks a copy, and libc++ keeps the flag per
+        // iterator object, so on macOS the scan went on into the datasets);
+        // a bad entry (unparsable .zattrs, a name the narrow APIs cannot
+        // encode) is skipped, not the rest of the scan
+        for (; ite != ite_end; ite.increment(ec)) {
+            if (ec) {
+                std::cerr << "GetZarrChannelPaths: " << ec.message() << std::endl;
+                break;
+            }
             try {
-                if (fs::is_directory(entry.status())) {
-                    auto attrpath = entry.path() / ".zattrs";
-                    std::ifstream ifs(attrpath.string());
-                    if (ifs.is_open()) {
-                        auto jf = json::parse(ifs);
-                        if (!jf.is_null()) {
-                            if (jf.contains(MultiScalesKey)) {
-                                output.push_back(entry.path().wstring());
-                                ite.disable_recursion_pending();
-                                continue;
-                            }
-                            if (jf.contains(LabelsKey)) {
-                                ite.disable_recursion_pending();
-                                continue;
-                            }
+                std::error_code dec;
+                if (!ite->is_directory(dec))
+                    continue;
+                const fs::path dir = ite->path();
+                std::ifstream ifs(dir / ".zattrs");
+                if (ifs.is_open()) {
+                    auto jf = json::parse(ifs, nullptr, false);
+                    if (!jf.is_discarded() && jf.is_object()) {
+                        if (jf.contains(MultiScalesKey)) {
+                            output.push_back(dir.wstring());
+                            ite.disable_recursion_pending();
+                            continue;
+                        }
+                        if (jf.contains(LabelsKey)) {
+                            ite.disable_recursion_pending();
+                            continue;
                         }
                     }
-                    auto arraypath = entry.path() / ".zarray";
-                    if (exists(arraypath)) {
-                        output.push_back(entry.path().wstring());
-                        ite.disable_recursion_pending();
-                        continue;
-                    }
+                }
+                if (fs::exists(dir / ".zarray", dec)) {
+                    output.push_back(dir.wstring());
+                    ite.disable_recursion_pending();
+                    continue;
                 }
             }
-            catch (const fs::filesystem_error & ex) {
-                std::cerr << "Error: " << ex.what() << std::endl;
+            catch (const std::exception & ex) {
+                std::cerr << "GetZarrChannelPaths: skipped an entry: " << ex.what() << std::endl;
             }
-        }
-        }
-        catch (const std::exception & ex) {
-            std::cerr << "GetZarrChannelPaths: " << ex.what() << std::endl;
         }
     }
 
@@ -2429,49 +2502,50 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
         root_path = root_path / r_n5path;
     }
     
-    std::regex pattern(R"((^|\bs)\d+$)");
-    
+    // wide names: a narrow filename().string() throws for names outside the
+    // ANSI code page on Windows
+    const std::wregex pattern(LR"((^|\bs)\d+$)");
+
     // a missing / unreadable root must not throw out of the GUI's event
-    // loop (it used to terminate the Qt app): error_code construction, and
-    // the iteration itself guarded below
+    // loop (it used to terminate the Qt app): error_code construction and
+    // increments, and each entry guarded on its own
     std::error_code ec;
     fs::recursive_directory_iterator ite(fs::path(root_path.wstring()), fs::directory_options::skip_permission_denied, ec);
+    const fs::recursive_directory_iterator ite_end;
     if (ec) {
         std::cerr << "GetN5ChannelPaths: cannot list " << root_path.string() << ": " << ec.message() << std::endl;
         return false;
     }
-    try {
-    for (const auto& entry : ite) {
+    // explicit loop: disable_recursion_pending() on the loop's own iterator
+    // (see GetZarrChannelPaths)
+    for (; ite != ite_end; ite.increment(ec)) {
+        if (ec) {
+            std::cerr << "GetN5ChannelPaths: " << ec.message() << std::endl;
+            break;
+        }
         try {
-            if (fs::is_directory(entry.status())) {
-                if (std::regex_match(entry.path().filename().string(), pattern)) {
+            std::error_code dec;
+            if (!ite->is_directory(dec))
+                continue;
+            const fs::path dir = ite->path();
+            if (std::regex_match(dir.filename().wstring(), pattern)) {
+                ite.disable_recursion_pending();
+                continue;
+            }
+            fs::directory_iterator sub(dir, fs::directory_options::skip_permission_denied, dec);
+            const fs::directory_iterator sub_end;
+            for (; !dec && sub != sub_end; sub.increment(dec)) {
+                std::error_code sec;
+                if (sub->is_directory(sec) && std::regex_match(sub->path().filename().wstring(), pattern)) {
+                    output.push_back(dir.wstring());
                     ite.disable_recursion_pending();
-                    continue;
-                }
-                for (const auto& sub_entry : fs::directory_iterator(entry.path())) {
-                    try {
-                        if (fs::is_directory(sub_entry.status())) {
-                            std::string dir_name = sub_entry.path().filename().string();
-                            if (std::regex_match(dir_name, pattern)) {
-                                output.push_back(entry.path().wstring());
-                                ite.disable_recursion_pending();
-                                break;
-                            }
-                        }
-                    }
-                    catch (const fs::filesystem_error & ex) {
-                        std::cerr << "Error: " << ex.what() << std::endl;
-                    }
+                    break;
                 }
             }
         }
-        catch (const fs::filesystem_error & ex) {
-            std::cerr << "Error: " << ex.what() << std::endl;
+        catch (const std::exception & ex) {
+            std::cerr << "GetN5ChannelPaths: skipped an entry: " << ex.what() << std::endl;
         }
-    }
-    }
-    catch (const std::exception & ex) {
-        std::cerr << "GetN5ChannelPaths: " << ex.what() << std::endl;
     }
     
     std::sort(output.begin(), output.end());
@@ -2481,21 +2555,22 @@ bool BRKXMLReader::GetN5ChannelPaths(wstring n5path, vector<wstring> &output)
 
 DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
 {
-    boost::filesystem::path path(jpath);
-    std::ifstream ifs(path.string());
+    std::ifstream ifs{fs::path(jpath)};
 
     if (!ifs.is_open())
         return nullptr;
 
-    auto jf = json::parse(ifs);
+    // as parseDatasetMetadataN5: a bad .zarray fails this dataset only
+    auto jf = json::parse(ifs, nullptr, false);
 
-    if (jf.is_null() ||
-        !jf.contains(ShapeKey) ||
-        !jf.contains(ZarrDataTypeKey) ||
-        !jf.contains(ChunksKey))
+    if (jf.is_discarded() || !jf.is_object() ||
+        !jf.contains(ShapeKey) || !jf[ShapeKey].is_array() || jf[ShapeKey].size() < 3 ||
+        !jf.contains(ZarrDataTypeKey) || !jf[ZarrDataTypeKey].is_string() || jf[ZarrDataTypeKey].get<string>().size() < 3 ||
+        !jf.contains(ChunksKey) || !jf[ChunksKey].is_array() || jf[ChunksKey].size() < 3)
         return nullptr;
 
     DatasetAttributes* ret = new DatasetAttributes();
+    try {
 
     ret->m_dimensions = jf[ShapeKey].get<vector<long>>();
     reverse(ret->m_dimensions.begin(), ret->m_dimensions.end());
@@ -2542,6 +2617,12 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
 
     ret->m_blockSize = jf[ChunksKey].get<vector<int>>();
     reverse(ret->m_blockSize.begin(), ret->m_blockSize.end());
+    for (int k = 0; k < 3; k++) {
+        if (ret->m_dimensions[k] <= 0 || ret->m_blockSize[k] <= 0) {
+            delete ret;
+            return nullptr;
+        }
+    }
 
     ret->m_pix_res = vector<double>(3, -1.0);
     
@@ -2626,6 +2707,12 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
         m_error_msg = L"Error (N5Reader): Unsupported compression format ";
         m_error_msg += s2ws(cptype);
     }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Zarr: invalid .zarray (" << e.what() << ")" << std::endl;
+        delete ret;
+        return nullptr;
+    }
 
     return ret;
 }
@@ -2633,22 +2720,24 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataZarr(wstring jpath)
 DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
 {
     //boost::filesystem::path::imbue(std::locale( std::locale(), new std::codecvt_utf8_utf16<wchar_t>()));
-    boost::filesystem::path path(jpath);
-    std::ifstream ifs(path.string());
+    std::ifstream ifs{fs::path(jpath)};
 
 	if (!ifs.is_open())
 		return nullptr;
-    
-    auto jf = json::parse(ifs);
 
-	if (jf.is_null() ||
-		!jf.contains(DimensionsKey) ||
-		!jf.contains(DataTypeKey) ||
-		!jf.contains(BlockSizeKey))
+    // a truncated file or a field of the wrong type fails this dataset only
+    // (the json exceptions used to leave the GUI's event loop: std::terminate)
+    auto jf = json::parse(ifs, nullptr, false);
+
+	if (jf.is_discarded() || !jf.is_object() ||
+		!jf.contains(DimensionsKey) || !jf[DimensionsKey].is_array() || jf[DimensionsKey].size() < 3 ||
+		!jf.contains(DataTypeKey) || !jf[DataTypeKey].is_string() ||
+		!jf.contains(BlockSizeKey) || !jf[BlockSizeKey].is_array() || jf[BlockSizeKey].size() < 3)
 		return nullptr;
 
 	DatasetAttributes* ret = new DatasetAttributes();
-    
+    try {
+
     ret->m_dimensions = jf[DimensionsKey].get<vector<long>>();
 
     ret->m_is_big_endian = true;
@@ -2672,7 +2761,14 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
     ret->m_is_row_major = true;
     
     ret->m_blockSize = jf[BlockSizeKey].get<vector<int>>();
-    
+    // a zero block size never ends the brick loops; zero dimensions give no data
+    for (int k = 0; k < 3; k++) {
+        if (ret->m_dimensions[k] <= 0 || ret->m_blockSize[k] <= 0) {
+            delete ret;
+            return nullptr;
+        }
+    }
+
 	if (jf.contains(CompressionKey) &&
 		(jf[CompressionKey].type() == json::value_t::number_integer || jf[CompressionKey].type() == json::value_t::number_unsigned))
 		ret->m_compression = jf[CompressionKey].get<int>();
@@ -2685,8 +2781,13 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
     
     if (jf.contains(DownsamplingFactorsKey))
         ret->m_downsampling_factors = jf[DownsamplingFactorsKey].get<vector<double>>();
-    else 
+    else
         ret->m_downsampling_factors = vector<double>(3, -1.0);
+    //read at [0..2] (and remapped by the axes below): pad short lists
+    if (ret->m_pix_res.size() < 3)
+        ret->m_pix_res.resize(3, -1.0);
+    if (ret->m_downsampling_factors.size() < 3)
+        ret->m_downsampling_factors.resize(3, -1.0);
 
     if (jf.contains(TransformKey) && jf[TransformKey].contains(AxesKey))
     {
@@ -2701,7 +2802,9 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
                 indices[2] = i;
         }
 
-        if (indices[0] >= 0 && indices[1] >= 0 && indices[2] >= 0)
+        if (indices[0] >= 0 && indices[1] >= 0 && indices[2] >= 0 &&
+            indices[0] < (int)ret->m_pix_res.size() && indices[1] < (int)ret->m_pix_res.size() &&
+            indices[2] < (int)ret->m_pix_res.size())
         {
             vector<double> tmp_pxres = ret->m_pix_res;
             tmp_pxres[0] = ret->m_pix_res[indices[0]];
@@ -2787,6 +2890,12 @@ DatasetAttributes* BRKXMLReader::parseDatasetMetadataN5(wstring jpath)
         m_error_msg = L"Error (N5Reader): Unsupported compression format ";
         m_error_msg += s2ws(cptype);
 	}
+    }
+    catch (const std::exception& e) {
+        std::cerr << "N5: invalid attributes.json (" << e.what() << ")" << std::endl;
+        delete ret;
+        return nullptr;
+    }
 
 	return ret;
 }
