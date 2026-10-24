@@ -28,6 +28,8 @@ DEALINGS IN THE SOFTWARE.
 #include "DLLExport.h"
 #include "DataManager.h"
 #include <wx/wx.h>
+
+class VRenderView;
 #include <wx/panel.h>
 #include <wx/slider.h>
 #include <wx/spinbutt.h>

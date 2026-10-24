@@ -540,6 +540,10 @@ namespace FLIVR
 	"	imageStore(labelimg, ivec3(gl_GlobalInvocationID.xyz), uvec4(int_val));\n" \
 	"\n"
 
+// max_val starts below every value (-0.1): ">= 0.0" means "a lower
+// neighbour was found", including an exact 0. With "> 0.0" noise surrounded
+// by zero background (binary / masked / cropped data) was never lowered, so
+// Noise Removal changed nothing there.
 #define FLT_BODY_NR \
 	"	//FLT_BODY_NR\n" \
 	"	float vc = texture(tex0, t.stp).x;\n" \
@@ -556,7 +560,7 @@ namespace FLIVR
 	"		nb_val = texture(tex0, nb).x;\n" \
 	"		max_val = (nb_val<vc && nb_val>max_val)?nb_val:max_val;\n" \
 	"	}\n" \
-	"	if (max_val > 0.0)\n" \
+	"	if (max_val >= 0.0)\n" \
 	"		imageStore(maskimg, ivec3(gl_GlobalInvocationID.xyz), vec4(max_val));\n" \
 	"	else\n" \
 	"		return;\n" \

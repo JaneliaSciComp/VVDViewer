@@ -1038,7 +1038,7 @@ void glmBoundingBox(GLMmodel* model, float* boundingbox)
 	maxx = minx = model->vertices[3 + 0];
 	maxy = miny = model->vertices[3 + 1];
 	maxz = minz = model->vertices[3 + 2];
-	for (i = 1; i < model->numvertices; i++) {
+	for (i = 1; i <= model->numvertices; i++) {	// vertices are 1-based: [1..numvertices] (was "<", which left the last vertex out of the box)
 		if (maxx < model->vertices[3 * i + 0])
 			maxx = model->vertices[3 * i + 0];
 		if (minx > model->vertices[3 * i + 0])

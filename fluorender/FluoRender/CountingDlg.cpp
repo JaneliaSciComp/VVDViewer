@@ -167,15 +167,7 @@ CountingDlg::~CountingDlg()
 //load default
 void CountingDlg::LoadDefault()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-    wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_brush_settings.dft");
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;

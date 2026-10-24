@@ -9,5 +9,7 @@
 #define MetalCompatibility_h
 
 extern "C" void makeViewMetalCompatible(void* handle);
+extern "C" void describeViewLayer(const char* tag, void* handle);
+extern "C" void* metalLayerForView(void* handle);
 
 #endif /* MetalCompatibility_h */

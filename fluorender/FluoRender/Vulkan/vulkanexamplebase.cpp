@@ -7,11 +7,50 @@
 */
 
 #include "vulkanexamplebase.h"
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#endif
 
 std::vector<const char*> VulkanExampleBase::args;
 
+#if defined(__APPLE__)
+// The app bundle ships its own Vulkan driver (Contents/Frameworks/libMoltenVK
+// .dylib, manifest in Contents/Resources/vulkan/icd.d). The Vulkan loader
+// would also pick up any system-wide driver manifests (/usr/local/share/
+// vulkan/icd.d from a Vulkan SDK install, Homebrew, ...), which loads a second
+// MoltenVK copy into the process (duplicate Objective-C classes) and may hand
+// us that driver's device. Restrict the loader to the bundled driver unless
+// the user chose drivers explicitly (VK_DRIVER_FILES / VK_ICD_FILENAMES).
+static void UseBundledVulkanDriver()
+{
+	if (getenv("VK_DRIVER_FILES") || getenv("VK_ICD_FILENAMES") || getenv("VK_ADD_DRIVER_FILES"))
+		return;
+	char exe[PATH_MAX];
+	uint32_t size = sizeof(exe);
+	if (_NSGetExecutablePath(exe, &size) != 0)
+		return;
+	char real[PATH_MAX];
+	if (!realpath(exe, real))
+		return;
+	std::string icd(real);
+	const size_t slash = icd.rfind('/');
+	if (slash == std::string::npos)
+		return;
+	icd = icd.substr(0, slash) + "/../Resources/vulkan/icd.d/MoltenVK_icd.json";
+	struct stat st;
+	if (stat(icd.c_str(), &st) == 0)
+		setenv("VK_DRIVER_FILES", icd.c_str(), 0);
+}
+#endif
+
 VkResult VulkanExampleBase::createInstance(bool enableValidation)
 {
+#if defined(__APPLE__)
+	UseBundledVulkanDriver();
+#endif
 	this->settings.validation = enableValidation;
 
 	// Validation can also be forced via a define
@@ -179,6 +218,19 @@ void VulkanExampleBase::prepareFrame()
 	//destructions and resets the slot's semaphore chain), then allocate the acquire
 	//semaphore from the fresh chain
 	vulkanDevice->ResetMainRenderBuffers();
+	frameSkipped = false;
+	if (swapChain.swapChain == VK_NULL_HANDLE)
+	{
+		//a failed rebuild released the swapchain: try again, and skip the
+		//frame while there is none (its framebuffers reference no images)
+		windowResize();
+		if (swapChain.swapChain == VK_NULL_HANDLE)
+		{
+			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = true;
+			return;
+		}
+	}
 	VkSemaphore* present_complete = vulkanDevice->GetNextRenderSemaphore();
 
 	// Acquire the next image from the swap chain
@@ -192,15 +244,52 @@ void VulkanExampleBase::prepareFrame()
 		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
 		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
 			//give up for this frame; run it without an acquire wait so no submit
-			//ends up waiting a semaphore nothing will ever signal
+			//ends up waiting a semaphore nothing will ever signal (and draw
+			//nothing at all when the rebuild left no swapchain)
 			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = swapChain.swapChain == VK_NULL_HANDLE;
 			return;
 		}
 	}
-	//SUBOPTIMAL still presents correctly; the resize path will be taken via the
-	//window size event (destroying an acquire-signaled semaphore here would leave
-	//a pending signal with no waiter)
-	if (err != VK_SUBOPTIMAL_KHR) {
+	//SUBOPTIMAL: the image can be rendered and presented, but it may no longer
+	//match the surface. On macOS this is not just a resize hint: MoltenVK can
+	//leave the CAMetalLayer's drawableSize at 1x1 when it creates a swapchain
+	//of the size the old one had (the wx view recreates its swapchain on every
+	//size event; seen right after a volume is loaded, while all of the old
+	//swapchain's images have been in use).
+	//Its drawables are then 1x1, and the window shows a single pixel stretched
+	//over the view (only the background color) until the swapchain is created
+	//again. No size event is guaranteed to follow, so recreate the swapchain
+	//here, once per frame, and acquire again.
+	if (err == VK_SUBOPTIMAL_KHR && prepared && !suboptimalPersists) {
+		//the acquire signaled the semaphore: consume that signal before
+		//windowResize() destroys the semaphore chains (a binary semaphore must
+		//not be destroyed with a signal pending)
+		VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkSubmitInfo si = vks::initializers::submitInfo();
+		si.waitSemaphoreCount = 1;
+		si.pWaitSemaphores = present_complete;
+		si.pWaitDstStageMask = &waitStage;
+		VK_CHECK_RESULT(vkQueueSubmit(vulkanDevice->queue, 1, &si, VK_NULL_HANDLE));
+		//waits for the device, recreates the swapchain (the acquired, never
+		//presented image goes with the old one), the per-slot semaphore chains
+		//and the present semaphores
+		windowResize();
+		present_complete = vulkanDevice->GetNextRenderSemaphore();
+		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
+		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
+			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = swapChain.swapChain == VK_NULL_HANDLE;
+			return;
+		}
+		//still suboptimal with a brand-new swapchain: nothing to gain from
+		//recreating it every frame
+		if (err == VK_SUBOPTIMAL_KHR)
+			suboptimalPersists = true;
+	}
+	if (err == VK_SUCCESS)
+		suboptimalPersists = false;
+	else if (err != VK_SUBOPTIMAL_KHR) {
 		VK_CHECK_RESULT(err);
 	}
 
@@ -210,6 +299,8 @@ void VulkanExampleBase::prepareFrame()
 
 void VulkanExampleBase::submitFrame()
 {
+	if (frameSkipped)
+		return;
 	//frame-end submit: waits the tail of this frame's semaphore chain, signals the
 	//cross-frame link and the per-image present semaphore, and arms the slot fence
 	VkSemaphore present_sem = (currentBuffer < presentSemaphores.size()) ?
@@ -224,7 +315,9 @@ void VulkanExampleBase::submitFrame()
 			return;
 		}
 		else {
-			VK_CHECK_RESULT(res);
+			//(the macro declares its own "res": VK_CHECK_RESULT(res) logged garbage)
+			const VkResult present_res = res;
+			VK_CHECK_RESULT(present_res);
 		}
 	}
 	if (vulkanDevice->m_frame_slots <= 1)
@@ -272,6 +365,11 @@ VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 
 VulkanExampleBase::~VulkanExampleBase()
 {
+	// the last frames may still be executing: the swapchain and the present
+	// semaphores must not be destroyed while the queue uses them
+	// (VUID-vkDestroySwapchainKHR-swapchain-01282, vkDestroySemaphore-05149)
+	if (device != VK_NULL_HANDLE)
+		vkDeviceWaitIdle(device);
 	// Clean up Vulkan resources
 	destroyPresentSemaphores();
 	swapChain.cleanup();
@@ -646,6 +744,7 @@ void VulkanExampleBase::setSize(int width, int height)
 
 	destWidth = width;
 	destHeight = height;
+	suboptimalPersists = false;
 
 	windowResize();
 }
@@ -664,6 +763,8 @@ void VulkanExampleBase::windowResize()
 	vulkanDevice->ResetAllFrameSlots();
 
 	// Recreate swap chain
+	const auto old_width = width;
+	const auto old_height = height;
 	width = destWidth;
 	height = destHeight;
 
@@ -676,12 +777,24 @@ void VulkanExampleBase::windowResize()
     
     prepared = false;
 
+	// the swapchain first: if it cannot be rebuilt (surface lost while the
+	// window goes away), keep the old size, depth buffer and framebuffers
+	// instead of rebuilding them around the old images. (When the create call
+	// itself failed, the old swapchain is released and prepareFrame skips the
+	// frames and retries; prepared stays true so this can run again.)
+	if (!setupSwapChain())
+	{
+		width = old_width;
+		height = old_height;
+		prepared = true;
+		return;
+	}
+
 	// Recreate the frame buffers
 	depthStencil->destroy();
 	setupDepthStencil();
 	for (uint32_t i = 0; i < frameBuffers.size(); i++)
 		frameBuffers[i].reset();
-    setupSwapChain();
 	setupFrameBuffer();
 	//image count may have changed, and the old semaphores may hold signals with
 	//no pending waiter after the failed acquire/present sequence
@@ -727,7 +840,7 @@ void VulkanExampleBase::initSwapchain()
 #endif
 }
 
-void VulkanExampleBase::setupSwapChain()
+bool VulkanExampleBase::setupSwapChain()
 {
-	swapChain.create(&width, &height, settings.vsync);
+	return swapChain.create(&width, &height, settings.vsync);
 }

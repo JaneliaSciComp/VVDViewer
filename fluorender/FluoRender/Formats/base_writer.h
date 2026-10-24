@@ -29,6 +29,9 @@ DEALINGS IN THE SOFTWARE.
 #define _BASE_WRITER_H_
 
 #include <string>
+#include <cstdio>
+#include <codecvt>
+#include <locale>
 #include <nrrd.h>
 #include <FLIVR/TextureBrick.h>
 #include "DLLExport.h"
@@ -50,6 +53,37 @@ public:
 	virtual void SetSpacings(double spcx, double spcy, double spcz) = 0;
 	virtual void SetCompression(bool value) = 0;
 	virtual void Save(wstring filename, int mode) = 0;
+
+	//nrrdSave from a wide name. teem opens files with a narrow fopen: on
+	//Windows a name outside ASCII is opened here with _wfopen and written with
+	//nrrdWrite (attached header: the writers set nrrdFormatNRRD); elsewhere
+	//the narrow name is UTF-8. (A (char) cast of each UTF-16 unit wrote
+	//nothing, or a stray file, for folders such as "Łukasz".)
+	static int SaveNrrdFile(const wstring& filename, const Nrrd* nrrd, NrrdIoState* nio)
+	{
+		if (!nrrd || !nio)
+			return 1;
+#ifdef _WIN32
+		bool ascii = true;
+		for (wchar_t c : filename)
+			if (c >= 0x80) { ascii = false; break; }
+		if (!ascii)
+		{
+			FILE* fp = nullptr;
+			if (_wfopen_s(&fp, filename.c_str(), L"wb") != 0 || !fp)
+				return 1;
+			if (nio->format == nrrdFormatUnknown)
+				nio->format = nrrdFormatNRRD;
+			const int ret = nrrdWrite(fp, nrrd, nio);
+			fclose(fp);
+			return ret;
+		}
+		return nrrdSave(string(filename.begin(), filename.end()).c_str(), nrrd, nio);
+#else
+		std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> conv;
+		return nrrdSave(conv.to_bytes(filename).c_str(), nrrd, nio);
+#endif
+	}
 };
 
 #endif//_BASE_WRITER_H_

@@ -49,7 +49,6 @@ DEALINGS IN THE SOFTWARE.
 #include <ctime>
 #include <sys/types.h>
 #include <ctype.h>
-#include <wx/wx.h>
 #include "tiffio.h"
 #include "WacUtils/WacUtils.h"
 #include <direct.h>
@@ -147,6 +146,21 @@ inline TIFF* TIFFOpenW(std::wstring fname, const char* opt) {
 }
 
 inline FILE* FOPEN(FILE** fp, const char *fname, const char* mode) {
+	// The engine's narrow file names are UTF-8 (ws2s, vvd::String::ToStdString),
+	// which fopen_s would read as the ANSI code page: open them as wide names.
+	// Bytes that are not valid UTF-8 (an ANSI name from older wx code) keep
+	// the ANSI fopen_s.
+	*fp = nullptr;
+	if (!fname || !mode) return nullptr;
+	const int wn = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, fname, -1, nullptr, 0);
+	if (wn > 0)
+	{
+		std::wstring wname(wn, L'\0');
+		MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, fname, -1, &wname[0], wn);
+		std::wstring wmode(mode, mode + strlen(mode));
+		_wfopen_s(fp, wname.c_str(), wmode.c_str());
+		return *fp;
+	}
 	fopen_s(fp, fname, mode);
 	return *fp;
 }
@@ -181,16 +195,16 @@ inline int WSTOI(std::wstring s) { return _wtoi(s.c_str()); }
 inline double WSTOD(std::wstring s) { return _wtof(s.c_str()); }
 
 inline int STOI(const char * s) { return (s ? atoi(s) : 0); }
-inline int STOI(const wxChar * s) { return (s ? _wtoi(s) : 0); }
-inline int STOI(wxChar * s) { return (s ? _wtoi(s) : 0); }
+inline int STOI(const wchar_t * s) { return (s ? _wtoi(s) : 0); }
+inline int STOI(wchar_t * s) { return (s ? _wtoi(s) : 0); }
 
 inline long long STOLL(const char * s) { return (s ? _atoi64(s) : 0LL); }
-inline long long STOLL(const wxChar * s) { return (s ? _wtoi64(s) : 0LL); }
-inline long long STOLL(wxChar * s) { return (s ? _wtoi64(s) : 0LL); }
+inline long long STOLL(const wchar_t * s) { return (s ? _wtoi64(s) : 0LL); }
+inline long long STOLL(wchar_t * s) { return (s ? _wtoi64(s) : 0LL); }
 
 inline double STOD(const char * s) { return (s ? atof(s) : 0.0); }
-inline double STOD(wxChar * s) { return (s ? _wtof(s) : 0.0); }
-inline double STOD(const wxChar * s) { return (s ? _wtof(s) : 0.0); }
+inline double STOD(wchar_t * s) { return (s ? _wtof(s) : 0.0); }
+inline double STOD(const wchar_t * s) { return (s ? _wtof(s) : 0.0); }
 
 inline time_t TIME(time_t* n) { return _time32((__time32_t*)n); }
 

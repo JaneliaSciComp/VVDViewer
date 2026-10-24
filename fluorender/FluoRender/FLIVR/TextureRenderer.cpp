@@ -44,7 +44,7 @@
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
 #include "compatibility.h"
-#include <wx/utils.h>
+#include "../Core/VVDString.h"
 #endif
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_WITHOUT_IDVOL
@@ -88,7 +88,7 @@ namespace FLIVR
 	std::shared_ptr<VVulkan> TextureRenderer::m_vulkan;
 	std::shared_ptr<Vulkan2dRender> TextureRenderer::m_v2drender;
 
-	wxCriticalSection* TextureRenderer::ms_pThreadCS = nullptr;
+	vvd::CriticalSection* TextureRenderer::ms_pThreadCS = nullptr;
 
 	TextureRenderer::TextureRenderer(Texture* tex)
 		:
@@ -475,7 +475,7 @@ namespace FLIVR
 
 		int i;
 		for (i=1; get_roi_path(name); i++)
-			result = name+wxString::Format("_%d", i);
+			result = name + vvd::String::Format(L"_%d", i);
 
 		return result;
 	}
@@ -1516,6 +1516,30 @@ namespace FLIVR
 		cor_up_time_ = (unsigned long)(log10(1000.0/speed)*up_time_);
 	}
 
+	void TextureRenderer::apply_device_mem_limit()
+	{
+		if (!m_vulkan)
+			return;
+		//0: the device's own maximum (heap budget less a reserve). The
+		//Graphics Memory setting applies only while streaming is on (the
+		//settings dialog greys it out otherwise); before this was forwarded,
+		//the wx app always used the device maximum.
+		const double limit = (streaming_ && use_mem_limit_ && mem_limit_ > 0.0) ? mem_limit_ : 0.0;
+		for (vks::VulkanDevice* dev : m_vulkan->devices)
+			if (dev)
+				dev->setMemoryLimit(limit);
+	}
+
+	bool TextureRenderer::frame_budget_exhausted()
+	{
+		if (!streaming_)
+			return false;
+		if (finished_bricks_ <= 0)
+			return false;
+		uint32_t rn_time = GET_TICK_COUNT();
+		return rn_time - st_time_ > get_up_time();
+	}
+
 	//number of bricks rendered before time is up
 	void TextureRenderer::reset_finished_bricks()
 	{
@@ -1857,7 +1881,7 @@ namespace FLIVR
 							rn_time = GET_TICK_COUNT();
 							elapsed = rn_time - st_time_;
 							t = up_time_ - elapsed;
-							if (t > 0) wxMilliSleep(t < 5 ? t : 5);
+							if (t > 0) vvd::MilliSleep(t < 5 ? t : 5);
 						} while (elapsed <= up_time_);
 					}
 					else
@@ -1865,7 +1889,7 @@ namespace FLIVR
 						unsigned long elapsed = 0;
 						while (!brick->isLoaded() && elapsed <= 10000) 
 						{
-							wxMilliSleep(10);
+							vvd::MilliSleep(10);
 							elapsed += 10;
 						}
 					}
@@ -1917,6 +1941,10 @@ namespace FLIVR
 			//sprintf(dbgstr, "%lld\n", ed_time - st_time);
 			//OutputDebugStringA(dbgstr);
 		}
+
+		//the caller binds the texture for this frame's GPU work
+		if (result)
+			device->markTexUse(result);
 
 		if (mem_swap_ &&
 			start_update_loop_ &&
@@ -2001,6 +2029,9 @@ namespace FLIVR
 			if (updated)
 				*updated = true;
 		}
+
+		if (result)
+			device->markTexUse(result);
 
 		return std::move(result);
 	}

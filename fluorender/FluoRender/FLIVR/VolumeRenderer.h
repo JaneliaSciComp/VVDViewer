@@ -145,6 +145,40 @@ namespace FLIVR
 
 		//draw
 		void eval_ml_mode(Texture* ext_msk = NULL, Texture* ext_lbl = NULL);
+		//largest raw brick maximum (TextureBrick::get_data_max) for which the
+		//data pass of the current render state provably outputs exactly 0 for
+		//every sample of the brick, i.e. the brick can be skipped without
+		//changing a single output bit; -1 if no brick can be skipped.
+		//nbytes: bytes per voxel of the data (1 or 2). Call after eval_ml_mode.
+		int invisible_brick_max(int nbytes);
+		//"Skip empty bricks" (bricks flagged by Texture::build): skip one
+		//only while it is still all zero and the transfer function shows
+		//nothing for zero. Used by draw() and by the streaming loops' brick
+		//counts, which must agree.
+		bool skip_empty_brick(TextureBrick* b);
+		//the same with invisible_brick_max() already computed for this pass
+		//(it depends on the transfer function only, not on the brick)
+		bool skip_empty_brick(TextureBrick* b, int skip_max);
+		//true if brick b of this renderer's data pass can be skipped
+		//(computes the brick maximum on first use)
+		bool brick_invisible(TextureBrick* b, int skip_max);
+
+		//in-place Noise Removal runs draw_mask(type 2) once per iteration:
+		//keep the data bricks uncompressed across the whole loop instead of
+		//re-uploading the volume on every call (end restores the compression)
+		void begin_volume_writes();
+		void end_volume_writes();
+
+		//the peel depth textures of the slab being drawn (DrawVolumesDP: the
+		//mask pass and non-Depth groups go through draw() with the slab's peel
+		//mode; MultiVolumeRenderer binds its own): front for peel 2-5, back
+		//for peel 1, 3, 4
+		void set_depth_textures(const std::shared_ptr<vks::VTexture>& front,
+			const std::shared_ptr<vks::VTexture>& back) { dtex_front_ = front; dtex_back_ = back; }
+		//the peel mode the ray shader is built with: 0 for the shadow depth
+		//map (colormap 2), and when a depth texture the mode samples is not
+		//set (the shader would read an unbound descriptor)
+		int effective_peel() const;
 
 		//mask and label
 		int get_ml_mode() {return ml_mode_;}
@@ -223,6 +257,13 @@ namespace FLIVR
 		friend class MultiVolumeRenderer;
 
 	protected:
+		//prepare_2d_cull: summed-area table of the 2D mask texels that can
+		//contribute a value >= the cull threshold, (w + 1) x (h + 1)
+		std::vector<uint32_t> cull2d_sat_;
+		int cull2d_w_ = 0, cull2d_h_ = 0;
+		const vks::VTexture* cull2d_tex_ = nullptr;
+		bool brick_outside_2d_mask(TextureBrick* b, const glm::mat4& mv, const glm::mat4& proj) const;
+
 #ifdef _DARWIN
         bool slice_mode_;
 #endif
@@ -284,6 +325,11 @@ namespace FLIVR
 
 		//compression
 		bool compression_;
+		//begin_volume_writes() turned compression_ off (end turns it back on)
+		bool vol_write_hold_ = false;
+		//set_depth_textures
+		std::shared_ptr<vks::VTexture> dtex_front_;
+		std::shared_ptr<vks::VTexture> dtex_back_;
 
 		//done loop
 		bool done_loop_[TEXTURE_RENDER_MODES];
@@ -396,8 +442,15 @@ public:
 			Texture* ext_msk = NULL, Texture* ext_lbl = NULL);
 
 		//thin plate spline warp: resample vr_in (moving) into this volume (fixed)
-		//interp: 0=nearest, 1=linear
-		void warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp = 1);
+		//interp: 0=nearest, 1=linear. tps maps source-normalized [0,1] coords
+		//(of vr_in's box) to source-normalized coords. With out_scale /
+		//out_off (both or neither) this volume's grid differs from the
+		//source's (Measurement "Target:"): its normalized coords f map to the
+		//source-normalized coords f * out_scale + out_off before the map is
+		//evaluated (per axis: the two boxes are axis-aligned in world space).
+		//Without them the output box is the source box (unchanged behaviour).
+		void warp(VolumeRenderer* vr_in, const ThinPlateSpline& tps, int interp = 1,
+			const glm::dvec3* out_scale = nullptr, const glm::dvec3* out_off = nullptr);
 
 		//double calc_hist_3d(GLuint, GLuint, size_t, size_t, size_t);
 		////return
@@ -413,6 +466,17 @@ public:
 		//	double ini_thresh, double gm_falloff, double scl_falloff,
 		//	double scl_translate, double w2d, double bins, bool ortho, bool estimate);
 		void draw_mask_th(float thresh, bool orthographic_p, bool use_absolute_value = false);
+
+		//Brick skip for the diffusion passes (draw_mask type 1, paint mode 4):
+		//once the stroke buffer has been cleared (every pass after the first),
+		//the grow shader returns before any write for a voxel whose projection
+		//samples the 2D paint mask below 0.45 (SEG_BODY_DB_GROW_CULL). A brick
+		//whose projected box only covers 2D mask texels below that threshold is
+		//therefore left unchanged by the pass, and its dispatch is skipped.
+		//prepare_2d_cull reads the current 2D mask back once (VolumeSelector::
+		//Select, before the passes); release_2d_cull drops it.
+		bool prepare_2d_cull();
+		void release_2d_cull();
 		//void draw_mask_dslt(int type, int paint_mode, int hr_mode,
 		//	double ini_thresh, double gm_falloff, double scl_falloff,
 		//	double scl_translate, double w2d, double bins, bool ortho, bool estimate, int dslt_r, int dslt_q, double dslt_c);

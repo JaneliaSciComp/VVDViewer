@@ -120,6 +120,11 @@ namespace vks
 		bool use_mem_limit = false;
 		double mem_limit = 0.0;
 		double available_mem = 0.0;
+		// the device's maximum for the brick pool (MB), measured once at the
+		// first setMemoryLimit (device creation). Re-measuring later counted
+		// the pool's own textures as used memory, so every settings apply
+		// shrank the limit.
+		double dev_max_mem_ = -1.0;
 		std::vector<TexParam> tex_pool;
 
 		void setMemoryLimit(double limit=0);
@@ -157,6 +162,8 @@ namespace vks
 			std::unique_ptr<vks::VSemaphore> frame_link_sem;
 			//true while frame_link_sem carries a signal no submit has waited on yet
 			bool frame_link_signaled = false;
+			//frameSerial() of the frame recorded in this slot
+			uint64_t serial = 0;
 			//deferred destruction: objects released while this slot's frame may still
 			//be executing on the GPU; run when the slot is reused
 			std::vector<std::shared_ptr<VTexture>> retired_texs;
@@ -166,6 +173,22 @@ namespace vks
 		FrameSlot m_frames[FRAME_SLOTS_MAX];
 		uint32_t m_frame_slots = 1;   //number of slots in use (1 = fully serialized frames)
 		uint32_t m_cur_frame = 0;
+		//frame serials: m_frame_serial is the frame being recorded; every frame
+		//<= m_completed_serial has fully executed. Only meaningful once a frame
+		//end with a fence has been submitted (m_frame_fences_used).
+		uint64_t m_frame_serial = 1;
+		uint64_t m_completed_serial = 0;
+		bool m_frame_fences_used = false;
+	public:
+		uint64_t frameSerial() const { return m_frame_serial; }
+		//mark a texture as referenced by GPU work of the current frame
+		void markTexUse(const std::shared_ptr<VTexture>& tex);
+		//true if no submitted or pending GPU work can still access tex
+		bool isTexIdle(const std::shared_ptr<VTexture>& tex);
+		//wait (as little as possible) until isTexIdle(tex) holds
+		void waitTexIdle(const std::shared_ptr<VTexture>& tex);
+		//statistics of waitTexIdle (testing): no wait, frame fence, queue drain
+		long long m_texwait_stats[3] = { 0, 0, 0 };
 		bool m_in_shutdown = false;
 		FrameSlot& frame() { return m_frames[m_cur_frame]; }
 
@@ -175,6 +198,22 @@ namespace vks
 		void retireBuffer(vks::Buffer& buf);
 		//wait until every slot's in-flight frame has completed
 		void WaitIdleAllFrameSlots();
+		//for long synchronous GPU jobs run BETWEEN frames (e.g. the TPS warp):
+		//drain this device's queues and run every slot's deferred destruction
+		//now. Without this, everything released during the job (temporary
+		//textures, evicted pool textures) stays allocated until the next frame,
+		//and a job that allocates and releases many large textures grows the
+		//GPU footprint without bound (macOS: wired memory exhaustion can panic
+		//the kernel in IOGPUFamily). Must not be called while a frame is being
+		//recorded (its command buffers may reference retired objects).
+		void DrainDeferredDestroys();
+		//the transfer queue's family has neither graphics nor compute (barriers
+		//there may only use transfer / host / memory access)
+		bool IsTransferOnlyQueue() const;
+		//destroy upload staging buffers larger than keep_bytes (they are
+		//grow-only; a job with huge uploads would otherwise pin that much
+		//host-visible memory for the rest of the session)
+		void TrimUploadStaging(VkDeviceSize keep_bytes);
 		//reset every slot after a vkDeviceWaitIdle (e.g. on window resize): clears
 		//fences, runs deferred destructions and recreates the semaphore chains
 		//(binary semaphores can be left signaled with no waiter after an
@@ -1019,9 +1058,13 @@ namespace vks
 		//true once the image has been written at least once; until then its actual
 		//layout is VK_IMAGE_LAYOUT_UNDEFINED regardless of descriptor.imageLayout
 		bool uploaded;
+		//serial of the last frame (VulkanDevice::frameSerial) whose GPU work
+		//references this texture (brick upload or draw); 0: never used
+		uint64_t gpu_use_serial;
 
 		VTexture()
 		{
+			gpu_use_serial = 0;
 			sampler = VK_NULL_HANDLE;
 			image = VK_NULL_HANDLE;
 			deviceMemory = VK_NULL_HANDLE;

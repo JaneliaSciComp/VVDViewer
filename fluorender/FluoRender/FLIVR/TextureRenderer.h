@@ -39,7 +39,7 @@
 #include <unordered_map>
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
-#include <wx/thread.h>
+#include "../Core/Thread.h"
 #endif
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_WITHOUT_IDVOL
@@ -201,13 +201,17 @@ namespace FLIVR
          static void set_mem_swap(bool val) {mem_swap_ = val;}
          static bool get_mem_swap() {return mem_swap_;}
          //streamoing
-         static void set_streaming(bool val) { streaming_ = val; }
+         static void set_streaming(bool val) { if (streaming_ != val) { streaming_ = val; apply_device_mem_limit(); } }
          static bool get_streaming() { return streaming_; }
          //use memory limit (otherwise get available memory from graphics card)
-         static void set_use_mem_limit(bool val) {use_mem_limit_ = val;}
+         static void set_use_mem_limit(bool val) {use_mem_limit_ = val; apply_device_mem_limit();}
          static bool get_use_mem_limit() {return use_mem_limit_;}
          //memory limit
-         static void set_mem_limit(double val) {mem_limit_ = val;}
+         static void set_mem_limit(double val) {mem_limit_ = val; apply_device_mem_limit();}
+         //hand the limit to the Vulkan devices: their brick texture pools do the
+         //actual accounting (VulkanDevice::check_swap_memory); without this they
+         //use the whole device heap, which on unified-memory GPUs is most of RAM
+         static void apply_device_mem_limit();
          static double get_mem_limit() {return mem_limit_;}
          //available memory
          static void set_available_mem(double val) {available_mem_ = val;}
@@ -265,6 +269,11 @@ namespace FLIVR
                static void reset_finished_bricks();
                static int get_finished_bricks() {return finished_bricks_;}
                static void set_finished_bricks(int i) {finished_bricks_ = i;}
+               //streaming: true when this frame's time budget is used up AND
+               //at least one brick has been drawn in it. A frame whose fixed
+               //overhead alone exceeds the budget still draws one brick, so the
+               //update loop always progresses.
+               static bool frame_budget_exhausted();
                //update order
                static void set_update_order(int val) {update_order_ = val;}
                static int get_update_order() {return update_order_;}
@@ -276,6 +285,7 @@ namespace FLIVR
 			   { 
 					m_vulkan = vulkan;
 					m_v2drender = v2drender;
+					apply_device_mem_limit();
 			   }
 			   static std::shared_ptr<VVulkan> get_vulkan() { return m_vulkan; }
 			   static std::shared_ptr<Vulkan2dRender> get_vulkan2drender() { return m_v2drender; }
@@ -394,8 +404,8 @@ namespace FLIVR
 			   vks::Buffer m_slices_vbo, m_slices_ibo, m_slices_vao;
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
-			   static wxCriticalSection *ms_pThreadCS;
-               static void setCriticalSection(wxCriticalSection* crtsec) { ms_pThreadCS = crtsec; }
+			   static vvd::CriticalSection *ms_pThreadCS;
+               static void setCriticalSection(vvd::CriticalSection* crtsec) { ms_pThreadCS = crtsec; }
 #endif
 
                //compute view

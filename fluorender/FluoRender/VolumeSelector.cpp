@@ -26,10 +26,11 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "VolumeSelector.h"
-#include "VRenderFrame.h"
 #include "utility.h"
-#include <wx/wx.h>
+#include "Core/UICallbacks.h"
+#include "Core/PaintTiming.h"
 #include <algorithm>
+#include <cstdlib>
 #include <queue>
 #include <thread>
 
@@ -110,6 +111,19 @@ void VolumeSelector::Select(double radius)
 	if (!m_vd)
 		return;
 
+	const bool ptm = vvd::ptime::On();
+	const double pt_start = ptm ? vvd::ptime::NowMs() : 0.0;
+	double pt0 = pt_start, pt_addmask = 0, pt_push = 0, pt_init = 0, pt_grow = 0, pt_return = 0, pt_clear = 0;
+	vvd::ptime::MaskPassStats init_st, grow_st;
+	int pt_iter = 0;
+	if (ptm)
+	{
+		vvd::ptime::Mask().hot_tex = nullptr;
+		if (m_vd->GetTexture() && m_vd->GetTexture()->get_bricks() && !m_vd->GetTexture()->get_bricks()->empty())
+			vvd::ptime::Mask().hot_tex = (*m_vd->GetTexture()->get_bricks())[0]->get_nrrd_raw(0);
+		vvd::ptime::Mask().Reset();
+	}
+
 	//insert the mask volume into m_vd
     Texture* ext_msk = NULL;
     if (!m_vd->GetSharedMaskName().IsEmpty() && m_dm)
@@ -159,9 +173,33 @@ void VolumeSelector::Select(double radius)
 	else
 		gm_falloff = 1.0;
 
+	if (ptm) { double t = vvd::ptime::NowMs(); pt_addmask = t - pt0; pt0 = t; }
+
+	//The passes below revisit every brick of this volume (data, mask and
+	//stroke textures) -- a diffusion stroke m_iter_num times. With a texture
+	//budget smaller than everything loaded, the pool swapped this volume's
+	//own textures out to make room for the next brick of the same pass
+	//(overwriting a same-sized texture first), so each pass re-uploaded
+	//(and read back) most of the volume. Keep them resident for the stroke
+	//when they fit within the budget; other volumes' bricks are swapped out.
+	//(VVD_SEG_NO_PIN=1: old behaviour, for A/B checks)
+	static const bool no_pin = []() { const char* e = std::getenv("VVD_SEG_NO_PIN"); return e && std::atoi(e) != 0; }();
+	const bool pinned = !no_pin && FLIVR::TextureRenderer::get_mem_swap() && FLIVR::TextureRenderer::get_use_mem_limit() &&
+		m_vd->PinMaskBricks(true, FLIVR::TextureRenderer::get_mem_limit());
 	if (Texture::mask_undo_num_>0 &&
 		m_vd->GetTexture())
 		m_vd->GetTexture()->push_mask();
+	if (ptm) { double t = vvd::ptime::NowMs(); pt_push = t - pt0; pt0 = t; }
+
+	//bricks outside the stroke's 2D mask: skipped by the passes that cannot
+	//change them, not read back when only their stroke was cleared
+	//(VolumeRenderer::prepare_2d_cull)
+	bool cull_2d = false;
+	if (m_vd->GetVR() && m_mode != 6 && m_vd->GetTexture() && m_vd->GetTexture()->get_brick_num() > 1)
+	{
+		m_vd->GetVR()->set_2d_mask(m_2d_mask);
+		cull_2d = m_vd->GetVR()->prepare_2d_cull();
+	}
 
 	//initialization
 	int hr_mode = m_hidden_removal?(m_ortho?1:2):0;
@@ -182,6 +220,12 @@ void VolumeSelector::Select(double radius)
         else
             m_vd->DrawMask(0, m_mode, hr_mode, ini_thresh, gm_falloff, scl_falloff, m_scl_translate, m_w2d, 0.0, false, ext_msk);
     }
+	if (ptm)
+	{
+		double t = vvd::ptime::NowMs(); pt_init = t - pt0; pt0 = t;
+		init_st = vvd::ptime::Mask();
+		vvd::ptime::Mask().Reset();
+	}
 
 	//grow the selection when paint mode is select, append, erase, or invert
 	if (/*m_mode==1 ||
@@ -190,10 +234,12 @@ void VolumeSelector::Select(double radius)
 		m_mode==4)
 	{
         auto st_time = GET_TICK_COUNT();
-        wxProgressDialog* prog_diag = nullptr;
+        vvd::Progress* prog_diag = nullptr;
         
 		//loop for growing
 		int iter = m_iter_num*(radius/20.0>1.0?radius/20.0:1.0);
+		pt_iter = iter;
+
         int bnum = m_vd->GetTexture()->get_brick_num();
 		for (int i=0; i<iter; i++)
         {
@@ -213,11 +259,7 @@ void VolumeSelector::Select(double radius)
             auto rn_time = GET_TICK_COUNT();
             if (!prog_diag && rn_time - st_time > 3000)
             {
-                prog_diag = new wxProgressDialog(
-                                "VVDViewer: Diffuse brush",
-                                 "Processing... Please wait.",
-                                 100, 0,
-                                 wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE|wxPD_APP_MODAL|wxPD_CAN_ABORT);
+                prog_diag = vvd::UI::CreateProgress("VVDViewer: Diffuse brush", "Processing... Please wait.", 100, vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE|vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_CAN_ABORT).release();
             }
             if (prog_diag)
             {
@@ -238,16 +280,44 @@ void VolumeSelector::Select(double radius)
         }
 	}
 
+	if (ptm)
+	{
+		double t = vvd::ptime::NowMs(); pt_grow = t - pt0; pt0 = t;
+		grow_st = vvd::ptime::Mask();
+	}
+	if (cull_2d && m_vd->GetVR())
+		m_vd->GetVR()->release_2d_cull();
+	if (pinned)
+		m_vd->PinMaskBricks(false, 0.0);
 	if (m_mode == 6)
 		m_vd->SetUseMaskThreshold(false);
     
     if (m_vd->GetVR())
         m_vd->GetVR()->return_mask();
+	if (ptm) { double t = vvd::ptime::NowMs(); pt_return = t - pt0; pt0 = t; }
 
 	if (Texture::mask_undo_num_>0 &&
 		m_vd->GetVR())
 	{
 		m_vd->GetVR()->clear_tex_current_mask();
+	}
+	if (ptm)
+	{
+		double t = vvd::ptime::NowMs(); pt_clear = t - pt0;
+		int bn = m_vd->GetTexture() ? m_vd->GetTexture()->get_brick_num() : 0;
+		vvd::ptime::Log("Select mode %d (bricks pinned %d): total %.1f ms | add mask %.1f, undo push %.1f (history %d), init pass %.1f "
+			"[%d calls, %lld bricks, %lld uploads, slot wait %.1f, setup %.1f, load %.1f, gpu %.1f, %lld submits], "
+			"grow %d iters %.1f [%d calls, %lld bricks, %lld skipped, %lld uploads, slot wait %.1f, setup %.1f, load %.1f, gpu %.1f, %lld submits], "
+			"outside the 2D mask: init %lld skipped / %lld mask kept, grow %lld mask kept; skip check %lld bricks, %lld texels changed; "
+			"return mask %.1f, clear tex %.1f; %d bricks; pool: init swaps %lld (overwrite %lld, of this volume %lld; evict %lld, of this volume %lld), "
+			"grow swaps %lld (overwrite %lld, of this volume %lld; evict %lld, of this volume %lld)",
+			m_mode, (int)pinned, t - pt_start, pt_addmask, pt_push, Texture::mask_undo_num_, pt_init,
+			init_st.calls, init_st.bricks, init_st.uploads, init_st.wait_slots_ms, init_st.setup_ms, init_st.load_ms, init_st.gpu_ms, init_st.submits,
+			pt_iter, pt_grow, grow_st.calls, grow_st.bricks, grow_st.skipped, grow_st.uploads, grow_st.wait_slots_ms, grow_st.setup_ms, grow_st.load_ms, grow_st.gpu_ms, grow_st.submits,
+			init_st.skipped, init_st.mask_unchanged, grow_st.mask_unchanged,
+			init_st.verify_bricks + grow_st.verify_bricks, init_st.verify_changed + grow_st.verify_changed,
+			pt_return, pt_clear, bn, init_st.swaps, init_st.overwrites, init_st.overwrite_hot, init_st.evictions, init_st.evict_hot,
+			grow_st.swaps, grow_st.overwrites, grow_st.overwrite_hot, grow_st.evictions, grow_st.evict_hot);
 	}
 }
 
@@ -290,11 +360,7 @@ int VolumeSelector::CompAnalysis(double min_voxels, double max_voxels, double th
 	if (select && m_vd->GetTexture() && m_vd->GetTexture()->nmask()!=-1)
 		use_sel = true;
 
-	m_prog_diag = new wxProgressDialog(
-		"FluoRender: Component Analysis...",
-		"Analyzing... Please wait.",
-		100, 0,
-		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+	m_prog_diag = vvd::UI::CreateProgress("FluoRender: Component Analysis...", "Analyzing... Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
 	m_progress = 0;
 
 	if (use_sel)
@@ -837,7 +903,7 @@ void VolumeSelector::CompExportMultiChann(bool select)
 	Nrrd* nrrd_mvd_label = tex_mvd->get_nrrd_raw(tex_mvd->nlabel());
 	if (!nrrd_mvd_label) return;
 	void* data_mvd = nrrd_mvd->data;
-	unsigned char* data_mvd_mask = (unsigned char*)nrrd_mvd_mask->data;
+	unsigned char* data_mvd_mask = nrrd_mvd_mask ? (unsigned char*)nrrd_mvd_mask->data : nullptr;   // no mask is fine when !select
 	unsigned int* data_mvd_label = (unsigned int*)nrrd_mvd_label->data;
 	if (!data_mvd || (select&&!data_mvd_mask) || !data_mvd_label) return;
 
@@ -864,7 +930,7 @@ void VolumeSelector::CompExportMultiChann(bool select)
 			spc_x, spc_y, spc_z);
 		vd->SetSpcFromFile(true);
 		vd->SetName(m_vd->GetName() +
-			wxString::Format("_COMP%d_SIZE%llu", i++, comp_iter->second.counter));
+			VVDString::Format("_COMP%d_SIZE%llu", i++, comp_iter->second.counter));
 
 		//populate the volume
 		//the actual data
@@ -945,7 +1011,9 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 	Nrrd* nrrd_mvd_label = tex_mvd->get_nrrd_raw(tex_mvd->nlabel());
 	if (!nrrd_mvd_label) return;
 	void* data_mvd = nrrd_mvd->data;
-	unsigned char* data_mvd_mask = (unsigned char*)nrrd_mvd_mask->data;
+	//no mask is fine when !select (e.g. the 4D script random_colors task after
+	//noise_reduction deleted it): do not dereference a missing mask nrrd
+	unsigned char* data_mvd_mask = nrrd_mvd_mask ? (unsigned char*)nrrd_mvd_mask->data : nullptr;
 	unsigned int* data_mvd_label = (unsigned int*)nrrd_mvd_label->data;
 	if (!data_mvd || (select&&!data_mvd_mask) || !data_mvd_label) return;
 
@@ -966,7 +1034,7 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 		spc_x, spc_y, spc_z);
 	vd_r->SetSpcFromFile(true);
 	vd_r->SetName(m_vd->GetName() +
-		wxString::Format("_COMP1"));
+		VVDString::Format("_COMP1"));
 	//green volume
 	if (!vd_g)
 		vd_g = new VolumeData();
@@ -975,7 +1043,7 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 		spc_x, spc_y, spc_z);
 	vd_g->SetSpcFromFile(true);
 	vd_g->SetName(m_vd->GetName() +
-		wxString::Format("_COMP2"));
+		VVDString::Format("_COMP2"));
 	//blue volume
 	if (!vd_b)
 		vd_b = new VolumeData();
@@ -984,7 +1052,7 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 		spc_x, spc_y, spc_z);
 	vd_b->SetSpcFromFile(true);
 	vd_b->SetName(m_vd->GetName() +
-		wxString::Format("_COMP3"));
+		VVDString::Format("_COMP3"));
 
 	//get new data
 	//red volume
@@ -1233,46 +1301,46 @@ void VolumeSelector::GenerateAnnotations(bool use_sel)
 
 	for (Component c : comps)
 	{
-		wxString str_id = wxString::Format("%d", c.id);
+		VVDString str_id = VVDString::Format("%d", c.id);
 		Vector pos = c.acc_pos/c.counter;
 		pos *= Vector(nx==0?0.0:1.0/nx,
 			ny==0?0.0:1.0/ny,
 			nz==0?0.0:1.0/nz);
 		double intensity = mul * c.acc_int / c.counter;
 		total_int += intensity;
-		wxString str_info = wxString::Format("%llu\t%f\t%d",
+		VVDString str_info = VVDString::Format("%llu\t%f\t%d",
 			c.counter, double(c.counter)*(spcx*spcy*spcz), int(intensity+0.5));
 		m_annotations->AddText(str_id.ToStdString(), Point(pos), str_info.ToStdString());
 	}
 
 	m_annotations->SetVolume(m_vd);
 	m_annotations->SetTransform(m_vd->GetTexture()->transform());
-	wxString info_meaning = "VOX_SIZE\tVOLUME\tAVG_VALUE";
+	VVDString info_meaning = "VOX_SIZE\tVOLUME\tAVG_VALUE";
 	m_annotations->SetInfoMeaning(info_meaning);
 
 	//memo
-	wxString memo;
+	VVDString memo;
 	memo += "Volume: " + m_vd->GetName() + "\n";
-	memo += "Components: " + wxString::Format("%d", m_ca_comps) + "\n";
-	memo += "Total volume: " + wxString::Format("%d", m_ca_volume) + "\n";
-	memo += "Average value: " + wxString::Format("%d", int(total_int/m_ca_comps+0.5)) + "\n";
+	memo += "Components: " + VVDString::Format("%d", m_ca_comps) + "\n";
+	memo += "Total volume: " + VVDString::Format("%d", m_ca_volume) + "\n";
+	memo += "Average value: " + VVDString::Format("%d", int(total_int/m_ca_comps+0.5)) + "\n";
 	memo += "\nSettings:\n";
 	double threshold = m_label_thresh * m_vd->GetMaxValue();
-	memo += "Threshold: " + wxString::Format("%f", threshold) + "\n";
+	memo += "Threshold: " + VVDString::Format("%f", threshold) + "\n";
 	double falloff = m_label_falloff * m_vd->GetMaxValue();
-	memo += "Falloff: " + wxString::Format("%f", falloff) + "\n";
-	wxString str;
+	memo += "Falloff: " + VVDString::Format("%f", falloff) + "\n";
+	VVDString str;
 	if (use_sel)
 		str = "Yes";
 	else
 		str = "No";
 	memo += "Selected only: " + str + "\n";
-	memo += "Minimum component size in voxel: " + wxString::Format("%d", int(m_min_voxels)) + "\n";
+	memo += "Minimum component size in voxel: " + VVDString::Format("%d", int(m_min_voxels)) + "\n";
 	if (m_max_voxels > 0.0)
-		memo += "Maximum component size in voxel: " + wxString::Format("%d", int(m_max_voxels)) + "\n";
+		memo += "Maximum component size in voxel: " + VVDString::Format("%d", int(m_max_voxels)) + "\n";
 	else
 		memo += "Maximum component size ignored\n";
-	memo += "Iterations: " + wxString::Format("%d", m_iter_label);
+	memo += "Iterations: " + VVDString::Format("%d", m_iter_label);
 
 	std::string str1 = memo.ToStdString();
 	m_annotations->SetMemo(str1);
@@ -1289,7 +1357,7 @@ void VolumeSelector::GenerateAnnotations(bool use_sel)
 	unsigned int *val32 = new (std::nothrow) unsigned int[voxelnum];
 	if (!val32)
 	{
-		wxMessageBox("Not enough memory. Please save project and restart.");
+		vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 		return;
 	}
 
@@ -1318,11 +1386,7 @@ int VolumeSelector::NoiseAnalysis(double min_voxels, double max_voxels, double b
 	if (!m_vd || m_vd->isBrxml())
 		return 0;
 
-	m_prog_diag = new wxProgressDialog(
-		"FluoRender: Noise Analysis...",
-		"Analyzing... Please wait.",
-		100, 0,
-		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+	m_prog_diag = vvd::UI::CreateProgress("FluoRender: Noise Analysis...", "Analyzing... Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
 	m_progress = 0;
 
 	int nx, ny, nz;
@@ -1372,11 +1436,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 	if (!m_vd || !m_vd->GetMask(false))
 		return;
 
-	m_prog_diag = new wxProgressDialog(
-		"FluoRender: Component Analysis...",
-		"Analyzing... Please wait.",
-		100, 0,
-		wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+	m_prog_diag = vvd::UI::CreateProgress("FluoRender: Component Analysis...", "Analyzing... Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
 	m_progress = 0;
 	m_total_pr = iter+1;
 
@@ -1393,6 +1453,8 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 
 	if (mode == 0)
 	{
+		//uncompressed once for all iterations (not re-uploaded per DrawMask)
+		m_vd->BeginVolumeWrites();
 		for (int i=0; i<iter; i++)
 		{
 			m_vd->DrawMask(2, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -1404,6 +1466,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		}
 		m_vd->DrawMask(0, 6, 0, ini_thresh, gm_falloff, scl_falloff, thresh, m_w2d, 0.0);
 		m_vd->GetVR()->return_volume();
+		m_vd->EndVolumeWrites();
 	}
 	else if (mode == 1)
 	{
@@ -1425,6 +1488,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		unsigned long long mem_size = (unsigned long long)res_x*
 			(unsigned long long)res_y*(unsigned long long)res_z*(unsigned long long)bytes;
 
+		vd_new->BeginVolumeWrites();
 		for (int i=0; i<iter; i++)
 		{
 			vd_new->DrawMask(2, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -1436,6 +1500,7 @@ void VolumeSelector::NoiseRemoval(int iter, double thresh, int mode)
 		}
 		vd_new->DrawMask(0, 6, 0, ini_thresh, gm_falloff, scl_falloff, thresh, m_w2d, 0.0);
 		vd_new->GetVR()->return_volume();
+		vd_new->EndVolumeWrites();
 
 		if (nrrd_new)
 		{
@@ -1462,15 +1527,12 @@ void VolumeSelector::EVEAnalysis(int min_radius, int max_radius, double thresh, 
 	if (!m_vd)
 		return;
 
-	bool use_sel = false;
-	if (select && m_vd->GetTexture() && m_vd->GetTexture()->nmask() != -1)
-		use_sel = true;
+	//EVE counts on the whole volume: it has no selection mode (the
+	//selection-only block below is disabled). The use_sel lines copied from
+	//CompAnalysis tested ::select, the address of the system select()
+	//function (always true; C4551), and their result was never used.
 
-	m_prog_diag = new wxProgressDialog(
-		"VVDViewer: EVE Analysis...",
-		"Analyzing... Please wait.",
-		100, 0,
-		wxPD_APP_MODAL | wxPD_SMOOTH | wxPD_ELAPSED_TIME | wxPD_AUTO_HIDE);
+	m_prog_diag = vvd::UI::CreateProgress("VVDViewer: EVE Analysis...", "Analyzing... Please wait.", 100, vvd::PROGRESS_APP_MODAL | vvd::PROGRESS_SMOOTH | vvd::PROGRESS_ELAPSED | vvd::PROGRESS_AUTO_HIDE).release();
 	m_progress = 0;
 
 	/*
@@ -1492,7 +1554,7 @@ void VolumeSelector::EVEAnalysis(int min_radius, int max_radius, double thresh, 
 	m_vd->GetVR()->return_mask();
 */
 
-	EVECount(min_radius, max_radius, thresh);
+	EVECount(min_radius, max_radius, thresh, target_lv);
 
 	if (m_prog_diag)
 	{
@@ -1630,7 +1692,7 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
                 unsigned char* orig_data = (unsigned char *)orig_nrrd->getNrrd()->data;
                 if (!orig_data)
                     return;
-                auto worker = [&nx, &ny, &r, &zr, &thresh, &rr, &zfac, &ksize, &fcenter, &totalsteps](unsigned char* orig_data, float* scores, float* filter, int stz, int edz, int* m_progress, wxProgressDialog* m_prog_diag) {
+                auto worker = [&nx, &ny, &r, &zr, &thresh, &rr, &zfac, &ksize, &fcenter, &totalsteps](unsigned char* orig_data, float* scores, float* filter, int stz, int edz, int* m_progress, vvd::Progress* m_prog_diag) {
                     for (int z = stz; z < edz; z++) {
                         for(int y = r; y < ny-r; y++) {
                             for(int x = r; x < nx-r; x++) {
@@ -1671,7 +1733,7 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
                 unsigned short* orig_data = (unsigned short*)orig_nrrd->getNrrd()->data;
                 if (!orig_data)
                     return;
-                auto worker = [&nx, &ny, &r, &zr, &thresh, &rr, &zfac, &ksize, &fcenter, &totalsteps](unsigned short* orig_data, float* scores, float* filter, int stz, int edz, int* m_progress, wxProgressDialog* m_prog_diag) {
+                auto worker = [&nx, &ny, &r, &zr, &thresh, &rr, &zfac, &ksize, &fcenter, &totalsteps](unsigned short* orig_data, float* scores, float* filter, int stz, int edz, int* m_progress, vvd::Progress* m_prog_diag) {
                     for (int z = stz; z < edz; z++) {
                         for(int y = r; y < ny-r; y++) {
                             for(int x = r; x < nx-r; x++) {
@@ -1713,7 +1775,7 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
             grain_size = is_divisible ? (nz - 2) / nthreads : (nz - 2) / (nthreads - 1) ;
             std::vector<std::thread> threads2(nthreads - 1);
             vector<LMaxima> *temp_maxima = new vector<LMaxima>[nthreads];
-            auto worker = [&nx, &ny, &r, &zr, &thresh, &totalsteps](float* scores, vector<LMaxima>* maxima_vec, int stz, int edz, int* m_progress, wxProgressDialog* m_prog_diag) {
+            auto worker = [&nx, &ny, &r, &zr, &thresh, &totalsteps](float* scores, vector<LMaxima>* maxima_vec, int stz, int edz, int* m_progress, vvd::Progress* m_prog_diag) {
                 for (int z = stz; z < edz; z++) {
                     for(int y = 1; y < ny-1; y++) {
                         for(int x = 1; x < nx-1; x++) {
@@ -1874,30 +1936,30 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
     int count = 0;
     for (LMaxima p : eve_points)
     {
-        wxString str_id = wxString::Format("%d", count);
+        VVDString str_id = VVDString::Format("%d", count);
         Vector pos = Vector(p.pos & 0x1FFFFF, (p.pos >> 21) & 0x1FFFFF, (p.pos >> 42) & 0x1FFFFF);
         pos *= Vector(nx==0?0.0:1.0/nx,
             ny==0?0.0:1.0/ny,
             nz==0?0.0:1.0/nz);
-        wxString str_info = wxString::Format("%.4f\t%d\t%d", p.score, p.r, p.zr);
+        VVDString str_info = VVDString::Format("%.4f\t%d\t%d", p.score, p.r, p.zr);
         m_annotations->AddText(str_id.ToStdString(), Point(pos), str_info.ToStdString());
         count++;
     }
 
     m_annotations->SetVolume(m_vd);
     m_annotations->SetTransform(m_vd->GetTexture()->transform());
-    wxString info_meaning = "SCORE\tRADIUS\tZRADIUS";
+    VVDString info_meaning = "SCORE\tRADIUS\tZRADIUS";
     m_annotations->SetInfoMeaning(info_meaning);
 
     //memo
-    wxString memo;
+    VVDString memo;
     memo += "Volume: " + m_vd->GetName() + "\n";
-    memo += "Maxima: " + wxString::Format("%lu", eve_points.size()) + "\n";
+    memo += "Maxima: " + VVDString::Format("%lu", eve_points.size()) + "\n";
     memo += "\nSettings:\n";
-    memo += "Min_Brightness: " + wxString::Format("%f", thresh) + "\n";
-    memo += "Min_Radius: " + wxString::Format("%d", min_radius) + "\n";
-    memo += "Max_Radius: " + wxString::Format("%d", max_radius) + "\n";
-    memo += "Level: " + wxString::Format("%d", lv) + "\n";
+    memo += "Min_Brightness: " + VVDString::Format("%f", thresh) + "\n";
+    memo += "Min_Radius: " + VVDString::Format("%d", min_radius) + "\n";
+    memo += "Max_Radius: " + VVDString::Format("%d", max_radius) + "\n";
+    memo += "Level: " + VVDString::Format("%d", lv) + "\n";
     std::string str1 = memo.ToStdString();
     m_annotations->SetMemo(str1);
     m_annotations->SetMemoRO(true);
@@ -1907,33 +1969,21 @@ void VolumeSelector::EVECount(int min_radius, int max_radius, double thresh, int
         m_vd->SetLevel(curLv);
     
     //generate swc
-    wxString temp_swc_path = wxFileName::CreateTempFileName(wxStandardPaths::Get().GetTempDir() + wxFileName::GetPathSeparator()) + ".swc";
-    wxTextFile swc(temp_swc_path);
-    if (swc.Exists())
-    {
-        if (!swc.Open())
-            return;
-        swc.Clear();
-    }
-    else
-    {
-        if (!swc.Create())
-            return;
-    }
+    VVDString temp_swc_path = vvd::CreateTempFileName(L"vvd_eve") + L".swc";
+    std::vector<VVDString> swc;
     
     count = 0;
     for (LMaxima p : eve_points)
     {
-        wxString str_id = wxString::Format("%d", count);
+        VVDString str_id = VVDString::Format("%d", count);
         Vector pos = Vector(p.pos & 0x1FFFFF, (p.pos >> 21) & 0x1FFFFF, (p.pos >> 42) & 0x1FFFFF);
         pos *= Vector(spcx, spcy, spcz);
-        wxString str_line = wxString::Format("%d 6 %f %f %f %f -1 default %f", count, pos.x(), pos.y(), pos.z(), p.r*spcx, p.score);
-        swc.AddLine(str_line);
+        VVDString str_line = VVDString::Format("%d 6 %f %f %f %f -1 default %f", count, pos.x(), pos.y(), pos.z(), p.r*spcx, p.score);
+        swc.push_back(str_line);
         count++;
     }
     
-    swc.Write();
-    swc.Close();
+    vvd::WriteTextLines(temp_swc_path, swc);
     
     MeshData *md = new MeshData();
     md->SetSWCSubdivLevel(1);

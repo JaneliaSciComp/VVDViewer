@@ -424,7 +424,7 @@ void LMSeacher::OnMouse(wxMouseEvent& event)
 
 //////////////////////////////////////////////////////////////////////////
 
-wxCriticalSection* VRenderVulkanView::ms_pThreadCS = nullptr;
+vvd::CriticalSection* VRenderVulkanView::ms_pThreadCS = nullptr;
 
 BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
 	EVT_MENU(ID_CTXMENU_SHOW_ALL, VRenderVulkanView::OnShowAllDatasets)
@@ -449,6 +449,11 @@ BEGIN_EVENT_TABLE(VRenderVulkanView, wxWindow)
 	EVT_MOUSE_EVENTS(VRenderVulkanView::OnMouse)
 	EVT_KEY_DOWN(VRenderVulkanView::OnKeyDown)
 END_EVENT_TABLE()
+
+//views alive: the engine's shared Vulkan state (pipelines, render passes,
+//TextureRenderer::m_vulkan) is released with the last one only; a view
+//closed earlier destroyed what the other views still drew with
+static int s_live_vulkan_views = 0;
 
 VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	wxWindow *parent,
@@ -733,6 +738,7 @@ VRenderVulkanView::VRenderVulkanView(wxWindow* frame,
 	m_clip_dist_y(0),
 	m_clip_dist_z(0)
 {
+	s_live_vulkan_views++;
 	// The Vulkan swapchain presents directly to this window's HWND. wxWidgets must
 	// NOT erase/paint the background, otherwise it covers the presented image (black).
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -865,15 +871,7 @@ void VRenderVulkanView::InitVulkan()
 	SetEvtHandlerEnabled(false);
 	Freeze();
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(), NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
-#else
-	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
-#endif
+	wxString dft = vvd::SettingsReadPath(L"" SETTING_FILE_NAME);
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -971,7 +969,7 @@ void VRenderVulkanView::InitVulkan()
 	if (vr_frame)
 	{
 		auto setting_dlg = vr_frame->GetSettingDlg();
-		wxString font_file = setting_dlg ? setting_dlg->GetFontFile() : "";
+		wxString font_file = setting_dlg ? setting_dlg->GetFontFile() : wxString();
 #ifdef __WXMAC__
 		wxString resDir = wxStandardPaths::Get().GetResourcesDir();
 		if (font_file != "")
@@ -1057,10 +1055,52 @@ VRenderVulkanView::~VRenderVulkanView()
 		}
 	}
 
-	FLIVR::VolumeRenderer::finalize();
-	FLIVR::TextureRenderer::finalize_vulkan();
+	if (--s_live_vulkan_views <= 0)
+	{
+		FLIVR::VolumeRenderer::finalize();
+		FLIVR::MeshRenderer::finalize();
+		FLIVR::TextureRenderer::finalize_vulkan();
+	}
 	m_v2drender.reset();
 	//m_vulkan.reset();
+}
+
+vks::VTexture* VRenderVulkanView::SnapshotTarget(const std::unique_ptr<vks::VFrameBuffer>& fb, bool empty, bool chain)
+{
+	if (!fb || fb->attachments.empty() || !fb->attachments[0])
+		return nullptr;
+	const std::shared_ptr<vks::VTexture>& src = fb->attachments[0];
+	if (m_fbo_snap && (m_fbo_snap->w != fb->w || m_fbo_snap->h != fb->h ||
+		!m_tex_snap || m_tex_snap->format != src->format))
+	{
+		m_fbo_snap.reset();
+		m_tex_snap.reset();
+	}
+	if (!m_fbo_snap)
+	{
+		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
+		m_fbo_snap = std::make_unique<vks::VFrameBuffer>(vks::VFrameBuffer());
+		m_fbo_snap->w = fb->w;
+		m_fbo_snap->h = fb->h;
+		m_fbo_snap->device = prim_dev;
+		m_tex_snap = prim_dev->GenTexture2D(src->format, VK_FILTER_LINEAR, fb->w, fb->h);
+		m_fbo_snap->addAttachment(m_tex_snap);
+	}
+	Vulkan2dRender::V2DRenderParams p;
+	if (chain)
+		p = m_v2drender->GetNextV2dRenderSemaphoreSettings();
+	p.pipeline = m_v2drender->preparePipeline(IMG_SHADER_TEXTURE_LOOKUP, V2DRENDER_BLEND_DISABLE,
+		m_tex_snap->format, 1, 0, false);
+	p.tex[0] = src.get();
+	p.clear = true;
+	p.clearColor = { 0.0f, 0.0f, 0.0f, 0.0f };
+	if (!m_fbo_snap->renderPass)
+		m_fbo_snap->replaceRenderPass(p.pipeline.pass);
+	if (empty)
+		m_v2drender->clear(m_fbo_snap, p);
+	else
+		m_v2drender->render(m_fbo_snap, p);
+	return m_tex_snap.get();
 }
 
 double VRenderVulkanView::GetAvailableGraphicsMemory(int device_id)
@@ -1412,6 +1452,13 @@ void VRenderVulkanView::Draw()
 			//draw the volumes
 			if (m_md_pop_list.empty() && m_vd_pop_list.empty())
 			{
+				//nothing to stream: end a loop left running by now-hidden data, or
+				//OnIdle redraws for it forever and captures never finish (as Qt)
+				if (TextureRenderer::get_start_update_loop() && !TextureRenderer::get_done_update_loop())
+				{
+					TextureRenderer::set_done_update_loop(true);
+					HaltLoopUpdate();
+				}
 				if (m_frame_clear) {
 					vks::VFrameBuffer* current_fbo = m_vulkan->frameBuffers[m_vulkan->currentBuffer].get();
 					
@@ -1459,6 +1506,12 @@ void VRenderVulkanView::Draw()
 		DrawTraces();
 
 		m_mv_mat = mv_temp;
+	}
+	else if (TextureRenderer::get_start_update_loop() && !TextureRenderer::get_done_update_loop())
+	{
+		//the view draws nothing ("draw all" off): end the running loop, as above
+		TextureRenderer::set_done_update_loop(true);
+		HaltLoopUpdate();
 	}
 
 	m_draw_overlays_only = false;
@@ -2100,7 +2153,14 @@ void VRenderVulkanView::DrawVolumesDP()
 			int peel = 0;
 			if (m_dp_tex_list.size() >= peeling_layers && !m_dp_tex_list.empty() && m_md_pop_list.size() > 0)
 			{
-				if (TextureRenderer::get_update_order() == 0)
+				if (peeling_layers == 0)
+				{
+					//opaque meshes: one slab in front of the mesh surface (with update
+					//order 0 this read m_dp_tex_list[-1])
+					peel = 1;
+					m_vol_dp_bk_tex = m_dp_tex_list[0];
+				}
+				else if (TextureRenderer::get_update_order() == 0)
 				{
 					if (s == 0)
 					{
@@ -2258,7 +2318,11 @@ void VRenderVulkanView::DrawVolumesDP()
 			}
 			
 			int texid = TextureRenderer::get_update_order() == 0 ? (peeling_layers-1)-s : s;
-			if (m_dp_ctex_list.size() > texid && m_md_pop_list.size() > 0 &&
+			if (peeling_layers == 0)
+				texid = s;
+			//(int compare: texid -1 converted to size_t passed as huge, and the opaque
+			//mesh layer was never composited)
+			if (texid >= 0 && (int)m_dp_ctex_list.size() > texid && m_md_pop_list.size() > 0 &&
 				((TextureRenderer::get_start_update_loop() && TextureRenderer::get_done_update_loop()) || !TextureRenderer::get_mem_swap() || TextureRenderer::get_total_brick_num() == 0) )
 			{
 				Vulkan2dRender::V2DRenderParams params = m_v2drender->GetNextV2dRenderSemaphoreSettings();
@@ -2268,7 +2332,7 @@ void VRenderVulkanView::DrawVolumesDP()
 				params.pipeline =
 					m_v2drender->preparePipeline(
 						IMG_SHADER_TEXTURE_LOOKUP_BLEND,
-						V2DRENDER_BLEND_OVER_INV,
+						TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 						m_fbo_temp_restore->attachments[0]->format,
 						m_fbo_temp_restore->attachments.size(),
 						0,
@@ -2442,7 +2506,10 @@ void VRenderVulkanView::DrawVolumesDP()
 	}
 
 	if (m_tile_rendering && m_current_tileid < m_tile_xnum * m_tile_ynum) {
-		if ((TextureRenderer::get_start_update_loop() && TextureRenderer::get_done_update_loop()) ||
+		//done alone: DrawVolumesDP resets start_update_loop after its last slab,
+		//so "start && done" never held with meshes in Depth mode (the capture
+		//never advanced past the first tile)
+		if (TextureRenderer::get_done_update_loop() ||
 			!TextureRenderer::get_mem_swap() ||
 			TextureRenderer::get_total_brick_num() == 0) {
 			DrawTile();
@@ -2684,6 +2751,9 @@ void VRenderVulkanView::DrawAnnotations()
                             pos = ann->GetTextPos(j);
                             if (!ann->InsideClippingPlanes(pos))
                                 continue;
+                            //its volume was deleted: no positions (they all stacked at the origin)
+                            if (!ann->HasTransform())
+                                break;
                             pos = ann->GetTextTransformedPos(j);
                             pos = mv.transform(pos);
                             pos = p.transform(pos);
@@ -3675,11 +3745,9 @@ string VRenderVulkanView::EVEAnalysis(int min_radius, int max_radius, double thr
 
 	VolumeData* vd = m_selector.GetVolume();
 
-	if (!select)
-	{
-		m_selector.Set2DMask(m_tex_paint);
-		m_selector.Set2DWeight(m_tex_final, m_tex_wt2 ? m_tex_wt2 : m_tex);
-	}
+	//no 2D mask / weights: EVE counts on the whole volume and uses neither.
+	//(The "if (!select)" block copied from CompAnalysis tested ::select, the
+	//address of the system select() function, so it never ran; C4551.)
 	m_selector.SetSizeMap(false);
 	m_selector.EVEAnalysis(min_radius, max_radius, thresh, target_lv);
 
@@ -3706,15 +3774,7 @@ string VRenderVulkanView::EVEAnalysis(int min_radius, int max_radius, double thr
 //load default
 void VRenderVulkanView::LoadDefaultBrushSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_brush_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_brush_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_brush_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_brush_settings.dft");
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -5025,13 +5085,9 @@ void VRenderVulkanView::DrawOVER(VolumeData* vd, std::unique_ptr<vks::VFrameBuff
 			}
 		}
 
-		if (TextureRenderer::get_streaming())
-		{
-			unsigned int rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() >
-				TextureRenderer::get_up_time()/* && vd->GetMaskMode() != 1*/)
-				return;
-		}
+		//time budget used up (a frame that has drawn nothing yet still draws one brick)
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 	}
 
 	if (do_over)
@@ -5041,7 +5097,11 @@ void VRenderVulkanView::DrawOVER(VolumeData* vd, std::unique_ptr<vks::VFrameBuff
 			(TextureRenderer::get_mem_swap() &&
 			TextureRenderer::get_clear_chan_buffer()))
 		{
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 			clear = true;
 		}
 
@@ -5062,7 +5122,10 @@ void VRenderVulkanView::DrawOVER(VolumeData* vd, std::unique_ptr<vks::VFrameBuff
         }
 
 		if (vd->GetVR())
+		{
 			vd->GetVR()->set_depth_peel(peel);
+			vd->GetVR()->set_depth_textures(peel ? m_vol_dp_fr_tex : nullptr, peel ? m_vol_dp_bk_tex : nullptr);
+		}
 		vd->SetStreamMode(0);
 		vd->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
 		vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
@@ -5207,13 +5270,9 @@ void VRenderVulkanView::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffe
 			}
 		}
 
-		if (TextureRenderer::get_streaming())
-		{
-			unsigned int rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() >
-				TextureRenderer::get_up_time())
-				return;
-		}
+		//time budget used up (a frame that has drawn nothing yet still draws one brick)
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 	}
 
 	int nx, ny;
@@ -5249,12 +5308,19 @@ void VRenderVulkanView::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffe
 			(TextureRenderer::get_mem_swap() &&
 			TextureRenderer::get_clear_chan_buffer()))
 		{
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 			clear = true;
 		}
 
 		if (vd->GetVR())
+		{
 			vd->GetVR()->set_depth_peel(peel);
+			vd->GetVR()->set_depth_textures(peel ? m_vol_dp_fr_tex : nullptr, peel ? m_vol_dp_bk_tex : nullptr);
+		}
 		if (color_mode == 1)
 		{
 			vd->SetMode(3);
@@ -5551,7 +5617,8 @@ void VRenderVulkanView::DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& 
 		m_fbo_ol2->replaceRenderPass(params_ol2.pipeline.pass);
 	m_v2drender->render(m_fbo_ol2, params_ol2);
 	
-	//draw shadow
+	//draw shadow (the colour it reads: a copy of the target, made first)
+	vks::VTexture* color_snap = SnapshotTarget(m_fbo_final, m_clear_final_buffer, false);
 	Vulkan2dRender::V2DRenderParams params_final;
 	params_final.pipeline =
 		m_v2drender->preparePipeline(
@@ -5563,7 +5630,7 @@ void VRenderVulkanView::DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& 
 			m_fbo_final->attachments[0]->is_swapchain_images);
 	params_final.tex[0] = m_tex_ol2.get();
 	params_final.tex[1] = tex_depth.get();
-	params_final.tex[2] = m_tex_final.get();	//TODO: FIX (copy texture?) This causes validation errors (image layout mismatch)
+	params_final.tex[2] = color_snap;	//the colour before this pass (not the target itself)
 	params_final.loc[0] = { 1.0f / nx, 1.0f / ny, max(m_scale_factor, 1.0), 0.0f };
 	params_final.loc[1] = { (float)darkness, 0.0f, 0.0f, 0.0f };
 	params_final.clear = m_clear_final_buffer;
@@ -5732,8 +5799,9 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 			bool doShadow = false;
 			for (int i = 0; i < vlist.size(); i++)
 			{
-				if (vlist[0]->GetVR())
-					doShadow |= !(vlist[0]->GetVR()->get_done_loop(3));
+				//(every listed volume with Shadow, not vlist[0] each time)
+				if (vlist[i] && vlist[i]->GetShadow() && vlist[i]->GetVR())
+					doShadow |= !(vlist[i]->GetVR()->get_done_loop(3));
 			}
 			if (!doShadow)
 				return;
@@ -5773,7 +5841,11 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 		(TextureRenderer::get_mem_swap() &&
 		TextureRenderer::get_clear_chan_buffer()))
 	{
-		TextureRenderer::reset_clear_chan_buffer();
+		//the draw returns at once when the frame's time is used up: keep
+		//the flag for the frame that draws (a pass that took it and drew
+		//nothing left its buffer uncleared, e.g. a stale shadow map)
+		if (!TextureRenderer::frame_budget_exhausted())
+			TextureRenderer::reset_clear_chan_buffer();
 		clear = true;
 	}
 
@@ -5922,7 +5994,9 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 		m_fbo_ol2->replaceRenderPass(params_ol2.pipeline.pass);
 		m_v2drender->render(m_fbo_ol2, params_ol2);
 
-		//bind fbo for final composition
+		//bind fbo for final composition (the colour it reads: a copy of the
+		//target, made first: it takes its own slot in the semaphore chain)
+		vks::VTexture* color_snap = SnapshotTarget(fb, false, true);
 		Vulkan2dRender::V2DRenderParams params_final = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 
 		params_final.pipeline =
@@ -5934,7 +6008,7 @@ void VRenderVulkanView::DrawOLShadows(vector<VolumeData*> &vlist, std::unique_pt
 				0,
 				fb->attachments[0]->is_swapchain_images);
 		params_final.tex[0] = m_tex_ol2.get();
-		params_final.tex[1] = fb->attachments[0].get();	//TODO: FIX (copy texture?) This causes validation errors (image layout mismatch)
+		params_final.tex[1] = color_snap;	//the colour before this pass (not the target itself)
 		params_final.loc[0] = { 1.0f / nx, 1.0f / ny, max(m_scale_factor, 1.0), 0.0f };
 		params_final.loc[1] = { (float)shadow_darkness, 0.0f, 0.0f, 0.0f };
 
@@ -6006,7 +6080,9 @@ void VRenderVulkanView::DrawVolumesMulti(vector<VolumeData*> &list, int peel)
 					!TextureRenderer::get_done_update_loop())
 				{
 					doMulti |= !vr->get_done_loop(0);
-					doShadow |= !vr->get_done_loop(3);
+					//only volumes that draw a shadow ever finish the shadow loop
+					if (list[i]->GetShadow())
+						doShadow |= !vr->get_done_loop(3);
 				}
 			}
 			VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
@@ -6132,7 +6208,11 @@ void VRenderVulkanView::DrawVolumesMulti(vector<VolumeData*> &list, int peel)
 			TextureRenderer::get_clear_chan_buffer()))
 		{
 			clear = true;
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 		}
 
 		//draw multiple volumes at the same time
@@ -6176,7 +6256,7 @@ void VRenderVulkanView::DrawVolumesMulti(vector<VolumeData*> &list, int peel)
 	int blend_method = V2DRENDER_BLEND_ADD;
 
 	if (m_dpeel)
-		blend_method = V2DRENDER_BLEND_OVER_INV;
+		blend_method = TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV;
 	else
 	{
 		if (m_vol_method == VOL_METHOD_COMP)
@@ -6962,11 +7042,20 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(WXK_DOWN)))
 			m_move_down = false;
 
+		//keys that act on frame-wide panels (Record/Export, Clipping Planes):
+		//every view polls the same key state, so only the current view acts,
+		//or each press stepped the movie / slab once per view. With no current
+		//view (nothing or only the root selected in the tree) the first view
+		VRenderVulkanView* key_view = cur_glview;
+		if (!key_view && frame && frame->GetView(0))
+			key_view = frame->GetView(0)->m_glview;
+		const bool frame_keys = !key_view || key_view == this;
 		//move time sequence
-		//forward
-		if (!m_tseq_forward &&
-			VRenderFrame::GetKeyState(wxKeyCode('d')) ||
-			VRenderFrame::GetKeyState(WXK_SPACE))
+		//forward: D on its press edge; Space on every poll while it is held
+		//(holding Space plays the sequence, as since ee21fd1)
+		if (frame_keys &&
+			((!m_tseq_forward && VRenderFrame::GetKeyState(wxKeyCode('d'))) ||
+			VRenderFrame::GetKeyState(WXK_SPACE)))
 		{
 			m_tseq_forward = true;
 			if (frame && frame->GetMovieView())
@@ -6978,7 +7067,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(WXK_SPACE))
 			m_tseq_forward = false;
 		//backforward
-		if (!m_tseq_backward &&
+		if (frame_keys && !m_tseq_backward &&
 			VRenderFrame::GetKeyState(wxKeyCode('a')))
 		{
 			m_tseq_backward = true;
@@ -6992,7 +7081,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 
 		//move clip
 		//up
-		if (!m_clip_up &&
+		if (frame_keys && !m_clip_up &&
 			VRenderFrame::GetKeyState(wxKeyCode('s')))
 		{
 			m_clip_up = true;
@@ -7004,7 +7093,7 @@ void VRenderVulkanView::OnIdle(wxTimerEvent& event)
 			!VRenderFrame::GetKeyState(wxKeyCode('s')))
 			m_clip_up = false;
 		//down
-		if (!m_clip_down &&
+		if (frame_keys && !m_clip_down &&
 			VRenderFrame::GetKeyState(wxKeyCode('w')))
 		{
 			m_clip_down = true;
@@ -9336,7 +9425,11 @@ void VRenderVulkanView::Get4DSeqFrames(int &start_frame, int &end_frame, int &cu
 
 			int vd_start_frame = 0;
 			int vd_end_frame = reader->GetTimeNum()-1;
-			int vd_cur_frame = reader->GetCurTime();
+			// the volume's own time (Set4DSeqFrame sets it), not the reader's:
+			// a time point the brick loader prefetched (Convert_ThreadSafe)
+			// leaves reader->GetCurTime() behind, so going back to that frame
+			// (e.g. the start frame of a playback) was skipped
+			int vd_cur_frame = vd->GetCurTime();
 
 			if (i==0)
 			{
@@ -10254,6 +10347,12 @@ void VRenderVulkanView::UpdateScreen()
 	//semaphore chains in multi-GPU configurations, whose slots never advance
 	m_vulkan->ResetRenderSemaphores();
 	m_vulkan->prepareFrame();
+	if (m_vulkan->frameSkipped)
+	{
+		//no swapchain image (a failed rebuild): try again with the next frame
+		RefreshGL(false);
+		return;
+	}
 	m_frame_clear = true;
 
 	PopMeshList();
@@ -11527,6 +11626,13 @@ void VRenderVulkanView::RemoveAnnotations(wxString &name)
 			if (ann && ann->GetName() == name)
 			{
 				m_layer_list.erase(m_layer_list.begin()+i);
+				//the analysis that made it keeps a pointer for Show Annotations
+				for (int v = 0; v < vr_frame->GetViewNum(); v++)
+				{
+					VRenderView* vrv = vr_frame->GetView(v);
+					if (vrv && vrv->GetVolumeSelector())
+						vrv->GetVolumeSelector()->ForgetAnnotations(ann);
+				}
 				dm->RemoveAnnotations(name);
 			}
 		}
@@ -15865,10 +15971,12 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 						vector<TextureBrick*> *bricks2 = tex->get_sorted_bricks(view_ray, !m_persp);
 						if (!bricks2 || bricks2->size()==0)
 							continue;
+						//"Skip empty bricks": the transfer-function test once per volume
+						const int skip_max = vd->GetVR()->invisible_brick_max((*bricks2)[0]->nb(0));
 						for (j=0; j<bricks2->size(); j++)
 						{
 							(*bricks2)[j]->set_drawn(false);
-							if ((*bricks2)[j]->get_priority()>0 ||
+							if (vd->GetVR()->skip_empty_brick((*bricks2)[j], skip_max) ||
 								!vd->GetVR()->test_against_view_clip((*bricks2)[j]->bbox(), (*bricks2)[j]->tbox(), (*bricks2)[j]->dbox(), m_persp) ||
                                 !tex->GetFileName((*bricks2)[j]->getID()) ||
                                 (!tex->GetFileName((*bricks2)[j]->getID())->isvalid && !tex->GetFileName((*bricks2)[j]->getID())->isurl))
@@ -15917,10 +16025,12 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 					vector<TextureBrick*> *bricks = tex->get_sorted_bricks(view_ray, !m_persp);
 					if (!bricks || bricks->size()==0)
 						continue;
+					//"Skip empty bricks": the transfer-function test once per volume
+					const int skip_max = vd->GetVR()->invisible_brick_max((*bricks)[0]->nb(0));
 					for (j=0; j<bricks->size(); j++)
 					{
 						(*bricks)[j]->set_drawn(false);
-						if ((*bricks)[j]->get_priority()>0 ||
+						if (vd->GetVR()->skip_empty_brick((*bricks)[j], skip_max) ||
 							!vd->GetVR()->test_against_view_clip((*bricks)[j]->bbox(), (*bricks)[j]->tbox(), (*bricks)[j]->dbox(), m_persp) ||
                             (tex->isBrxml() && (!tex->GetFileName((*bricks)[j]->getID()) || (!tex->GetFileName((*bricks)[j]->getID())->isvalid && !tex->GetFileName((*bricks)[j]->getID())->isurl))) )
 						{
@@ -16160,9 +16270,10 @@ void VRenderVulkanView::StartLoopUpdate(bool reset_peeling_layer)
 									for (k = 0; k < list.size(); k++)
 									{
 										Ray view_ray = list[k]->GetVR()->compute_view();
-										list[i]->GetTexture()->set_sort_bricks();
-										list[i]->GetTexture()->get_sorted_bricks_dir(view_ray); // distance from view plane
-										list[i]->GetTexture()->set_sort_bricks();
+										//(list[k]: list[i] read the layer index past the group's volumes)
+										list[k]->GetTexture()->set_sort_bricks();
+										list[k]->GetTexture()->get_sorted_bricks_dir(view_ray); // distance from view plane
+										list[k]->GetTexture()->set_sort_bricks();
 									}
 									TextureRenderer::set_update_order(order);
 									std::sort(tmp_shadow.begin(), tmp_shadow.end(), VolumeLoader::sort_data_asc);
@@ -20521,46 +20632,6 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
     if (!m_cur_vol)
         return;
 
-    Texture* tex = m_cur_vol->GetTexture();
-    if (!tex)
-        return;
-
-    //single-channel scalar only (1/2/4 bytes per voxel)
-    int src_nb = tex->nb(0);
-    if (tex->nc() > 1 || (src_nb != 1 && src_nb != 2 && src_nb != 4))
-    {
-        wxMessageBox("GPU warp supports single-channel scalar volumes only.", "Warp");
-        return;
-    }
-
-    //collect landmark pairs in normalized [0,1] coords (src=moving p1, tgt=fixed p2)
-    Transform* tf = tex->transform();
-    if (!tf)
-        return;
-    std::vector<glm::dvec3> srcPts, tgtPts;
-    for (size_t i = 0; i < m_ruler_list.size(); ++i)
-    {
-        Ruler* r = m_ruler_list[i];
-        if (!r) continue;
-        if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
-        {
-            Point* p0 = r->GetPoint(0);
-            Point* p1 = r->GetPoint(1);
-            if (!p0 || !p1) continue;
-            Point pm = tf->unproject(*p0); //moving -> src
-            Point pf = tf->unproject(*p1); //fixed  -> tgt
-            srcPts.push_back(glm::dvec3(pm.x(), pm.y(), pm.z()));
-            tgtPts.push_back(glm::dvec3(pf.x(), pf.y(), pf.z()));
-        }
-        else if (r->GetRulerType() == 2 && r->GetNumPoint() >= 1)
-        {
-            Point* p0 = r->GetPoint(0);
-            if (!p0) continue;
-            Point pp = tf->unproject(*p0); //locator = zero-displacement anchor
-            srcPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
-            tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
-        }
-    }
     //transform type, stiffness and interpolation from the measure dialog
     //(ttype: 0=Thin Plate Spline, 1=Affine, 2=Similarity, 3=Rigid, 4=Translation)
     //(interp: 0=Nearest Neighbor, 1=Linear)
@@ -20575,99 +20646,16 @@ void VRenderVulkanView::WarpCurrentVolumeInternal()
         interp = vframe->GetMeasureDlg()->GetWarpInterpolation();
     }
 
-    //minimum landmark pairs required by the chosen model
-    size_t minpts = (ttype == 4) ? 1 : (ttype == 2 || ttype == 3) ? 3 : 4;
-    if (srcPts.size() < minpts)
+    //landmarks, fit, GPU warp and the result volume: shared with the Qt GUI
+    //(DataManager.cpp WarpVolumeByRulers)
+    VVDString error;
+    VolumeData* vd = WarpVolumeByRulers(m_cur_vol, m_ruler_list, ttype, lambda, interp, &error);
+    if (!vd)
     {
-        wxMessageBox(wxString::Format(
-            "Need at least %d landmark pair(s) (2-point rulers) for this transform.",
-            (int)minpts), "Warp");
+        if (!error.empty())
+            wxMessageBox(wxString(error), "Warp");
         return;
     }
-
-    //landmarks are in grid-normalized [0,1] coords whose axes are physically
-    //anisotropic (each axis length = res*spacing). TPS (radial kernel) and
-    //Rigid/Similarity must be fit in isotropic physical space, like BigWarp,
-    //so pass the per-axis physical length as the aspect.
-    int arx = 0, ary = 0, arz = 0;
-    double aspx = 1.0, aspy = 1.0, aspz = 1.0;
-    m_cur_vol->GetResolution(arx, ary, arz);
-    m_cur_vol->GetSpacings(aspx, aspy, aspz);
-    glm::dvec3 aspect(
-        (arx > 0 ? arx : 1) * (aspx > 0.0 ? aspx : 1.0),
-        (ary > 0 ? ary : 1) * (aspy > 0.0 ? aspy : 1.0),
-        (arz > 0 ? arz : 1) * (aspz > 0.0 ? aspz : 1.0));
-
-    //the TPS is fit fixed -> moving and evaluated directly per output voxel
-    //(BigWarp); lambda is the dimensionless stiffness of the ImageJ "Apply
-    //BigWarp with Stiffness" plugin (0 = exact interpolation, as BigWarp)
-    FLIVR::ThinPlateSpline tps;
-    bool ok = false;
-    wxString suffix;
-    switch (ttype)
-    {
-    case 1: ok = tps.solveAffine(srcPts, tgtPts);              suffix = "_AFFINE"; break;
-    case 2: ok = tps.solveSimilarity(srcPts, tgtPts, aspect);  suffix = "_SIM";    break;
-    case 3: ok = tps.solveRigid(srcPts, tgtPts, aspect);       suffix = "_RIGID";  break;
-    case 4: ok = tps.solveTranslation(srcPts, tgtPts);         suffix = "_TRANS";  break;
-    default: ok = tps.solve(srcPts, tgtPts, lambda, aspect);   suffix = "_WARPED"; break;
-    }
-    if (!ok)
-    {
-        wxMessageBox("Transform solve failed (duplicate fixed-point landmarks, or "
-            "degenerate, collinear or coplanar landmarks).", "Warp");
-        return;
-    }
-
-    //create the result volume (same resolution/spacing/bits as the source)
-    int resx, resy, resz;
-    double spcx, spcy, spcz;
-    m_cur_vol->GetResolution(resx, resy, resz);
-    m_cur_vol->GetSpacings(spcx, spcy, spcz);
-    int bits = src_nb * 8;
-
-    VolumeData* vd = new VolumeData();
-    vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
-    vd->SetSpcFromFile(true);
-    vd->SetName(m_cur_vol->GetName() + suffix);
-    if (!vd->GetTexture())
-    {
-        delete vd;
-        return;
-    }
-
-    //GPU warp
-    vd->Warp(m_cur_vol, tps, interp);
-
-    //copy display properties from the source
-    vector<Plane*>* planes = m_cur_vol->GetVR() ? m_cur_vol->GetVR()->get_planes() : 0;
-    if (planes && vd->GetVR())
-        vd->GetVR()->set_planes(planes);
-    vd->Set3DGamma(m_cur_vol->Get3DGamma());
-    vd->SetBoundary(m_cur_vol->GetBoundary());
-    vd->SetOffset(m_cur_vol->GetOffset());
-    vd->SetLeftThresh(m_cur_vol->GetLeftThresh());
-    vd->SetRightThresh(m_cur_vol->GetRightThresh());
-    FLIVR::Color col = m_cur_vol->GetColor();
-    vd->SetColor(col);
-    vd->SetAlpha(m_cur_vol->GetAlpha());
-    vd->SetShading(m_cur_vol->GetShading());
-    double amb, diff, spec, shine;
-    m_cur_vol->GetMaterial(amb, diff, spec, shine);
-    vd->SetMaterial(amb, diff, spec, shine);
-    vd->SetShadow(m_cur_vol->GetShadow());
-    double shadow_int;
-    m_cur_vol->GetShadowParams(shadow_int);
-    vd->SetShadowParams(shadow_int);
-    vd->SetSampleRate(m_cur_vol->GetSampleRate());
-    col = m_cur_vol->GetGamma(); vd->SetGamma(col);
-    col = m_cur_vol->GetBrightness(); vd->SetBrightness(col);
-    col = m_cur_vol->GetHdr(); vd->SetHdr(col);
-    col = m_cur_vol->GetLevels(); vd->SetLevels(col);
-    vd->SetSyncR(m_cur_vol->GetSyncR());
-    vd->SetSyncG(m_cur_vol->GetSyncG());
-    vd->SetSyncB(m_cur_vol->GetSyncB());
-    vd->SetScalarScale(m_cur_vol->GetScalarScale());
 
     //add as a new layer (in the current volume's group)
     if (vframe)
@@ -21269,7 +21257,7 @@ void VRenderView::CreateBar()
 	m_aov_sldr->SetValue(GetPersp()?GetAov():10);
 	m_aov_text = new wxTextCtrl(this, ID_AovText, "",
 		wxDefaultPosition, wxSize(60, top_h), 0, vald_int);
-	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):"Ortho");
+	m_aov_text->ChangeValue(GetPersp()?wxString::Format("%d", int(GetAov())):wxString("Ortho"));
 	m_free_chk = new wxCheckBox(this, ID_FreeChk, "FreeFly",
 		wxDefaultPosition, wxSize(-1, top_h));
 	if (GetFree())
@@ -23290,16 +23278,7 @@ void VRenderView::SaveDefault(unsigned int mask)
 	str = wxString::Format("%f %f %f", x, y, z);
 	fconfig.Write("center", str);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_view_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 
@@ -23313,15 +23292,7 @@ void VRenderView::OnSaveDefault(wxCommandEvent &event)
 
 void VRenderView::LoadSettings()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_view_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_view_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_view_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_view_settings.dft");
 
 	wxFileInputStream is(dft);
 

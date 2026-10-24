@@ -92,6 +92,19 @@ namespace vks
 			VkImageSubresourceRange subresourceRange,
 			VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 			VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+		// The same in a command buffer of a transfer-only queue: the access
+		// masks keep only what such a queue supports (transfer, host, memory).
+		// Shader / attachment access on the other queue is covered by the
+		// semaphore (or fence) the other queue waits on; the images are
+		// shared concurrently, so no ownership transfer is needed.
+		void setImageLayoutOnTransferQueue(
+			VkCommandBuffer cmdbuffer,
+			VkImage image,
+			VkImageLayout oldImageLayout,
+			VkImageLayout newImageLayout,
+			VkImageSubresourceRange subresourceRange,
+			VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 		// Uses a fixed sub resource layout with first mip level and layer
 		void setImageLayout(
 			VkCommandBuffer cmdbuffer,

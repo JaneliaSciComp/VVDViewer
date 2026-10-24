@@ -262,12 +262,8 @@ namespace FLIVR
 		if (get_vr_num() <= 0)
 			return;
 
-		if (TextureRenderer::get_streaming())
-		{
-			uint32_t rn_time = GET_TICK_COUNT();
-			if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-				return;
-		}
+		if (TextureRenderer::frame_budget_exhausted())
+			return;
 
 		vector<VolumeRenderer*> valid_vrs;
 		for (auto vr : vr_list_)
@@ -362,6 +358,10 @@ namespace FLIVR
 
 			vector<TextureBrick*>* brs = tex->get_bricks();
 			Ray view_ray = vr->compute_view();
+			//bricks that provably output nothing (VolumeRenderer::invisible_brick_max;
+			//the multi pass draws data only, like the per-volume data pass)
+			const int skip_max = (colormap_mode_ == 2 || vr->ml_mode_ != 0 || brs->empty()) ? -1 :
+				vr->invisible_brick_max((*brs)[0]->nb(0));
 			for (int j = 0; j < brs->size(); j++)
 			{
 				TextureBrick* b = (*brs)[j];
@@ -371,7 +371,29 @@ namespace FLIVR
 				bool disp = true;
 				if (updating) disp = b->get_disp();
 
-				if (b->compute_t_index_min_max(view_ray, vr_dt))
+				if (skip_max >= 0 && (!updating || !b->drawn(stmode)) && vr->brick_invisible(b, skip_max))
+				{
+					//counted like a brick outside the view
+					if (updating)
+					{
+						b->set_drawn(stmode, true);
+						if (disp)
+							TextureRenderer::cur_brick_num_++;
+					}
+					//but kept in the slice range: on later calls of the loop it
+					//is drawn(stmode) and goes through the branch below, so
+					//leaving it out here made the range differ between calls,
+					//and cur_tid_offset_multi_ (relative to the first call's
+					//range) then re-recorded and double-composited a slab
+					if (b->compute_t_index_min_max(view_ray, vr_dt))
+					{
+						int tmp = b->timin();   //(int, as in the branch below)
+						all_timin = (all_timin > tmp) ? tmp : all_timin;
+						tmp = b->timax();
+						all_timax = (all_timax < tmp) ? tmp : all_timax;
+					}
+				}
+				else if (b->compute_t_index_min_max(view_ray, vr_dt))
 				{
 					int tmp = b->timin();
 					all_timin = (all_timin > tmp) ? tmp : all_timin;
@@ -393,12 +415,60 @@ namespace FLIVR
 		}
 		bs_size = bs.size();
 
-		if (TextureRenderer::get_mem_swap() && remain_brk == 0) return;
+		if (TextureRenderer::get_mem_swap() && remain_brk == 0)
+		{
+			//every brick left was culled or skipped above (e.g. a capture tile
+			//that shows no data): this pass is complete without a draw. Mark
+			//it done even when other counted passes remain (Shadow / mask:
+			//StartLoopUpdate counts their bricks too, and the shadow pass waits
+			//for get_done_loop(0), so waiting for cur == total here hung the
+			//loop); the whole loop is done once every counted brick is
+			if (updating)
+			{
+				for (i = 0; i < (int)vr_list_.size(); i++)
+					if (vr_list_[i]) vr_list_[i]->done_loop_[stmode] = true;
+				if (TextureRenderer::get_cur_brick_num() == TextureRenderer::get_total_brick_num())
+					TextureRenderer::set_done_update_loop(true);
+			}
+			{
+				//nothing is drawn: clear the target as requested (as
+				//VolumeRenderer::draw_volume_ray), or the caller composites
+				//what it held before (the previous capture tile)
+				if (clear_framebuf && framebuf)
+				{
+					Vulkan2dRender::V2DRenderParams params;
+					if (!framebuf->renderPass)
+					{
+						params.pipeline =
+							VolumeRenderer::m_v2drender->preparePipeline(
+								IMG_SHADER_TEXTURE_LOOKUP,
+								V2DRENDER_BLEND_OVER_INV,
+								framebuf->attachments[0]->format,
+								framebuf->attachments.size(),
+								0,
+								framebuf->attachments[0]->is_swapchain_images);
+						framebuf->replaceRenderPass(params.pipeline.pass);
+					}
+					vks::VulkanSemaphoreSettings sem = VolumeRenderer::m_vulkan->devices[0]->GetNextRenderSemaphoreSettings();
+					params.waitSemaphoreCount = sem.waitSemaphoreCount;
+					params.waitSemaphores = sem.waitSemaphores;
+					params.signalSemaphoreCount = sem.signalSemaphoreCount;
+					params.signalSemaphores = sem.signalSemaphores;
+					params.clearColor = clearColor;
+					VolumeRenderer::m_v2drender->clear(framebuf, params);
+				}
+			}
+			return;
+		}
 
 
 		vks::VulkanDevice* prim_dev = VolumeRenderer::m_vulkan->devices[0];
 
-		int blendmode = blend_slices_ ? TextureRenderer::MODE_SLICE : TextureRenderer::MODE_OVER;
+		//micro blending is for the colour passes: the shadow depth map (colormap
+		//2) is drawn without it (its slices were added, then the output read the
+		//blend texture of the previous pass, which this pass never wrote)
+		const bool use_blend_slices = blend_slices_ && colormap_mode_ != 2;
+		int blendmode = use_blend_slices ? TextureRenderer::MODE_SLICE : TextureRenderer::MODE_OVER;
 
 		map<VolumeRenderer*, MultiVolRenederSettings> rsettings;
 		for (auto vr : valid_vrs)
@@ -410,7 +480,11 @@ namespace FLIVR
 			VRayShaderFactory::VRayFragShaderBrickConst frag_const = {};
 
 			vr->set_depth_peel(depth_peel_);
+			//(effective_peel checks the textures: the multi renderer's, bound
+			//below; not left on the renderer for its own draw())
+			vr->set_depth_textures(dtex_front_, dtex_back_);
 			setting.pipeline = vr->prepareVRayPipeline(prim_dev, blendmode, vr->update_order_, vr->colormap_mode_, !orthographic_p);
+			vr->set_depth_textures(nullptr, nullptr);
 			if (setting.pipeline.vkpipeline == VK_NULL_HANDLE)
 				return; //shader compilation failed; skip this draw entirely
 			setting.pipelineLayout = VolumeRenderer::m_vulkan->vray_shader_factory_->pipeline_[prim_dev].pipelineLayout;
@@ -576,12 +650,12 @@ namespace FLIVR
 		}
 
 		Vulkan2dRender::V2DRenderParams blend_params;
-		if (blend_slices_)
+		if (use_blend_slices)
 		{
 			blend_params.pipeline =
 				VolumeRenderer::m_v2drender->preparePipeline(
 					IMG_SHADER_TEXTURE_LOOKUP,
-					V2DRENDER_BLEND_OVER_INV,
+					TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 					framebuf->attachments[0]->format,
 					framebuf->attachments.size(),
 					0,
@@ -658,6 +732,23 @@ namespace FLIVR
 		VkRect2D scissor = vks::initializers::rect2D(w2, h2, 0, 0);
 		vkCmdSetScissor(cmdbuf, 0, 1, &scissor);
 
+		//clear the slice target up front (previously at the first drawn brick):
+		//a call that draws no brick (all skipped, or none in range) must not
+		//composite the previous call's slice buffer again
+		if (clear)
+		{
+			VkClearAttachment clearAttachment = {};
+			clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			clearAttachment.clearValue.color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+			clearAttachment.colorAttachment = 0;
+			VkClearRect clearRect = {};
+			clearRect.layerCount = 1;
+			clearRect.rect.offset = { 0, 0 };
+			clearRect.rect.extent = { w2, h2 };
+			vkCmdClearAttachments(cmdbuf, 1, &clearAttachment, 1, &clearRect);
+			clear = false;
+		}
+
 		//track the currently bound pipeline: bricks of the same volume share one,
 		//so most per-brick binds are redundant
 		VkPipeline last_pipeline = VK_NULL_HANDLE;
@@ -678,12 +769,8 @@ namespace FLIVR
 		cur_bid = 0;
 		for (i = start_i; order ? (i <= all_timax) : (i >= all_timin); i += order ? 1 : -1)
 		{
-			if (TextureRenderer::get_streaming())
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-					break;
-			}
+			if (TextureRenderer::frame_budget_exhausted())
+				break;
 
 			int32_t new_brs_num = 0;
 			bool fail = false;
@@ -862,14 +949,18 @@ namespace FLIVR
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
-							double trans_x = (ox_d - ox) / nx;
-							double trans_y = (oy_d - oy) / ny;
-							double trans_z = (oz_d - oz) / nz;
-							double scale_x = (endx_d - ox_d) / nx;
-							double scale_y = (endy_d - oy_d) / ny;
-							double scale_z = (endz_d - oz_d) / nz;
+							//the VRay shader maps the mask like the data (VRAY_MASK_RAY_*:
+							//position / mskbrkscale - mskbrktrans / mskbrkscale): the
+							//mask brick's box in the mask level, as VolumeRenderer::draw.
+							//w keeps 1/nz (gradient step of the data brick)
+							double trans_x = ox_d / sx;
+							double trans_y = oy_d / sy;
+							double trans_z = oz_d / sz;
+							double scale_x = (endx_d - ox_d) / sx;
+							double scale_y = (endy_d - oy_d) / sy;
+							double scale_z = (endz_d - oz_d) / sz;
 
-							cur_brs[j].frag_const.mask_b_scale_invnz = { (float)scale_x, (float)scale_y, (float)scale_z , 1.0f };
+							cur_brs[j].frag_const.mask_b_scale_invnz = { (float)scale_x, (float)scale_y, (float)scale_z, 1.0f / cnz };
 							cur_brs[j].frag_const.mask_b_trans = { (float)trans_x, (float)trans_y, (float)trans_z, 0.0f };
 
 							b->nx(cnx); b->ny(cny); b->nz(cnz);
@@ -890,8 +981,16 @@ namespace FLIVR
 							}
 							msktex = vr->load_brick_mask(prim_dev, &tempbv, 0, rsettings[vr].filter, false, 0, true, false, nullptr, nullptr, false);
 
-							cur_brs[j].frag_const.mask_b_scale_invnz = { 1.0f, 1.0f, 1.0f, 1.0f };
-							cur_brs[j].frag_const.mask_b_trans = { 0.0f, 0.0f, 0.0f, 0.0f };
+							//same bricks: the mask maps like the data (the brick's dbox, as
+							//VolumeRenderer::draw); w keeps 1/nz. {1,1,1,1} was only right
+							//for single-brick volumes and replaced the gradient's z step by
+							//a whole brick (hide modes looked flat / dim in Depth mode)
+							BBox dbox = b->dbox();
+							cur_brs[j].frag_const.mask_b_scale_invnz = { float(dbox.max().x() - dbox.min().x()),
+																		 float(dbox.max().y() - dbox.min().y()),
+																		 float(dbox.max().z() - dbox.min().z()),
+																		 1.0f / b->nz() };
+							cur_brs[j].frag_const.mask_b_trans = { float(dbox.min().x()), float(dbox.min().y()), float(dbox.min().z()), 0.0f };
 						}
 					}
 
@@ -939,7 +1038,7 @@ namespace FLIVR
 						);
 					}
 
-					if ((blend_slices_ && blend_clear) || clear)
+					if ((use_blend_slices && blend_clear) || clear)
 					{
 						VkClearValue clearValues[1];
 						clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
@@ -977,10 +1076,11 @@ namespace FLIVR
 					vkCmdBindVertexBuffers(cmdbuf, 0, 1, &valid_vrs[0]->m_vray_vbufs[prim_dev].vertexBuffer.buffer, offsets);
 					vkCmdBindIndexBuffer(cmdbuf, valid_vrs[0]->m_vray_vbufs[prim_dev].indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 					vkCmdDrawIndexed(cmdbuf, valid_vrs[0]->m_vray_vbufs[prim_dev].indexCount, 1, 0, 0, 0);
+					TextureRenderer::finished_bricks_++;
 
 				}//for (int j = 0; j < cur_brs.size(); j++)
 
-				if (blend_slices_ && colormap_mode_ != 2)
+				if (use_blend_slices)
 				{
 					SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
 
@@ -1016,12 +1116,15 @@ namespace FLIVR
 				else ite++;
 			}
 
-			if (TextureRenderer::get_streaming() && fail)
-			{
-				uint32_t rn_time = GET_TICK_COUNT();
-				if (rn_time - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
-					break;
-			}
+			//a brick of this slice did not load (pyramid data still on its way):
+			//stop when the frame's time is up even if nothing was drawn yet, as
+			//before the frame-budget change. frame_budget_exhausted() waits for
+			//a drawn brick, so with nothing loaded the loop ran through every
+			//slice, counted the unloaded bricks as drawn at their last slice and
+			//finished with them missing; this way they are retried next frame.
+			if (fail && TextureRenderer::get_streaming() &&
+				GET_TICK_COUNT() - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
+				break;
 
 		}//for (i = start_i; order?(i <= all_timax):(i >= all_timin); i += order?1:-1)
 
@@ -1141,7 +1244,7 @@ namespace FLIVR
 
 				filter_params.clear = true;
 				filter_params.loc[0] = { filter_size_min_ / w2, filter_size_min_ / h2, 1.0 / w2, 1.0 / h2 };
-				filter_params.tex[0] = blend_slices_ ? blend_tex_id_.get() : slice_tex_.get();
+				filter_params.tex[0] = use_blend_slices ? blend_tex_id_.get() : slice_tex_.get();
 
 				vks::VulkanSemaphoreSettings sem = prim_dev->GetNextRenderSemaphoreSettings();
 				filter_params.waitSemaphoreCount = sem.waitSemaphoreCount;
@@ -1160,7 +1263,7 @@ namespace FLIVR
 				params.pipeline =
 					VolumeRenderer::m_v2drender->preparePipeline(
 						IMG_SHDR_FILTER_SHARPEN,
-						V2DRENDER_BLEND_OVER_INV,
+						TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
@@ -1174,12 +1277,14 @@ namespace FLIVR
 				params.pipeline =
 					VolumeRenderer::m_v2drender->preparePipeline(
 						IMG_SHADER_TEXTURE_LOOKUP,
-						colormap_mode_ != 2 ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
+						//this frame's slices behind what earlier frames drew (order 1), or in
+						//front of it (order 0)
+						(colormap_mode_ != 2 && TextureRenderer::get_update_order() != 0) ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
 						framebuf->attachments[0]->is_swapchain_images);
-				params.tex[0] = blend_slices_ ? blend_tex_id_.get() : slice_tex_.get();
+				params.tex[0] = use_blend_slices ? blend_tex_id_.get() : slice_tex_.get();
 			}
 
 			params.waitSemaphoreCount = semfinal.waitSemaphoreCount;
