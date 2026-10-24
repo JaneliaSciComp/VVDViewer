@@ -207,6 +207,9 @@ namespace vks
 		//the kernel in IOGPUFamily). Must not be called while a frame is being
 		//recorded (its command buffers may reference retired objects).
 		void DrainDeferredDestroys();
+		//the transfer queue's family has neither graphics nor compute (barriers
+		//there may only use transfer / host / memory access)
+		bool IsTransferOnlyQueue() const;
 		//destroy upload staging buffers larger than keep_bytes (they are
 		//grow-only; a job with huge uploads would otherwise pin that much
 		//host-visible memory for the rest of the session)

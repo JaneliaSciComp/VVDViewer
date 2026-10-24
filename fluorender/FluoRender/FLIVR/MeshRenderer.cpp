@@ -28,6 +28,7 @@
 
 #include "MeshRenderer.h"
 #include <iostream>
+#include <set>
 #include <vector>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -164,13 +165,37 @@ namespace FLIVR
 		ReleaseVertexBuffers();
 	}
 	
-	void MeshRenderer::ReleaseVertexBuffers()
+	//an in-flight frame may still bind these buffers: their destruction goes
+	//to the device deletion queue (destroying them here was
+	//VUID-vkDestroyBuffer-buffer-00922, e.g. hiding a mesh); the pool gets
+	//the memory back now, as destroyBufferInPool did. immediate: the caller
+	//has waited for the queue (over the memory budget), free them now so the
+	//memory is really available for the next mesh
+	void MeshRenderer::ReleaseVertexBuffers(bool immediate)
 	{
 		for (auto& vb : m_vertbufs)
 		{
-			device_->destroyBufferInPool(&vb.vertexBuffer);
-			device_->destroyBufferInPool(&vb.indexBuffer);
+			for (vks::Buffer* b : { &vb.vertexBuffer, &vb.indexBuffer })
+			{
+				if (!device_)
+				{
+					b->destroy();
+					continue;
+				}
+				if (immediate)
+				{
+					//(credits the pool: only for a live buffer)
+					if (b->buffer != VK_NULL_HANDLE || b->memory != VK_NULL_HANDLE)
+						device_->destroyBufferInPool(b);
+					continue;
+				}
+				if (b->in_pool && b->buffer != VK_NULL_HANDLE)
+					device_->available_mem += b->size / vks::MEM_MB;
+				device_->retireBuffer(*b);
+			}
+			vb.indexCount = 0;
 		}
+		m_vertbufs.clear();
 		update_ = true;
 	}
 
@@ -1566,21 +1591,36 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		}
 	}
 
+	//as VolumeRenderer::finalize: once no mesh draws any more; idempotent
 	void MeshRenderer::finalize()
 	{
-		if (m_vulkan)
+		if (!m_vulkan)
+			return;
+		//every device the caches hold objects of (see VolumeRenderer::finalize)
+		std::set<vks::VulkanDevice*> devs(m_vulkan->devices.begin(), m_vulkan->devices.end());
+		for (auto& rp : m_msh_draw_pass) devs.insert(rp.first);
+		for (auto& rp : m_msh_intdraw_pass) devs.insert(rp.first);
+		for (auto& p : m_msh_pipelines) devs.insert(p.device);
+		for (auto dev : devs)
+			if (dev)
+				vkDeviceWaitIdle(dev->logicalDevice);
+		for (auto* passes : { &m_msh_draw_pass, &m_msh_intdraw_pass })
 		{
-			for (auto dev : m_vulkan->devices)
+			for (auto& rp : *passes)
 			{
-				vkDestroyRenderPass(dev->logicalDevice, m_msh_draw_pass[dev], nullptr);
-				vkDestroyRenderPass(dev->logicalDevice, m_msh_intdraw_pass[dev], nullptr);
+				if (rp.first && rp.second != VK_NULL_HANDLE)
+					vkDestroyRenderPass(rp.first->logicalDevice, rp.second, nullptr);
 			}
-
-			for (auto& p : m_msh_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
+			passes->clear();
 		}
+		for (auto& p : m_msh_pipelines)
+		{
+			if (p.device && p.vkpipeline != VK_NULL_HANDLE)
+				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
+		}
+		m_msh_pipelines.clear();
+		//the device is destroyed with the last VVulkan reference
+		m_vulkan.reset();
 	}
 
 	void MeshRenderer::setupVertexDescriptions()
@@ -1999,23 +2039,8 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 
 	void MeshRenderer::update()
 	{
-		//an in-flight frame may still bind these buffers: defer their destruction
-		//to the device deletion queue instead of freeing them immediately
-		for (auto& vb : m_vertbufs)
-		{
-			if (device_)
-			{
-				device_->retireBuffer(vb.vertexBuffer);
-				device_->retireBuffer(vb.indexBuffer);
-			}
-			else
-			{
-				vb.vertexBuffer.destroy();
-				vb.indexBuffer.destroy();
-			}
-			vb.indexCount = 0;
-		}
-		m_vertbufs.clear();
+		//the previous buffers (deferred: an in-flight frame may still bind them)
+		ReleaseVertexBuffers();
         
 		bool bnormal = data_->normals || data_->facetnorms;
 		bool btexcoord = data_->texcoords;
@@ -2386,7 +2411,7 @@ void MeshRenderer::import_selected_ids(const string& sel_ids_str)
 		
 		if (destroy_buffers) {
 			vkQueueWaitIdle(device_->queue);
-			ReleaseVertexBuffers();
+			ReleaseVertexBuffers(true);
 		}
 	}
 

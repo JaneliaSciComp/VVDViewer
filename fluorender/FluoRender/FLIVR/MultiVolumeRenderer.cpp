@@ -464,7 +464,11 @@ namespace FLIVR
 
 		vks::VulkanDevice* prim_dev = VolumeRenderer::m_vulkan->devices[0];
 
-		int blendmode = blend_slices_ ? TextureRenderer::MODE_SLICE : TextureRenderer::MODE_OVER;
+		//micro blending is for the colour passes: the shadow depth map (colormap
+		//2) is drawn without it (its slices were added, then the output read the
+		//blend texture of the previous pass, which this pass never wrote)
+		const bool use_blend_slices = blend_slices_ && colormap_mode_ != 2;
+		int blendmode = use_blend_slices ? TextureRenderer::MODE_SLICE : TextureRenderer::MODE_OVER;
 
 		map<VolumeRenderer*, MultiVolRenederSettings> rsettings;
 		for (auto vr : valid_vrs)
@@ -476,7 +480,11 @@ namespace FLIVR
 			VRayShaderFactory::VRayFragShaderBrickConst frag_const = {};
 
 			vr->set_depth_peel(depth_peel_);
+			//(effective_peel checks the textures: the multi renderer's, bound
+			//below; not left on the renderer for its own draw())
+			vr->set_depth_textures(dtex_front_, dtex_back_);
 			setting.pipeline = vr->prepareVRayPipeline(prim_dev, blendmode, vr->update_order_, vr->colormap_mode_, !orthographic_p);
+			vr->set_depth_textures(nullptr, nullptr);
 			if (setting.pipeline.vkpipeline == VK_NULL_HANDLE)
 				return; //shader compilation failed; skip this draw entirely
 			setting.pipelineLayout = VolumeRenderer::m_vulkan->vray_shader_factory_->pipeline_[prim_dev].pipelineLayout;
@@ -642,12 +650,12 @@ namespace FLIVR
 		}
 
 		Vulkan2dRender::V2DRenderParams blend_params;
-		if (blend_slices_)
+		if (use_blend_slices)
 		{
 			blend_params.pipeline =
 				VolumeRenderer::m_v2drender->preparePipeline(
 					IMG_SHADER_TEXTURE_LOOKUP,
-					V2DRENDER_BLEND_OVER_INV,
+					TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 					framebuf->attachments[0]->format,
 					framebuf->attachments.size(),
 					0,
@@ -1030,7 +1038,7 @@ namespace FLIVR
 						);
 					}
 
-					if ((blend_slices_ && blend_clear) || clear)
+					if ((use_blend_slices && blend_clear) || clear)
 					{
 						VkClearValue clearValues[1];
 						clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
@@ -1072,7 +1080,7 @@ namespace FLIVR
 
 				}//for (int j = 0; j < cur_brs.size(); j++)
 
-				if (blend_slices_ && colormap_mode_ != 2)
+				if (use_blend_slices)
 				{
 					SubmitAndRestartCommandBuf(prim_dev, cmdbuf, renderPassBeginInfo, &last_pipeline);
 
@@ -1108,7 +1116,14 @@ namespace FLIVR
 				else ite++;
 			}
 
-			if (fail && TextureRenderer::frame_budget_exhausted())
+			//a brick of this slice did not load (pyramid data still on its way):
+			//stop when the frame's time is up even if nothing was drawn yet, as
+			//before the frame-budget change. frame_budget_exhausted() waits for
+			//a drawn brick, so with nothing loaded the loop ran through every
+			//slice, counted the unloaded bricks as drawn at their last slice and
+			//finished with them missing; this way they are retried next frame.
+			if (fail && TextureRenderer::get_streaming() &&
+				GET_TICK_COUNT() - TextureRenderer::get_st_time() > TextureRenderer::get_up_time())
 				break;
 
 		}//for (i = start_i; order?(i <= all_timax):(i >= all_timin); i += order?1:-1)
@@ -1229,7 +1244,7 @@ namespace FLIVR
 
 				filter_params.clear = true;
 				filter_params.loc[0] = { filter_size_min_ / w2, filter_size_min_ / h2, 1.0 / w2, 1.0 / h2 };
-				filter_params.tex[0] = blend_slices_ ? blend_tex_id_.get() : slice_tex_.get();
+				filter_params.tex[0] = use_blend_slices ? blend_tex_id_.get() : slice_tex_.get();
 
 				vks::VulkanSemaphoreSettings sem = prim_dev->GetNextRenderSemaphoreSettings();
 				filter_params.waitSemaphoreCount = sem.waitSemaphoreCount;
@@ -1248,7 +1263,7 @@ namespace FLIVR
 				params.pipeline =
 					VolumeRenderer::m_v2drender->preparePipeline(
 						IMG_SHDR_FILTER_SHARPEN,
-						V2DRENDER_BLEND_OVER_INV,
+						TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
@@ -1262,12 +1277,14 @@ namespace FLIVR
 				params.pipeline =
 					VolumeRenderer::m_v2drender->preparePipeline(
 						IMG_SHADER_TEXTURE_LOOKUP,
-						colormap_mode_ != 2 ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
+						//this frame's slices behind what earlier frames drew (order 1), or in
+						//front of it (order 0)
+						(colormap_mode_ != 2 && TextureRenderer::get_update_order() != 0) ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
 						framebuf->attachments[0]->is_swapchain_images);
-				params.tex[0] = blend_slices_ ? blend_tex_id_.get() : slice_tex_.get();
+				params.tex[0] = use_blend_slices ? blend_tex_id_.get() : slice_tex_.get();
 			}
 
 			params.waitSemaphoreCount = semfinal.waitSemaphoreCount;

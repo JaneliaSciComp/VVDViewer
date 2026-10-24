@@ -218,6 +218,19 @@ void VulkanExampleBase::prepareFrame()
 	//destructions and resets the slot's semaphore chain), then allocate the acquire
 	//semaphore from the fresh chain
 	vulkanDevice->ResetMainRenderBuffers();
+	frameSkipped = false;
+	if (swapChain.swapChain == VK_NULL_HANDLE)
+	{
+		//a failed rebuild released the swapchain: try again, and skip the
+		//frame while there is none (its framebuffers reference no images)
+		windowResize();
+		if (swapChain.swapChain == VK_NULL_HANDLE)
+		{
+			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = true;
+			return;
+		}
+	}
 	VkSemaphore* present_complete = vulkanDevice->GetNextRenderSemaphore();
 
 	// Acquire the next image from the swap chain
@@ -231,8 +244,10 @@ void VulkanExampleBase::prepareFrame()
 		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
 		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
 			//give up for this frame; run it without an acquire wait so no submit
-			//ends up waiting a semaphore nothing will ever signal
+			//ends up waiting a semaphore nothing will ever signal (and draw
+			//nothing at all when the rebuild left no swapchain)
 			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = swapChain.swapChain == VK_NULL_HANDLE;
 			return;
 		}
 	}
@@ -264,6 +279,7 @@ void VulkanExampleBase::prepareFrame()
 		err = swapChain.acquireNextImage(*present_complete, &currentBuffer);
 		if (err == VK_ERROR_OUT_OF_DATE_KHR) {
 			vulkanDevice->ResetRenderSemaphores();
+			frameSkipped = swapChain.swapChain == VK_NULL_HANDLE;
 			return;
 		}
 		//still suboptimal with a brand-new swapchain: nothing to gain from
@@ -283,6 +299,8 @@ void VulkanExampleBase::prepareFrame()
 
 void VulkanExampleBase::submitFrame()
 {
+	if (frameSkipped)
+		return;
 	//frame-end submit: waits the tail of this frame's semaphore chain, signals the
 	//cross-frame link and the per-image present semaphore, and arms the slot fence
 	VkSemaphore present_sem = (currentBuffer < presentSemaphores.size()) ?
@@ -297,7 +315,9 @@ void VulkanExampleBase::submitFrame()
 			return;
 		}
 		else {
-			VK_CHECK_RESULT(res);
+			//(the macro declares its own "res": VK_CHECK_RESULT(res) logged garbage)
+			const VkResult present_res = res;
+			VK_CHECK_RESULT(present_res);
 		}
 	}
 	if (vulkanDevice->m_frame_slots <= 1)
@@ -345,6 +365,11 @@ VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 
 VulkanExampleBase::~VulkanExampleBase()
 {
+	// the last frames may still be executing: the swapchain and the present
+	// semaphores must not be destroyed while the queue uses them
+	// (VUID-vkDestroySwapchainKHR-swapchain-01282, vkDestroySemaphore-05149)
+	if (device != VK_NULL_HANDLE)
+		vkDeviceWaitIdle(device);
 	// Clean up Vulkan resources
 	destroyPresentSemaphores();
 	swapChain.cleanup();
@@ -738,6 +763,8 @@ void VulkanExampleBase::windowResize()
 	vulkanDevice->ResetAllFrameSlots();
 
 	// Recreate swap chain
+	const auto old_width = width;
+	const auto old_height = height;
 	width = destWidth;
 	height = destHeight;
 
@@ -750,12 +777,24 @@ void VulkanExampleBase::windowResize()
     
     prepared = false;
 
+	// the swapchain first: if it cannot be rebuilt (surface lost while the
+	// window goes away), keep the old size, depth buffer and framebuffers
+	// instead of rebuilding them around the old images. (When the create call
+	// itself failed, the old swapchain is released and prepareFrame skips the
+	// frames and retries; prepared stays true so this can run again.)
+	if (!setupSwapChain())
+	{
+		width = old_width;
+		height = old_height;
+		prepared = true;
+		return;
+	}
+
 	// Recreate the frame buffers
 	depthStencil->destroy();
 	setupDepthStencil();
 	for (uint32_t i = 0; i < frameBuffers.size(); i++)
 		frameBuffers[i].reset();
-    setupSwapChain();
 	setupFrameBuffer();
 	//image count may have changed, and the old semaphores may hold signals with
 	//no pending waiter after the failed acquire/present sequence
@@ -801,7 +840,7 @@ void VulkanExampleBase::initSwapchain()
 #endif
 }
 
-void VulkanExampleBase::setupSwapChain()
+bool VulkanExampleBase::setupSwapChain()
 {
-	swapChain.create(&width, &height, settings.vsync);
+	return swapChain.create(&width, &height, settings.vsync);
 }

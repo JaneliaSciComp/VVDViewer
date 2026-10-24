@@ -37,6 +37,7 @@
 #include "../compatibility.h"
 #include "../Core/PaintTiming.h"
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -314,32 +315,45 @@ namespace FLIVR
 		}
 	}
 
+	//the shared pipelines and render pass, before the device goes away (they
+	//leaked at vkDestroyDevice: VUID-vkDestroyDevice-device-05137). Call once
+	//no renderer draws any more; a second call does nothing.
 	void VolumeRenderer::finalize()
 	{
-		if (m_vulkan)
+		if (!m_vulkan)
+			return;
+		//every device the caches hold objects of (each wx view has its own
+		//VVulkan; m_vulkan is the last-created one's)
+		std::set<vks::VulkanDevice*> devs(m_vulkan->devices.begin(), m_vulkan->devices.end());
+		for (auto& rp : m_vray_draw_pass) devs.insert(rp.first);
+		for (auto& p : m_vray_pipelines) devs.insert(p.device);
+		for (auto& p : m_seg_pipelines) devs.insert(p.device);
+		for (auto& p : m_cal_pipelines) devs.insert(p.device);
+		for (auto& p : m_vslice_pipelines) devs.insert(p.device);
+		for (auto& p : m_warp_pipelines) devs.insert(p.device);
+		for (auto dev : devs)
+			if (dev)
+				vkDeviceWaitIdle(dev->logicalDevice);
+		for (auto& rp : m_vray_draw_pass)
 		{
-			for (auto dev : m_vulkan->devices)
-			{
-				vkDestroyRenderPass(dev->logicalDevice, m_vray_draw_pass[dev], nullptr);
-			}
-
-			for (auto& p : m_vray_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
-			for (auto& p : m_seg_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
-			for (auto& p : m_cal_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
-			for (auto& p : m_vslice_pipelines)
-			{
-				vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
-			}
+			if (rp.first && rp.second != VK_NULL_HANDLE)
+				vkDestroyRenderPass(rp.first->logicalDevice, rp.second, nullptr);
 		}
+		m_vray_draw_pass.clear();
+
+		auto destroy_all = [](auto& pipelines) {
+			for (auto& p : pipelines)
+			{
+				if (p.device && p.vkpipeline != VK_NULL_HANDLE)
+					vkDestroyPipeline(p.device->logicalDevice, p.vkpipeline, nullptr);
+			}
+			pipelines.clear();
+		};
+		destroy_all(m_vray_pipelines);
+		destroy_all(m_seg_pipelines);
+		destroy_all(m_cal_pipelines);
+		destroy_all(m_vslice_pipelines);
+		destroy_all(m_warp_pipelines);
 	}
 	
 	//render mode
@@ -1074,6 +1088,91 @@ namespace FLIVR
 		return m >= 0 && m <= skip_max;
 	}
 
+	int VolumeRenderer::effective_peel() const
+	{
+		if (depth_peel_ == 0 || colormap_mode_ == 2)
+			return 0;
+		const bool need_back = depth_peel_ == 1 || depth_peel_ == 3 || depth_peel_ == 4;
+		const bool need_front = depth_peel_ == 2 || depth_peel_ == 3 || depth_peel_ == 4 || depth_peel_ == 5;
+		if ((need_back && !dtex_back_) || (need_front && !dtex_front_))
+			return 0;
+		return depth_peel_;
+	}
+
+	namespace
+	{
+		//the slab depth textures are the mesh layers' depth attachments; a ray
+		//pass samples them read-only. The transitions go in submissions of
+		//their own before and after the pass (barriers order with the pass's
+		//submissions on the same queue), as the pass submits in batches.
+		struct DepthTexReadGuard
+		{
+			vks::VulkanDevice* dev = nullptr;
+			std::shared_ptr<vks::VTexture> texs[2];
+
+			static void transition(vks::VulkanDevice* d, const std::shared_ptr<vks::VTexture>* t,
+				VkImageLayout from, VkImageLayout to)
+			{
+				VkCommandBuffer cmd = d->GetNextCommandBuffer();
+				VkCommandBufferBeginInfo bi = vks::initializers::commandBufferBeginInfo();
+				bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+				VK_CHECK_RESULT(vkBeginCommandBuffer(cmd, &bi));
+				for (int i = 0; i < 2; i++)
+				{
+					if (!t[i])
+						continue;
+					vks::tools::setImageLayout(cmd, t[i]->image, from, to, t[i]->subresourceRange);
+					t[i]->descriptor.imageLayout = to;
+				}
+				VK_CHECK_RESULT(vkEndCommandBuffer(cmd));
+				VkSubmitInfo si = vks::initializers::submitInfo();
+				si.commandBufferCount = 1;
+				si.pCommandBuffers = &cmd;
+				VK_CHECK_RESULT(vkQueueSubmit(d->queue, 1, &si, VK_NULL_HANDLE));
+			}
+
+			DepthTexReadGuard(vks::VulkanDevice* d, const std::shared_ptr<vks::VTexture>& front,
+				const std::shared_ptr<vks::VTexture>& back)
+			{
+				texs[0] = front;
+				texs[1] = back;
+				if (d && (texs[0] || texs[1]))
+				{
+					dev = d;
+					transition(dev, texs, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+						VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+				}
+			}
+			~DepthTexReadGuard()
+			{
+				if (dev)
+					transition(dev, texs, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+						VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+			}
+		};
+	}
+
+	void VolumeRenderer::begin_volume_writes()
+	{
+		if (!tex_ || !compression_ || vol_write_hold_)
+			return;
+		m_vulkan->eraseBricksFromTexpools(tex_->get_bricks(), 0);
+		compression_ = false;
+		vol_write_hold_ = true;
+	}
+
+	void VolumeRenderer::end_volume_writes()
+	{
+		if (!vol_write_hold_)
+			return;
+		vol_write_hold_ = false;
+		if (tex_)
+			m_vulkan->eraseBricksFromTexpools(tex_->get_bricks(), 0);
+		compression_ = true;
+		for (auto dev : m_vulkan->devices)
+			dev->DrainDeferredDestroys();
+	}
+
 	void VolumeRenderer::eval_ml_mode(Texture* ext_msk, Texture* ext_lbl)
 	{
 		//reassess the mask/label mode
@@ -1252,11 +1351,16 @@ namespace FLIVR
 		//(negative scalar scale) can push the scaled magnitude below zero, so keep
 		//the computation there for bit-exact output
 		bool use_gm = gm_thresh_ > 0.0 || inv_;
+		//the shadow depth map (colormap mode 2) is drawn without peeling, and
+		//a peel mode whose depth textures are not set falls back to 0 (the
+		//single-volume shadow pass ran with the peel mode the last multi draw
+		//left behind, Depth mode + meshes, and sampled an unbound tex15)
+		const int peel = effective_peel();
 		ShaderProgram* shader = m_vulkan->vray_shader_factory_->shader(
 			device->logicalDevice,
 			false, tex_->nc(),
 			shading_, use_fog,
-			depth_peel_, true,
+			peel, true,
 			hiqual_, ml_mode_,
 			colormap_mode_, colormap_, colormap_proj_,
 			solid_, 1, (tex_->nmask() != -1 || (ext_msk && ext_msk->nmask() != -1)) ? m_mask_hide_mode : VOL_MASK_HIDE_NONE, persp, mode_, multi_mode, na_mode, highlight, use_gm);
@@ -1369,7 +1473,10 @@ namespace FLIVR
 		case MODE_OVER:
 		default:
 			blendop = VK_BLEND_OP_ADD;
-			if (colormap_mode_ == 2)
+			//over for the shadow depth map and for update order 0 (bricks and slices
+			//back to front); under for order 1 (front to back). Order 0 composited
+			//back-to-front data with the front-to-back operator: reversed depth.
+			if (colormap_mode_ == 2 || update_order == 0)
 			{
 				src_blend = VK_BLEND_FACTOR_ONE;
 				dst_blend = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -1855,6 +1962,17 @@ namespace FLIVR
 			if (palette.count(prim_dev) > 0)
 				descriptorWritesBase.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 7, &palette[prim_dev]->descriptor));
 		}
+		//the slab's depth textures, for the peel mode the pipeline was built
+		//with (they were never bound here: tex14 / tex15 read an unbound
+		//descriptor in the mask and group passes of Depth mode with meshes)
+		const int dp_peel = effective_peel();
+		const std::shared_ptr<vks::VTexture> dp_back = (dp_peel == 1 || dp_peel == 3 || dp_peel == 4) ? dtex_back_ : nullptr;
+		const std::shared_ptr<vks::VTexture> dp_front = (dp_peel == 2 || dp_peel == 3 || dp_peel == 4 || dp_peel == 5) ? dtex_front_ : nullptr;
+		DepthTexReadGuard dp_guard(prim_dev, dp_front, dp_back);
+		if (dp_back)
+			descriptorWritesBase.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 15, &dp_back->descriptor));
+		if (dp_front)
+			descriptorWritesBase.push_back(VRayShaderFactory::writeDescriptorSetTex(VK_NULL_HANDLE, 14, &dp_front->descriptor));
 		//std::cout << "vu w: " << m_vulkan->destWidth << " h: " << m_vulkan->destHeight << std::endl;
 		//std::cout << "3d w: " << blend_framebuffer_->w << " h: " << blend_framebuffer_->h << std::endl;
 
@@ -2048,8 +2166,7 @@ namespace FLIVR
 					continue;
 			}
 
-			if (!b->get_disp() || // Clip against view
-				skip_empty_brick(b, skip_max)) //nothing to draw
+			if (!b->get_disp()) // Clip against view (StartLoopUpdate did not count it)
 			{
 				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
 				{
@@ -2057,6 +2174,22 @@ namespace FLIVR
 					{
 						b->set_drawn(bmode, true);
 						//cur_brick_num_++;
+						cur_chan_brick_num_++;
+					}
+				}
+				continue;
+			}
+			//"Skip empty bricks": StartLoopUpdate may have counted this brick (its
+			//transfer-function test ran with another pass's state, e.g. mask_
+			//still set), so a brick skipped here counts like the culled ones below
+			if (skip_empty_brick(b, skip_max))
+			{
+				if (mem_swap_ && start_update_loop_ && !done_update_loop_)
+				{
+					if (!b->drawn(bmode))
+					{
+						b->set_drawn(bmode, true);
+						cur_brick_num_++;
 						cur_chan_brick_num_++;
 					}
 				}
@@ -2705,7 +2838,7 @@ namespace FLIVR
 				params.pipeline =
 					m_v2drender->preparePipeline(
 						IMG_SHDR_FILTER_SHARPEN,
-						V2DRENDER_BLEND_OVER_INV,
+						update_order_ == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
@@ -2719,7 +2852,9 @@ namespace FLIVR
 				params.pipeline =
 					m_v2drender->preparePipeline(
 						IMG_SHADER_TEXTURE_LOOKUP,
-						colormap_mode_ != 2 ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
+						//this frame's bricks behind what earlier frames drew (order 1), or in
+						//front of it (order 0)
+						(colormap_mode_ != 2 && update_order_ != 0) ? V2DRENDER_BLEND_OVER_INV : V2DRENDER_BLEND_OVER,
 						framebuf->attachments[0]->format,
 						framebuf->attachments.size(),
 						0,
@@ -2990,7 +3125,8 @@ namespace FLIVR
 		//read back: its bricks must not be compressed (BC4 has no storage
 		//usage, and the readback would copy compressed blocks over the
 		//voxels). Uncompressed for this pass, as in calculate() / warp(), and
-		//restored on every return.
+		//restored on every return. (Noise Removal loops hold the volume
+		//uncompressed across all iterations: begin_volume_writes.)
 		struct CompressionRestore
 		{
 			VolumeRenderer* vr = nullptr;
@@ -3000,6 +3136,11 @@ namespace FLIVR
 				if (!vr) return;
 				m_vulkan->eraseBricksFromTexpools(bricks, 0);
 				vr->compression_ = true;
+				//the evicted textures are only retired to the current frame
+				//slot, and no frame boundary comes while the caller blocks the
+				//UI thread: free them now (as warp() does)
+				for (auto dev : m_vulkan->devices)
+					dev->DrainDeferredDestroys();
 			}
 		} compression_restore;
 		if (write_to_vol && compression_)

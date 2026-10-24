@@ -93,14 +93,16 @@ namespace vks
 		// an image and put it into an active command buffer
 		// See chapter 11.4 "Image Layout" for details
 
-		void setImageLayout(
+		// allowed: the access bits the queue of cmdbuffer supports
+		static void setImageLayoutMasked(
 			VkCommandBuffer cmdbuffer,
 			VkImage image,
 			VkImageLayout oldImageLayout,
 			VkImageLayout newImageLayout,
 			VkImageSubresourceRange subresourceRange,
 			VkPipelineStageFlags srcStageMask,
-			VkPipelineStageFlags dstStageMask)
+			VkPipelineStageFlags dstStageMask,
+			VkAccessFlags allowed)
 		{
 			if (oldImageLayout == newImageLayout)
 				return;
@@ -223,6 +225,17 @@ namespace vks
 				break;
 			}
 
+			imageMemoryBarrier.srcAccessMask &= allowed;
+			imageMemoryBarrier.dstAccessMask &= allowed;
+			//host access needs the host stage, which ALL_COMMANDS does not
+			//include (VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819);
+			//host writes are made visible by the queue submission anyway
+			const VkAccessFlags host = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT;
+			if (!(srcStageMask & VK_PIPELINE_STAGE_HOST_BIT))
+				imageMemoryBarrier.srcAccessMask &= ~host;
+			if (!(dstStageMask & VK_PIPELINE_STAGE_HOST_BIT))
+				imageMemoryBarrier.dstAccessMask &= ~host;
+
 			// Put barrier inside setup command buffer
 			vkCmdPipelineBarrier(
 				cmdbuffer,
@@ -232,6 +245,36 @@ namespace vks
 				0, nullptr,
 				0, nullptr,
 				1, &imageMemoryBarrier);
+		}
+
+		void setImageLayout(
+			VkCommandBuffer cmdbuffer,
+			VkImage image,
+			VkImageLayout oldImageLayout,
+			VkImageLayout newImageLayout,
+			VkImageSubresourceRange subresourceRange,
+			VkPipelineStageFlags srcStageMask,
+			VkPipelineStageFlags dstStageMask)
+		{
+			setImageLayoutMasked(cmdbuffer, image, oldImageLayout, newImageLayout, subresourceRange,
+				srcStageMask, dstStageMask, ~(VkAccessFlags)0);
+		}
+
+		void setImageLayoutOnTransferQueue(
+			VkCommandBuffer cmdbuffer,
+			VkImage image,
+			VkImageLayout oldImageLayout,
+			VkImageLayout newImageLayout,
+			VkImageSubresourceRange subresourceRange,
+			VkPipelineStageFlags srcStageMask,
+			VkPipelineStageFlags dstStageMask)
+		{
+			//shader-read access on a transfer-only queue is invalid
+			//(VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 / 02820)
+			const VkAccessFlags transfer_ok = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
+				VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+			setImageLayoutMasked(cmdbuffer, image, oldImageLayout, newImageLayout, subresourceRange,
+				srcStageMask, dstStageMask, transfer_ok);
 		}
 
 		// Fixed sub resource on first mip level and layer

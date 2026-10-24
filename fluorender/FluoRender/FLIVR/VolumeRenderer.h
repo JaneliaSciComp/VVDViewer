@@ -163,6 +163,23 @@ namespace FLIVR
 		//(computes the brick maximum on first use)
 		bool brick_invisible(TextureBrick* b, int skip_max);
 
+		//in-place Noise Removal runs draw_mask(type 2) once per iteration:
+		//keep the data bricks uncompressed across the whole loop instead of
+		//re-uploading the volume on every call (end restores the compression)
+		void begin_volume_writes();
+		void end_volume_writes();
+
+		//the peel depth textures of the slab being drawn (DrawVolumesDP: the
+		//mask pass and non-Depth groups go through draw() with the slab's peel
+		//mode; MultiVolumeRenderer binds its own): front for peel 2-5, back
+		//for peel 1, 3, 4
+		void set_depth_textures(const std::shared_ptr<vks::VTexture>& front,
+			const std::shared_ptr<vks::VTexture>& back) { dtex_front_ = front; dtex_back_ = back; }
+		//the peel mode the ray shader is built with: 0 for the shadow depth
+		//map (colormap 2), and when a depth texture the mode samples is not
+		//set (the shader would read an unbound descriptor)
+		int effective_peel() const;
+
 		//mask and label
 		int get_ml_mode() {return ml_mode_;}
 		void set_ml_mode(int mode) {ml_mode_ = mode;}
@@ -308,6 +325,11 @@ namespace FLIVR
 
 		//compression
 		bool compression_;
+		//begin_volume_writes() turned compression_ off (end turns it back on)
+		bool vol_write_hold_ = false;
+		//set_depth_textures
+		std::shared_ptr<vks::VTexture> dtex_front_;
+		std::shared_ptr<vks::VTexture> dtex_back_;
 
 		//done loop
 		bool done_loop_[TEXTURE_RENDER_MODES];

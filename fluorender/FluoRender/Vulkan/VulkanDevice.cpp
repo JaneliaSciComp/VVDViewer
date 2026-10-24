@@ -1129,10 +1129,22 @@ namespace vks
 		}
 
 		// Fill image descriptor image info to be used descriptor set setup
-		ret->descriptor.imageLayout = 
+		ret->descriptor.imageLayout =
 			(usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ret->descriptor.imageView = ret->view;
 		ret->descriptor.sampler = ret->sampler;
+
+		// the image is created UNDEFINED, but the render passes (attachment
+		// initialLayout) and the shaders expect it in descriptor.imageLayout
+		// from its first use, e.g. a depth-peel layer sampled before anything
+		// was drawn into it (VUID-vkCmdDraw-None-09600): put it there now.
+		// (Uploads still transition from UNDEFINED: the copy overwrites it.)
+		if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
+		{
+			VkCommandBuffer cmd = createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			vks::tools::setImageLayout(cmd, ret->image, VK_IMAGE_LAYOUT_UNDEFINED, ret->descriptor.imageLayout, ret->subresourceRange);
+			flushCommandBuffer(cmd, queue, true);
+		}
 
 		return std::move(ret);
 	}
@@ -1685,6 +1697,25 @@ namespace vks
 		return true;
 	}
 
+	//a layout transition in a transfer command buffer: on a transfer-only
+	//queue family the access masks keep what that family supports
+	static void TransferImageLayout(bool transfer_only, VkCommandBuffer cmd, VkImage image,
+		VkImageLayout old_layout, VkImageLayout new_layout, VkImageSubresourceRange range)
+	{
+		if (transfer_only)
+			vks::tools::setImageLayoutOnTransferQueue(cmd, image, old_layout, new_layout, range);
+		else
+			vks::tools::setImageLayout(cmd, image, old_layout, new_layout, range);
+	}
+
+	bool VulkanDevice::IsTransferOnlyQueue() const
+	{
+		if (transfer_queue == queue || queueFamilyIndices.transfer >= queueFamilyProperties.size())
+			return false;
+		return (queueFamilyProperties[queueFamilyIndices.transfer].queueFlags &
+			(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == 0;
+	}
+
 	void VulkanDevice::CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore, StagingRingSlot* slot)
 	{
 		VkCommandBuffer copyCmd = VK_NULL_HANDLE;
@@ -1710,7 +1741,7 @@ namespace vks
 		// holds the intended sampling layout, not the actual one): passing the true
 		// current layout keeps the barrier spec-valid, and the contents may be discarded
 		// because the copy overwrites the whole image.
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->uploaded ? tex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1735,7 +1766,7 @@ namespace vks
 			1,
 			&bufferCopyRegion);
 
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1801,7 +1832,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1830,7 +1861,7 @@ namespace vks
 			&bufferCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1911,7 +1942,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1937,7 +1968,7 @@ namespace vks
 			&imageCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1961,7 +1992,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1990,7 +2021,7 @@ namespace vks
 			&imageCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

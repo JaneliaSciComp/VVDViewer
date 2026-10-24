@@ -110,6 +110,9 @@ public:
 	// again right away: prepareFrame then stops recreating it every frame until
 	// an acquire succeeds or setSize() asks for a new size
 	bool suboptimalPersists = false;
+	//prepareFrame found no swapchain (a failed rebuild released it) and could
+	//not recreate it: the caller draws nothing this frame (no image to draw to)
+	bool frameSkipped = false;
 	uint32_t width = 1280;
 	uint32_t height = 720;
 
@@ -261,7 +264,7 @@ public:
 	// Connect and prepare the swap chain
 	void initSwapchain();
 	// Create swap chain images
-	void setupSwapChain();
+	bool setupSwapChain();   // false: the old swapchain is kept
 
 	// Command buffer creation
 	// Creates and returns a new command buffer

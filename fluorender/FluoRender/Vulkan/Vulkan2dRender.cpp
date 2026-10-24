@@ -528,6 +528,25 @@ void Vulkan2dRender::setupDescriptorSetWrites(const V2DRenderParams& params, con
 	}
 }
 
+// A presentable image of a new swapchain starts UNDEFINED, while the render
+// passes load it from PRESENT_SRC_KHR (VUID-vkCmdDraw-None-09600 at the first
+// frame after every swapchain rebuild). It can only be used once acquired, so
+// the transition goes into the first command buffer that renders to it.
+static void InitSwapchainImageLayouts(VkCommandBuffer cmd, const std::unique_ptr<vks::VFrameBuffer>& framebuf)
+{
+	if (!framebuf)
+		return;
+	for (auto& att : framebuf->attachments)
+	{
+		if (att && att->is_swapchain_images && !att->uploaded)
+		{
+			vks::tools::setImageLayout(cmd, att->image, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, att->subresourceRange);
+			att->uploaded = true;   //(swapchain images: "layout defined")
+		}
+	}
+}
+
 void Vulkan2dRender::buildCommandBuffer(
 	VkCommandBuffer commandbufs[],
 	int commandbuf_num,
@@ -575,6 +594,7 @@ void Vulkan2dRender::buildCommandBuffer(
 		renderPassBeginInfo.framebuffer = framebuf->framebuffer;
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(commandbufs[i], &cmdBufInfo));
+		InitSwapchainImageLayouts(commandbufs[i], framebuf);
 
 		for (int j = 0; j < IMG_SHDR_SAMPLER_NUM; j++)
 		{
@@ -762,6 +782,7 @@ void Vulkan2dRender::seq_buildCommandBuffer(VkCommandBuffer commandbufs[], int c
 		renderPassBeginInfo.framebuffer = framebuf->framebuffer;
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(commandbufs[i], &cmdBufInfo));
+		InitSwapchainImageLayouts(commandbufs[i], framebuf);
 
 		vkCmdBeginRenderPass(commandbufs[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -970,6 +991,7 @@ void Vulkan2dRender::buildCommandBufferClear(
 		renderPassBeginInfo.framebuffer = framebuf->framebuffer;
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(commandbufs[i], &cmdBufInfo));
+		InitSwapchainImageLayouts(commandbufs[i], framebuf);
 
 		vkCmdBeginRenderPass(commandbufs[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
