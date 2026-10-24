@@ -1258,8 +1258,8 @@ void BrushToolDialog::OnEVEThresholdText(const QString& str)
 	}
 }
 
-// wx VRenderVulkanView::EVEAnalysis (no 2D mask: its `if (!select)` tests
-// the address of ::select, which is never null)
+// wx VRenderVulkanView::EVEAnalysis (no 2D mask: EVE counts on the whole
+// volume and uses none)
 void BrushToolDialog::OnEVEAnalyzeBtn()
 {
 	if (!m_ctx)

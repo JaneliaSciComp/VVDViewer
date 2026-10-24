@@ -304,6 +304,17 @@ bool RenderCanvas::IsLoopRunning() const
 	return m_loop_state.start_update_loop && !m_loop_state.done_update_loop;
 }
 
+void RenderCanvas::ShutdownEngine()
+{
+	if (!TextureRenderer::get_vulkan())
+		return;
+	VolumeRenderer::finalize();
+	MeshRenderer::finalize();
+	// the device is destroyed (and its pipeline cache saved) with the last
+	// VVulkan reference, here instead of in a static destructor
+	TextureRenderer::finalize_vulkan();
+}
+
 RenderCanvas::~RenderCanvas()
 {
 	RegisterCanvas(this, false);
@@ -322,6 +333,8 @@ RenderCanvas::~RenderCanvas()
 	m_dp_tex_list.clear();
 	m_fbo_ol2.reset();
 	m_tex_ol2.reset();
+	m_fbo_snap.reset();
+	m_tex_snap.reset();
 	// a view sharing another canvas's context gives its surface back
 	if (m_secondary && m_vulkan && m_surface_state)
 	{
@@ -855,8 +868,7 @@ void RenderCanvas::ClearScreen()
 	m_v2drender->clear(m_vulkan->frameBuffers[m_vulkan->currentBuffer], params);
 }
 
-// verbatim from VRenderVulkanView::DrawMeshes (no mem-swap progress, no
-// capture)
+// verbatim from VRenderVulkanView::DrawMeshes (no mem-swap progress)
 bool RenderCanvas::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& framebuf, bool clear_framebuf, int peel,
 	const std::shared_ptr<vks::VTexture> depth_tex)
 {
@@ -869,7 +881,13 @@ bool RenderCanvas::DrawMeshes(const std::unique_ptr<vks::VFrameBuffer>& framebuf
 		md->SetFog(m_use_fog && m_use_fog_mesh, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
 		md->SetDepthTex(depth_tex);
 		md->SetDevice(m_vulkan->devices[0]);
+		// wx: no bounding box of the selected mesh in captures
+		const bool draw_bounds = md->GetDrawBounds();
+		if (m_capture)
+			md->SetDrawBounds(false);
 		md->Draw(framebuf, clear_framebuf, peel);
+		if (m_capture)
+			md->SetDrawBounds(draw_bounds);
 		clear_framebuf = false;
 	}
 	return true;
@@ -1104,6 +1122,8 @@ void RenderCanvas::DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& tex_d
 	// draw shadow. The wx view submits this one without taking a slot in the
 	// render-semaphore chain; take one here so it is ordered after the
 	// gradient pass above and before the volume passes that follow.
+	// (the copy of the target first: it takes its own slot in the chain)
+	vks::VTexture* color_snap = SnapshotTarget(m_fbo_final, m_clear_final_buffer);
 	Vulkan2dRender::V2DRenderParams params_final = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 	params_final.pipeline =
 		m_v2drender->preparePipeline(
@@ -1115,7 +1135,7 @@ void RenderCanvas::DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& tex_d
 			m_fbo_final->attachments[0]->is_swapchain_images);
 	params_final.tex[0] = m_tex_ol2.get();
 	params_final.tex[1] = tex_depth.get();
-	params_final.tex[2] = m_tex_final.get();	// same as wx (reads the target; see TODO there)
+	params_final.tex[2] = color_snap;	// the colour before this pass (not the target itself)
 	params_final.loc[0] = { 1.0f / nx, 1.0f / ny, (float)std::max(m_scale_factor, 1.0), 0.0f };
 	params_final.loc[1] = { (float)darkness, 0.0f, 0.0f, 0.0f };
 	params_final.clear = m_clear_final_buffer;
@@ -1124,6 +1144,42 @@ void RenderCanvas::DrawOLShadowsMesh(const std::shared_ptr<vks::VTexture>& tex_d
 	if (!m_fbo_final->renderPass)
 		m_fbo_final->replaceRenderPass(params_final.pipeline.pass);
 	m_v2drender->render(m_fbo_final, params_final);
+}
+
+vks::VTexture* RenderCanvas::SnapshotTarget(const std::unique_ptr<vks::VFrameBuffer>& fb, bool empty)
+{
+	if (!fb || fb->attachments.empty() || !fb->attachments[0])
+		return nullptr;
+	const std::shared_ptr<vks::VTexture>& src = fb->attachments[0];
+	if (m_fbo_snap && (m_fbo_snap->w != fb->w || m_fbo_snap->h != fb->h ||
+		!m_tex_snap || m_tex_snap->format != src->format))
+	{
+		m_fbo_snap.reset();
+		m_tex_snap.reset();
+	}
+	if (!m_fbo_snap)
+	{
+		vks::VulkanDevice* prim_dev = m_vulkan->devices[0];
+		m_fbo_snap = std::make_unique<vks::VFrameBuffer>(vks::VFrameBuffer());
+		m_fbo_snap->w = fb->w;
+		m_fbo_snap->h = fb->h;
+		m_fbo_snap->device = prim_dev;
+		m_tex_snap = prim_dev->GenTexture2D(src->format, VK_FILTER_LINEAR, fb->w, fb->h);
+		m_fbo_snap->addAttachment(m_tex_snap);
+	}
+	Vulkan2dRender::V2DRenderParams p = m_v2drender->GetNextV2dRenderSemaphoreSettings();
+	p.pipeline = m_v2drender->preparePipeline(IMG_SHADER_TEXTURE_LOOKUP, V2DRENDER_BLEND_DISABLE,
+		m_tex_snap->format, 1, 0, false);
+	p.tex[0] = src.get();
+	p.clear = true;
+	p.clearColor = { 0.0f, 0.0f, 0.0f, 0.0f };
+	if (!m_fbo_snap->renderPass)
+		m_fbo_snap->replaceRenderPass(p.pipeline.pass);
+	if (empty)
+		m_v2drender->clear(m_fbo_snap, p);
+	else
+		m_v2drender->render(m_fbo_snap, p);
+	return m_tex_snap.get();
 }
 
 // composite mode of VRenderVulkanView::DrawVolumesComp / DrawOVER
@@ -1351,6 +1407,12 @@ void RenderCanvas::Render()
 
 	m_vulkan->ResetRenderSemaphores();
 	m_vulkan->prepareFrame();
+	if (m_vulkan->frameSkipped)
+	{
+		// no swapchain image (a failed rebuild): try again with the next frame
+		if (m_window) m_window->requestUpdate();
+		return;
+	}
 	m_frame_clear = true;
 
 	bool any_visible = !PopVolumeList().empty();

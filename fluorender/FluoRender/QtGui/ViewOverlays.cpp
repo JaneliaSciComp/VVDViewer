@@ -947,6 +947,9 @@ void ViewOverlays::DrawAnnotations(int nx, int ny)
 				m_canvas->DrawAnnotationMesh(ann, nx, ny);
 				continue;
 			}
+			// its volume was deleted: no positions (they all stacked at the origin)
+			if (!ann->HasTransform())
+				continue;
 			for (int j = 0; j < ann->GetTextNum(); ++j)
 			{
 				Point pos = ann->GetTextPos(j);

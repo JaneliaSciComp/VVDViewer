@@ -235,10 +235,18 @@ if(WIN32)
 			COMMAND_EXPAND_LISTS
 			COMMENT "Deploying app-local VC++ runtime (CRT) DLLs next to VVDViewerQt.exe")
 	endif()
-	find_program(VVD_WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin" NO_DEFAULT_PATH)
-	if(VVD_WINDEPLOYQT)
+	# the windeployqt of the Qt the target links (Qt6CoreTools); the cached
+	# find_program result could stay at another Qt after Qt6_DIR changed
+	if(TARGET Qt6::windeployqt)
+		set(VVD_WINDEPLOYQT_EXE "$<TARGET_FILE:Qt6::windeployqt>")
+	else()
+		unset(VVD_WINDEPLOYQT CACHE)
+		find_program(VVD_WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin" NO_DEFAULT_PATH NO_CACHE)
+		set(VVD_WINDEPLOYQT_EXE "${VVD_WINDEPLOYQT}")
+	endif()
+	if(VVD_WINDEPLOYQT_EXE)
 		add_custom_command(TARGET VVDViewerQt POST_BUILD
-			COMMAND "${VVD_WINDEPLOYQT}" $<IF:$<CONFIG:Debug>,--debug,--release> --no-translations
+			COMMAND "${VVD_WINDEPLOYQT_EXE}" $<IF:$<CONFIG:Debug>,--debug,--release> --no-translations
 				--no-system-d3d-compiler --no-opengl-sw --verbose 0 "$<TARGET_FILE:VVDViewerQt>"
 			COMMENT "windeployqt VVDViewerQt.exe")
 	else()

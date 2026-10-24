@@ -129,6 +129,9 @@ namespace vvd
 		// wx VRenderView::RemoveGroup (group and members out of the view and
 		// the DataManager)
 		virtual void PluginRemoveGroup(const QString& name, RenderCanvas* view = nullptr) = 0;
+		// one volume out of every view and the DataManager (the panes let go
+		// of it first), e.g. a load a plugin cannot use
+		virtual void PluginRemoveVolume(VolumeData* vd) = 0;
 		// wx UpdateTree(name, type) / UpdateTreeIcons / RefreshVRenderViews
 		virtual void PluginUpdateTree(const QString& name = QString(), int type = -1) = 0;
 		virtual void PluginUpdateTreeIcons() = 0;

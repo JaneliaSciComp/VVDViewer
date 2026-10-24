@@ -90,6 +90,10 @@ int main(int argc, char* argv[])
 		for (const QString& d : descs) plugin_params += " -d " + d;
 	}
 
+	// the main window (its canvases and data) is destroyed at the end of this
+	// block, then the engine's Vulkan state (RenderCanvas::ShutdownEngine)
+	int ret = 0;
+	{
 	MainWindow w;
 	w.show();
 
@@ -373,5 +377,8 @@ int main(int argc, char* argv[])
 		});
 	}
 
-	return app.exec();
+	ret = app.exec();
+	}
+	RenderCanvas::ShutdownEngine();
+	return ret;
 }

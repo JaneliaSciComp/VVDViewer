@@ -508,11 +508,16 @@ void RenderCanvas::DrawMIP(VolumeData* vd, std::unique_ptr<vks::VFrameBuffer>& f
 			(TextureRenderer::get_mem_swap() &&
 			TextureRenderer::get_clear_chan_buffer()))
 		{
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 			clear = true;
 		}
 
 		vd->GetVR()->set_depth_peel(peel);
+		vd->GetVR()->set_depth_textures(peel ? m_vol_dp_fr_tex : nullptr, peel ? m_vol_dp_bk_tex : nullptr);
 		if (color_mode == 1)
 		{
 			vd->SetMode(3);
@@ -669,7 +674,9 @@ void RenderCanvas::DrawVolumesMulti(const std::vector<VolumeData*>& list, int pe
 				!TextureRenderer::get_done_update_loop())
 			{
 				doMulti |= !vr->get_done_loop(0);
-				doShadow |= !vr->get_done_loop(3);
+				//only volumes that draw a shadow ever finish the shadow loop
+				if (vd->GetShadow())
+					doShadow |= !vr->get_done_loop(3);
 			}
 		}
 		if (vd->GetTexture() && vd->GetTexture()->nmask() != -1 && vd == m_cur_vol)
@@ -739,7 +746,11 @@ void RenderCanvas::DrawVolumesMulti(const std::vector<VolumeData*>& list, int pe
 			TextureRenderer::get_clear_chan_buffer()))
 		{
 			clear = true;
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 		}
 
 		//draw multiple volumes at the same time
@@ -783,7 +794,7 @@ void RenderCanvas::DrawVolumesMulti(const std::vector<VolumeData*>& list, int pe
 	int blend_method = V2DRENDER_BLEND_ADD;
 
 	if (m_dpeel)
-		blend_method = V2DRENDER_BLEND_OVER_INV;
+		blend_method = TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV;
 	else
 	{
 		if (m_vol_method == VolMethodComp)
@@ -960,7 +971,7 @@ void RenderCanvas::DrawVolumesDP(int nx, int ny)
 				params.pipeline =
 					m_v2drender->preparePipeline(
 						IMG_SHADER_TEXTURE_LOOKUP_BLEND,
-						V2DRENDER_BLEND_OVER_INV,
+						TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 						m_fbo_temp_restore->attachments[0]->format,
 						(int)m_fbo_temp_restore->attachments.size(),
 						0,
@@ -1130,7 +1141,7 @@ vks::VTexture* RenderCanvas::DrawDPMeshPreview(int nx, int ny, int peeling_layer
 		params.pipeline =
 			m_v2drender->preparePipeline(
 				IMG_SHADER_TEXTURE_LOOKUP_BLEND,
-				V2DRENDER_BLEND_OVER_INV,
+				TextureRenderer::get_update_order() == 0 ? V2DRENDER_BLEND_OVER : V2DRENDER_BLEND_OVER_INV,
 				m_fbo_dp_preview->attachments[0]->format,
 				(int)m_fbo_dp_preview->attachments.size(),
 				0,
@@ -1191,8 +1202,9 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 			bool doShadow = false;
 			for (size_t i = 0; i < vlist.size(); i++)
 			{
-				if (vlist[0]->GetVR())
-					doShadow |= !(vlist[0]->GetVR()->get_done_loop(3));
+				//(every listed volume with Shadow, not vlist[0] each time)
+				if (vlist[i] && vlist[i]->GetShadow() && vlist[i]->GetVR())
+					doShadow |= !(vlist[i]->GetVR()->get_done_loop(3));
 			}
 			if (!doShadow)
 				return;
@@ -1231,7 +1243,11 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 		(TextureRenderer::get_mem_swap() &&
 		TextureRenderer::get_clear_chan_buffer()))
 	{
-		TextureRenderer::reset_clear_chan_buffer();
+		//the draw returns at once when the frame's time is used up: keep
+		//the flag for the frame that draws (a pass that took it and drew
+		//nothing left its buffer uncleared, e.g. a stale shadow map)
+		if (!TextureRenderer::frame_budget_exhausted())
+			TextureRenderer::reset_clear_chan_buffer();
 		clear = true;
 	}
 
@@ -1254,8 +1270,8 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 			vd->Set2dDmap(m_tex_ol1);
 			//draw
 			vd->SetStreamMode(3);
-			// (depth peeling stays on, as in wx: the shader generator now
-			// combines the depth-map head with the peeling tests)
+			// (the depth map is drawn without peeling in both apps:
+			// VolumeRenderer::prepareVRayPipeline uses peel 0 for colormap 2)
 			int uporder = TextureRenderer::get_update_order();
 			TextureRenderer::set_update_order(0);
 			vd->GetTexture()->set_sort_bricks();
@@ -1311,13 +1327,8 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 				m_mvr->SetNoiseRed(vr->GetNoiseRed());
 			}
 			m_mvr->set_colormap_mode(2);
-			// see above: no depth peeling in the depth-map pass (wx keeps the
-			// peel of the Depth-mode pass with meshes here: compile error)
-			const int peel = m_mvr->get_depth_peel();
-			m_mvr->set_depth_peel(0);
-			//draw
+			//draw (no depth peeling: see above)
 			m_mvr->draw(m_fbo_ol1, clear, m_interactive, !m_persp, m_scale_factor, m_intp, sampling_frq_fac, clear_color);
-			m_mvr->set_depth_peel(peel);
 			//restore
 			m_mvr->set_colormap_mode(0);
 			for (size_t i = 0; i < list.size(); i++)
@@ -1380,7 +1391,9 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 		m_fbo_ol2->replaceRenderPass(params_ol2.pipeline.pass);
 		m_v2drender->render(m_fbo_ol2, params_ol2);
 
-		//bind fbo for final composition
+		//bind fbo for final composition (the copy of the target first: it
+		//takes its own slot in the render-semaphore chain)
+		vks::VTexture* color_snap = SnapshotTarget(fb);
 		Vulkan2dRender::V2DRenderParams params_final = m_v2drender->GetNextV2dRenderSemaphoreSettings();
 
 		params_final.pipeline =
@@ -1392,7 +1405,7 @@ void RenderCanvas::DrawOLShadows(const std::vector<VolumeData*>& vlist, std::uni
 				0,
 				fb->attachments[0]->is_swapchain_images);
 		params_final.tex[0] = m_tex_ol2.get();
-		params_final.tex[1] = fb->attachments[0].get();	// as wx (reads the target; see the TODO there)
+		params_final.tex[1] = color_snap;	// the colour before this pass (not the target itself)
 		params_final.loc[0] = { 1.0f / nx, 1.0f / ny, (float)std::max(m_scale_factor, 1.0), 0.0f };
 		params_final.loc[1] = { (float)shadow_darkness, 0.0f, 0.0f, 0.0f };
 

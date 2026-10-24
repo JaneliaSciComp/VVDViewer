@@ -150,12 +150,20 @@ void MainWindow::FitDocksToContent()
 {
 	if (!isVisible())
 		return;
-	// Properties: the page shown (volume, mesh, annotation, ...); with nothing
-	// selected the volume page, so the dock does not collapse to the empty
-	// page and jump when a volume is picked
-	QWidget* prop_page = m_prop_stack ? m_prop_stack->currentWidget() : nullptr;
-	if (!prop_page || prop_page == m_prop_empty)
-		prop_page = m_prop;
+	// Properties: the tallest page (volume, mesh, annotation, ...), not the one
+	// shown, so the dock and the render views keep their size when the
+	// selection switches between a volume and a mesh (a fit per page resized
+	// the views 0.4 s after every switch, also during an export)
+	QWidget* prop_page = m_prop;
+	if (m_prop_stack)
+	{
+		for (int i = 0; i < m_prop_stack->count(); i++)
+		{
+			QWidget* w = m_prop_stack->widget(i);
+			if (w && w != m_prop_empty && (!prop_page || w->sizeHint().height() > prop_page->sizeHint().height()))
+				prop_page = w;
+		}
+	}
 	const std::pair<QDockWidget*, QWidget*> docks[] = { { m_prop_dock, prop_page }, { m_movie_dock, m_movie } };
 	for (const auto& [dock, page] : docks)
 	{

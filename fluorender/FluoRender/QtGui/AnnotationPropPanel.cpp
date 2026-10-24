@@ -17,6 +17,20 @@
 
 using FLIVR::Color;
 
+namespace
+{
+	// wx: a wxTextCtrl of 400 x 100. QPlainTextEdit's own size hint is 192 px
+	// tall, which made this the tallest Properties page, and the dock is
+	// fitted to the tallest page (the render views lost that height for every
+	// selection). It still stretches into the space the dock has.
+	class MemoEdit : public QPlainTextEdit
+	{
+	public:
+		using QPlainTextEdit::QPlainTextEdit;
+		QSize sizeHint() const override { return QSize(QPlainTextEdit::sizeHint().width(), minimumHeight()); }
+	};
+}
+
 AnnotationPropPanel::AnnotationPropPanel(QWidget* parent)
 	: QWidget(parent)
 {
@@ -31,7 +45,7 @@ AnnotationPropPanel::AnnotationPropPanel(QWidget* parent)
 	sizer_1->addStretch(1);
 	auto* sizer_2 = new QHBoxLayout();
 	sizer_2->addSpacing(10);
-	m_memo_text = new QPlainTextEdit(this);
+	m_memo_text = new MemoEdit(this);
 	m_memo_text->setObjectName("MemoText");
 	m_memo_text->setMinimumSize(400, 100);
 	sizer_2->addWidget(m_memo_text, 1);

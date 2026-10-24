@@ -414,6 +414,13 @@ void MainWindow::PluginRemoveGroup(const QString& name, RenderCanvas* view)
 	c->RefreshView();
 }
 
+void MainWindow::PluginRemoveVolume(VolumeData* vd)
+{
+	if (!vd) return;
+	ForgetVolume(vd);   // every view, the panes, then the DataManager
+	for (const auto& v : m_views) v->canvas->RefreshView();
+}
+
 void MainWindow::PluginUpdateTree(const QString& name, int type)
 {
 	m_tree->UpdateTree(name, type);

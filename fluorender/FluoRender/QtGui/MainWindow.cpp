@@ -499,8 +499,6 @@ MainWindow::MainWindow(QWidget* parent)
 	// (MainWindowLayout.cpp: a restored state is re-applied by Qt while a
 	// maximized window is still growing), and again on another screen
 	m_prop_dock->installEventFilter(this);
-	// a mesh / annotation page needs another height than the volume page
-	connect(m_prop_stack, &QStackedWidget::currentChanged, this, [this](int) { ScheduleDockFit(); });
 	m_movie_dock->installEventFilter(this);
 	m_movie->installEventFilter(this);   // its size need changes with the tab
 	ScheduleDockFit();
@@ -833,7 +831,12 @@ void MainWindow::BuildDocks()
 		// belong to another view, which kept a dangling pointer after the
 		// delete below (wx removes it from the item's own view)
 		for (const auto& v : m_views)
+		{
 			v->canvas->RemoveAnnotations(ann);
+			// the analysis that made it keeps a pointer for Show Annotations
+			if (v->sel) v->sel->ForgetAnnotations(ann);
+		}
+		m_selector.ForgetAnnotations(ann);
 		m_data_mgr->RemoveAnnotations(ann->GetName());
 	});
 	// wx RefreshVRenderViews: every view
@@ -1264,12 +1267,20 @@ void MainWindow::LoadVolumes(const QStringList& files_in, const QStringList& des
 		// wx: prefix = descs[j] (command line -d/--desc), metadata file
 		const VVDString prefix(fidx < descs.size() ? descs[fidx].toStdWString() : std::wstring());
 		const VVDString meta(metadata[fidx].toStdWString());
-		int ch_num = m_data_mgr->LoadVolumeData(path, type, -1, -1, m_load_datasize, prefix, meta, pre.get());
+		// the readers parse JSON / XML metadata while loading (N5 / Zarr / BDV):
+		// an exception there must not leave the event loop (std::terminate)
+		int ch_num = 0;
+		QString load_error;
+		try { ch_num = m_data_mgr->LoadVolumeData(path, type, -1, -1, m_load_datasize, prefix, meta, pre.get()); }
+		catch (const std::exception& e) { load_error = QString::fromLocal8Bit(e.what()); ch_num = 0; }
 		++finished;
 		idle();
 		if (ch_num <= 0)
 		{
-			QMessageBox::warning(this, tr("Open Volume"), tr("Failed to load %1").arg(fi.fileName()));
+			if (!load_error.isEmpty())
+				QMessageBox::warning(this, tr("Open Volume"), tr("Cannot open the dataset:\n%1\n%2").arg(fi.fileName(), load_error));
+			else
+				QMessageBox::warning(this, tr("Open Volume"), tr("Failed to load %1").arg(fi.fileName()));
 			continue;
 		}
 		// channels are appended to the data manager in order; take the last
@@ -1396,6 +1407,10 @@ void MainWindow::ClearScene()
 	m_canvas->SetCurrentMesh(nullptr);
 	m_canvas->ClearMeshes();     // waits for the GPU
 	m_canvas->ClearVolumes();
+	// ClearAll frees every annotation: the analyses must not keep theirs
+	m_selector.ForgetAnnotations();
+	for (const auto& v : m_views)
+		if (v->sel) v->sel->ForgetAnnotations();
 	m_data_mgr->ClearAll();
 	m_prj_passthrough.clear();
 	RefreshTree();

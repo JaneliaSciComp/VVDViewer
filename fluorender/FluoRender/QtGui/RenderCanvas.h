@@ -45,6 +45,7 @@ class Annotations;
 class DataGroup;
 class MeshGroup;
 class VolumeLoader;
+struct VolumeLoaderData;
 class EmptyBlockDetector;
 class Interpolator;
 class TraceGroup;
@@ -286,6 +287,10 @@ public:
 	// Stop drawing for good (window closing): a frame delivered while the
 	// native view is being torn down acquires from a dead swapchain.
 	void Shutdown() { m_shutdown = true; }
+	// after the last canvas (and the data) are gone, before static
+	// destruction: the engine's shared pipelines / render passes and the
+	// Vulkan device (wx: the last VRenderVulkanView destructor)
+	static void ShutdownEngine();
 
 	// Redraw request (coalesced by Qt)
 	void RefreshView() { RequestRender(); }
@@ -747,6 +752,13 @@ private:
 	std::vector<std::shared_ptr<vks::VTexture>> m_dp_ctex_list;   // colour
 	std::unique_ptr<vks::VFrameBuffer> m_fbo_ol2;
 	std::shared_ptr<vks::VTexture> m_tex_ol2;
+	// a copy of a render target that the next pass also samples (the shadow
+	// passes read the colour they darken): sampling the attachment being
+	// written is a feedback loop (VUID-vkCmdDrawIndexed-imageLayout-00344)
+	std::unique_ptr<vks::VFrameBuffer> m_fbo_snap;
+	std::shared_ptr<vks::VTexture> m_tex_snap;
+	// empty: the pass clears the target first, so it reads an empty copy
+	vks::VTexture* SnapshotTarget(const std::unique_ptr<vks::VFrameBuffer>& fb, bool empty = false);
 	bool m_clear_final_buffer = true;
 	int m_finished_peeling_layer = 0;
 	int m_peeling_layers = 1;
@@ -878,6 +890,9 @@ private:
 	void DrawVolumeOver(VolumeData* vd, std::unique_ptr<vks::VFrameBuffer>& fb, double sampling_frq_fac, int peel = 0);
 	// wx OnIdle: schedule the next frame while the loop is not done
 	void StreamingIdle();
+	// the loader queue of a loop that started while interactive: started once
+	// the input pauses (StartLoopUpdate, StreamingIdle)
+	void StartDeferredLoad();
 	void RequestFrame();                          // requestUpdate only (RenderCanvas.cpp)
 	bool m_updating = true;              // wx m_updating
 	bool m_draw_overlays_only = false;   // wx m_draw_overlays_only
@@ -914,6 +929,7 @@ private:
 	std::shared_ptr<vks::VTexture> m_tex_temp;
 	std::unique_ptr<vks::VFrameBuffer> m_fbo_temp_restore;
 	std::unique_ptr<VolumeLoader> m_loader;       // wx m_loader
+	std::unique_ptr<std::vector<VolumeLoaderData>> m_deferred_load;   // StartDeferredLoad
 	std::unique_ptr<EmptyBlockDetector> m_ebd;    // wx m_ebd
 
 	// interaction

@@ -476,8 +476,10 @@ void VolumePropPanel::GetSettings()
 	SetRow(m_colormap_high, high * m_max_val);
 
 	m_max_value->setValue(m_max_val);   // wx: "%.2f" of max(255 | 1, GetMaxValue())
+	// wx: level 0. Pyramid data: the current level's spacing is coarser, and
+	// ApplySpacing (Texture::set_spacings) takes these values as level 0's
 	double sx, sy, sz;
-	m_vd->GetSpacings(sx, sy, sz);
+	m_vd->GetSpacings(sx, sy, sz, 0);
 	m_spc_x->setValue(sx); m_spc_y->setValue(sy); m_spc_z->setValue(sz);
 
 	Color c = m_vd->GetColor();

@@ -37,6 +37,7 @@
 #include "FLIVR/Transform.h"
 #include "Core/Thread.h"
 #include "DataManager.h"
+#include <QDateTime>
 #include "compatibility.h"
 #include "utility.h"
 
@@ -80,6 +81,7 @@ void RenderCanvas::InitStreaming()
 void RenderCanvas::ShutdownStreaming()
 {
 	// wx ~VRenderVulkanView
+	m_deferred_load.reset();
 	if (m_loader) m_loader->StopAll();
 	if (m_ebd)
 	{
@@ -200,12 +202,55 @@ void RenderCanvas::RefreshOverlayChange()
 		RequestRender();
 }
 
+// the loader queue StartLoopUpdate kept while the view was interactive
+void RenderCanvas::StartDeferredLoad()
+{
+	if (!m_deferred_load || !m_loader)
+		return;
+	// only for the loop that built the queue, while it runs
+	if (!(TextureRenderer::get_mem_swap() && TextureRenderer::get_start_update_loop() &&
+		!TextureRenderer::get_done_update_loop()))
+	{
+		m_deferred_load.reset();
+		return;
+	}
+	// the input has paused for about one wx idle frame (its 50 ms timer)
+	if (m_interactive && m_last_interaction_ms >= 0 &&
+		QDateTime::currentMSecsSinceEpoch() - m_last_interaction_ms < 50)
+		return;
+	// the queue holds raw pointers: only volumes the view still has
+	std::vector<VolumeLoaderData> q;
+	for (const VolumeLoaderData& d : *m_deferred_load)
+		if (d.vd && std::find(m_volumes.begin(), m_volumes.end(), d.vd) != m_volumes.end())
+			q.push_back(d);
+	m_deferred_load.reset();
+	bool runvl = false;
+	for (const VolumeLoaderData& d : q)
+	{
+		if ((d.brick && !d.brick->isLoaded() && !d.brick->isLoading()) ||
+			(d.vd && !d.vd->isBrxml()))
+		{
+			runvl = true;
+			break;
+		}
+	}
+	if (!runvl)
+		return;
+	m_loader->Set(q);
+	m_loader->SetMemoryLimitByte((long long)TextureRenderer::get_mainmem_buf_size() * 1024LL * 1024LL);
+	TextureRenderer::set_load_on_main_thread(false);
+	const int cpus = CpuCount();
+	m_loader->SetMaxThreadNum(std::max(1, (cpus - 1) - (m_ebd ? m_ebd->GetMaxThreadNum() : 0)));
+	m_loader->Run();
+}
+
 // wx OnIdle (the memory swap part), run after every presented frame
 void RenderCanvas::StreamingIdle()
 {
 	// end of wx Draw()
 	m_draw_overlays_only = false;
 	if (m_shutdown) return;
+	StartDeferredLoad();
 
 	bool refresh = m_refresh_start_loop;
 	bool start_loop = true;
@@ -518,11 +563,16 @@ void RenderCanvas::DrawVolumeOver(VolumeData* vd, std::unique_ptr<vks::VFrameBuf
 			(TextureRenderer::get_mem_swap() &&
 			TextureRenderer::get_clear_chan_buffer()))
 		{
-			TextureRenderer::reset_clear_chan_buffer();
+			//the draw returns at once when the frame's time is used up: keep
+			//the flag for the frame that draws (a pass that took it and drew
+			//nothing left its buffer uncleared, e.g. a stale shadow map)
+			if (!TextureRenderer::frame_budget_exhausted())
+				TextureRenderer::reset_clear_chan_buffer();
 			clear = true;
 		}
 
 		vd->GetVR()->set_depth_peel(peel);
+		vd->GetVR()->set_depth_textures(peel ? m_vol_dp_fr_tex : nullptr, peel ? m_vol_dp_bk_tex : nullptr);
 		vd->SetStreamMode(0);
 		vd->SetMatrices(m_mv_mat, m_proj_mat, m_tex_mat);
 		vd->SetFog(m_use_fog, m_fog_intensity, m_fog_start, m_fog_end, m_bg_color);
@@ -1063,8 +1113,11 @@ void RenderCanvas::StartLoopUpdate(bool reset_peeling_layer)
 			}
 		}
 	}
-	// the wx "group, blend mode != multi" branch (one flat group)
-	else if (reset_peeling_layer)
+	// the wx group branch (Layered / Composite views): Depth-blend groups
+	// queue their bricks on every loop start, including the slab restarts of
+	// DrawVolumesDP (StartLoopUpdate(false)); the other volumes only when the
+	// peeling layers reset (wx: "if (!reset_peeling_layer) continue")
+	else
 	{
 		// wx walks the group from its last volume to its first (draw order)
 		std::vector<VolumeData*> list;
@@ -1073,6 +1126,12 @@ void RenderCanvas::StartLoopUpdate(bool reset_peeling_layer)
 			VolumeData* vd = *it;
 			if (!vd || !vd->GetDisp() || !vd->isBrxml())
 				continue;
+			if (!reset_peeling_layer)
+			{
+				DataGroup* g = GetParentGroup(vd);
+				if (!g || g->GetBlendMode() != VolMethodMulti)
+					continue;
+			}
 			Texture* tex = vd->GetTexture();
 			if (!tex || !vd->GetVR())
 				continue;
@@ -1194,7 +1253,17 @@ void RenderCanvas::StartLoopUpdate(bool reset_peeling_layer)
 		ebd_queues.clear();
 
 	bool runvl = false;
-	if (queues.size() > 0 && !m_interactive)
+	m_deferred_load.reset();
+	if (queues.size() > 0 && m_interactive)
+	{
+		// interactive: wx starts no loader either, but its view leaves the
+		// interactive state after one frame and restarts, so pyramid bricks
+		// load in the pauses between drag events. The Qt view stays interactive
+		// until the input has been still for IntSettleMs: StreamingIdle starts
+		// this queue once the input pauses (StartDeferredLoad)
+		m_deferred_load = std::make_unique<std::vector<VolumeLoaderData>>(queues);
+	}
+	else if (queues.size() > 0)
 	{
 		for (auto& q : queues)
 		{

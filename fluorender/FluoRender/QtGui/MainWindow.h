@@ -220,6 +220,7 @@ public:
 	void PluginAddVolume(VolumeData* vd, RenderCanvas* view = nullptr) override;
 	bool PluginReplaceVolume(const QString& name, VolumeData* dst, RenderCanvas* view = nullptr) override;
 	void PluginRemoveGroup(const QString& name, RenderCanvas* view = nullptr) override;
+	void PluginRemoveVolume(VolumeData* vd) override;
 	void PluginUpdateTree(const QString& name = QString(), int type = -1) override;
 	void PluginUpdateTreeIcons() override;
 	void PluginRefreshViews(bool tree = false) override;

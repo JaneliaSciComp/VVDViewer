@@ -177,9 +177,6 @@ engine changes that also change the wx app are under "Bug fixes".
   transform (wx sends it to the Fiji Interface plugin).
 * **Captures at sizes other than the view size are always tiled** (wx: only
   when both sides > 4000).
-* **Volume shadow depth map is drawn without depth peeling** (in Depth mode
-  with meshes wx keeps the peel, the shader then fails to compile and the
-  brick loop never ends).
 * **Pen pressure** from Qt tablet events on every platform (wx reads Wintab on
   Windows only, and that code is commented out).
 * **Virtual sphere rotation** (new; **on by default**, Settings ->
@@ -546,7 +543,8 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   DrawVolumesMulti): depth map of the shadow volumes, gradient shifted by the
   Settings shadow direction, fb darkened by the shadow intensity; while
   streaming a brick loop of its own, so (as in wx) only with memory swap on.
-  The depth-map pass is drawn without depth peeling (deliberate). Mesh shadows
+  The depth-map pass is drawn without depth peeling, in both apps
+  (`VolumeRenderer::prepareVRayPipeline` uses peel 0 for colormap 2). Mesh shadows
   use the Settings shadow direction too (was 0).
 * **Overlays** (`ViewOverlays`): Center, Info, Legend, scale bar, colormap,
   annotation labels (`DrawAnnotations`); an annotation layer that carries a
