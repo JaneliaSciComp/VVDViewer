@@ -37,6 +37,7 @@
 #include "FLIVR/VolumeRenderer.h"
 #include "FLIVR/Texture.h"
 #include "FLIVR/TextureBrick.h"
+#include "VVulkan.h"
 #include "Formats/v3dpbd_reader.h"
 #include "Formats/nrrd_writer.h"
 #include "Formats/msk_writer.h"
@@ -336,45 +337,84 @@ bool NAPluginQt::runNALoader(const QString& id_path, const QString& vol_path, co
 	}
 
 	Lock();
-	// the groups of the previous NA data leave the view
-	if (DataGroup* group = vrv->GetParentGroup(VVDString(m_vol_s[0])))
-		m_host->PluginRemoveGroup(group->GetName().ToQt(), vrv);
-	if (DataGroup* group = vrv->GetParentGroup(VVDString(m_vol_r)))
-		m_host->PluginRemoveGroup(group->GetName().ToQt(), vrv);
-	for (int c = 0; c < 3; c++) { m_vol_s[c].clear(); m_nrrd_s[c].reset(); }
-	m_vol_r.clear();
-	m_nrrd_r.reset();
-	m_host->PluginUpdateTree();
-	tree->ClearVisHistory();
-
-	delete m_lbl_reader;
-	m_lbl_reader = nullptr;
-	delete m_vol_reader;
-	m_vol_reader = nullptr;
-
-	m_xspc = m_yspc = m_zspc = -1.0;
+	double xspc = -1.0, yspc = -1.0, zspc = -1.0;
 	if (!spacings.isEmpty())
 	{
 		const QStringList strspc = spacings.split('x', Qt::SkipEmptyParts);
 		if (strspc.size() == 3)
 		{
 			bool ok = false;
-			double val = strspc[0].toDouble(&ok); if (ok) m_xspc = val;
-			val = strspc[1].toDouble(&ok); if (ok) m_yspc = val;
-			val = strspc[2].toDouble(&ok); if (ok) m_zspc = val;
+			double val = strspc[0].toDouble(&ok); if (ok) xspc = val;
+			val = strspc[1].toDouble(&ok); if (ok) yspc = val;
+			val = strspc[2].toDouble(&ok); if (ok) zspc = val;
 		}
 	}
-	m_prefix = prefix;
-	if (!m_prefix.isEmpty()) m_prefix += " ";
 
-	m_lbl_reader = lbl_reader;
+	// the previous session, resolved to its volumes now, before the load:
+	// the new volumes may get exactly the old names (m_vol_s / m_vol_r also
+	// come from NA_plugin_settings.dft, and outlive New / Open Project), and a
+	// lookup by name after the load found and freed the new ones
+	std::vector<VolumeData*> old_vols;
+	for (const QString& n : { m_vol_s[0], m_vol_s[1], m_vol_s[2], m_vol_r })
+	{
+		if (n.isEmpty())
+			continue;
+		VolumeData* v = dm->GetVolumeData(VVDString(n));
+		if (v && std::find(old_vols.begin(), old_vols.end(), v) == old_vols.end())
+			old_vols.push_back(v);
+	}
+	auto in_data_manager = [dm](VolumeData* v) {
+		for (int i = 0; i < dm->GetVolumeNum(); i++)
+			if (dm->GetVolumeData(i) == v)
+				return true;
+		return false;
+	};
 
+	// the memory budget of the load as with the previous session released
+	// (it used to be removed first): its bricks leave the GPU (dirty masks are
+	// read back first; they reload if this load fails and the session stays)
+	if (auto vk = FLIVR::TextureRenderer::get_vulkan())
+	{
+		for (VolumeData* v : old_vols)
+			if (v->GetTexture())
+				vk->eraseBricksFromTexpools(v->GetTexture()->get_bricks(), -1);
+		for (auto dev : vk->devices)
+			if (dev)
+				dev->DrainDeferredDestroys();
+	}
+
+	// then the volume, while the previous NA data are still in place: if it
+	// does not load (no channel, a truncated file, out of memory) or the label
+	// cannot be scaled to it, the previous session (and its unsaved mask
+	// edits) stays as it was
+	const int nvol_before = dm->GetVolumeNum();
 	const size_t avmem = (size_t)(vrv->GetAvailableGraphicsMemory(0) * 1024.0 * 1024.0 * 0.8);
 	LoadFiles(vol_path, avmem, prefix);
-	const int vol_chan = dm->GetLatestVolumeChannelNum();
-	const int dot = vol_path.lastIndexOf('.');
-	m_vol_suffix = dot >= 0 ? vol_path.mid(dot).toLower() : QString();
+	const int vol_chan = dm->GetVolumeNum() > nvol_before ? dm->GetLatestVolumeChannelNum() : 0;
+	auto discard_new = [&]() {
+		std::vector<VolumeData*> added;
+		for (int i = nvol_before; i < dm->GetVolumeNum(); i++)
+			if (VolumeData* vd = dm->GetVolumeData(i))
+				added.push_back(vd);
+		// the groups the load put them in: removed too once empty
+		std::vector<QString> groups;
+		for (VolumeData* vd : added)
+			if (DataGroup* g = vrv->GetParentGroup(vd))
+				if (std::find(groups.begin(), groups.end(), g->GetName().ToQt()) == groups.end())
+					groups.push_back(g->GetName().ToQt());
+		for (VolumeData* vd : added)
+			m_host->PluginRemoveVolume(vd);
+		for (const QString& gname : groups)
+			if (DataGroup* g = vrv->GetGroup(VVDString(gname)))
+				if (g->GetVolumeNum() == 0)
+					m_host->PluginRemoveGroup(gname, vrv);
+		m_host->PluginUpdateTree();
+		delete lbl_reader;
+		Unlock();
+	};
 
+	std::shared_ptr<VL_Nrrd> nrrd_s[3], nrrd_r;
+	QString vol_s[3], vol_r;
 	VolumeData* vols[3] = {};
 	VolumeData* volr = nullptr;
 	int scount = 0;
@@ -385,36 +425,89 @@ bool NAPluginQt::runNALoader(const QString& id_path, const QString& vol_path, co
 		if (!vd || !vd->GetTexture() || !vd->GetTexture()->get_nrrd(0)) continue;
 		if (chspec[c] == 's' && scount < 3)
 		{
-			m_nrrd_s[scount] = vd->GetTexture()->get_nrrd(0);
-			m_vol_s[scount] = vd->GetName().ToQt();
+			nrrd_s[scount] = vd->GetTexture()->get_nrrd(0);
+			vol_s[scount] = vd->GetName().ToQt();
 			vols[scount] = vd;
-			if (m_xspc > 0.0 && m_yspc > 0.0 && m_zspc > 0.0)
-				vd->SetSpacings(m_xspc, m_yspc, m_zspc);
+			if (xspc > 0.0 && yspc > 0.0 && zspc > 0.0)
+				vd->SetSpacings(xspc, yspc, zspc);
 			scount++;
 		}
 		if (chspec[c] == 'r')
 		{
-			m_nrrd_r = vd->GetTexture()->get_nrrd(0);
-			m_vol_r = vd->GetName().ToQt();
+			nrrd_r = vd->GetTexture()->get_nrrd(0);
+			vol_r = vd->GetName().ToQt();
 			volr = vd;
-			if (m_xspc > 0.0 && m_yspc > 0.0 && m_zspc > 0.0)
-				vd->SetSpacings(m_xspc, m_yspc, m_zspc);
+			if (xspc > 0.0 && yspc > 0.0 && zspc > 0.0)
+				vd->SetSpacings(xspc, yspc, zspc);
 		}
 	}
-	if (!m_nrrd_s[0])   // wx dereferenced it anyway
+	if (!nrrd_s[0])   // wx dereferenced it anyway
 	{
-		Unlock();
+		std::fprintf(stderr, "[NA] %s gave no signal channel\n", vol_path.toLocal8Bit().constData());
+		discard_new();
 		return false;
 	}
 
 	size_t nx, ny, nz;
-	Dims(m_nrrd_s[0], nx, ny, nz);
-	if (m_xspc <= 0.0) m_xspc = m_nrrd_s[0]->getNrrd()->axis[(m_nrrd_s[0]->getNrrd()->dim > 3 ? 1 : 0) + 0].spacing;
-	if (m_yspc <= 0.0) m_yspc = m_nrrd_s[0]->getNrrd()->axis[(m_nrrd_s[0]->getNrrd()->dim > 3 ? 1 : 0) + 1].spacing;
-	if (m_zspc <= 0.0) m_zspc = m_nrrd_s[0]->getNrrd()->axis[(m_nrrd_s[0]->getNrrd()->dim > 3 ? 1 : 0) + 2].spacing;
+	Dims(nrrd_s[0], nx, ny, nz);
+	const Nrrd* sn = nrrd_s[0]->getNrrd();
+	const int soff = sn->dim > 3 ? 1 : 0;
+	if (xspc <= 0.0) xspc = sn->axis[soff + 0].spacing;
+	if (yspc <= 0.0) yspc = sn->axis[soff + 1].spacing;
+	if (zspc <= 0.0) zspc = sn->axis[soff + 2].spacing;
 
 	Nrrd* scaled = VolumeData::NrrdScale(v3d_nrrd->getNrrd(), nx, ny, nz, false);
-	if (!scaled) { Unlock(); return false; }
+	if (!scaled)
+	{
+		std::fprintf(stderr, "[NA] could not scale the label to %zux%zux%zu\n", nx, ny, nz);
+		discard_new();
+		return false;
+	}
+
+	// both loaded: the previous session's volumes leave the view, by pointer
+	// (resolved before the load). A group with no new volume goes as a whole,
+	// as before; one that also holds a new volume (a single channel added to
+	// the current group) loses only the old ones.
+	auto is_new = [&](VolumeData* v) {
+		return v && (v == vols[0] || v == vols[1] || v == vols[2] || v == volr);
+	};
+	auto holds_new = [&](DataGroup* g) {
+		for (int i = 0; i < g->GetVolumeNum(); i++)
+			if (is_new(g->GetVolumeData(i)))
+				return true;
+		return false;
+	};
+	for (VolumeData* old : old_vols)
+	{
+		// a group removed for an earlier one may have taken this one with it
+		if (!in_data_manager(old) || is_new(old))
+			continue;
+		DataGroup* group = vrv->GetParentGroup(old);
+		if (group && !holds_new(group))
+			m_host->PluginRemoveGroup(group->GetName().ToQt(), vrv);
+		else
+			m_host->PluginRemoveVolume(old);
+	}
+	m_host->PluginUpdateTree();
+	tree->ClearVisHistory();
+
+	delete m_lbl_reader;
+	m_lbl_reader = nullptr;
+	delete m_vol_reader;
+	m_vol_reader = nullptr;
+
+	for (int c = 0; c < 3; c++) { m_vol_s[c] = vol_s[c]; m_nrrd_s[c] = nrrd_s[c]; }
+	m_vol_r = vol_r;
+	m_nrrd_r = nrrd_r;
+	m_xspc = xspc; m_yspc = yspc; m_zspc = zspc;
+	m_prefix = prefix;
+	if (!m_prefix.isEmpty()) m_prefix += " ";
+
+	m_lbl_reader = lbl_reader;
+
+	const int dot = vol_path.lastIndexOf('.');
+	m_vol_suffix = dot >= 0 ? vol_path.mid(dot).toLower() : QString();
+
 	m_lbl_nrrd = std::make_shared<VL_Nrrd>(scaled);
 	nrrdAxisInfoSet(m_lbl_nrrd->getNrrd(), nrrdAxisInfoSpacing, m_xspc, m_yspc, m_zspc);
 	nrrdAxisInfoSet(m_lbl_nrrd->getNrrd(), nrrdAxisInfoMax, m_xspc * nx, m_yspc * ny, m_zspc * nz);
