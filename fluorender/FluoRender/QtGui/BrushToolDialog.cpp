@@ -28,6 +28,7 @@
 #include <QIcon>
 
 #include <cmath>
+#include <algorithm>
 
 #include "DataManager.h"
 #include "VolumeSelector.h"
@@ -92,6 +93,13 @@ namespace
 	void ChangeValue(QLineEdit* t, const QString& s) { QSignalBlocker b(t); t->setText(s); }
 
 	QString VolName(VolumeData* vd) { return vd ? vd->GetName().ToQt() : QString(); }
+
+	// gap between the group boxes of a page (wx: 30 px spacers; Qt's group box
+	// titles and layout margins already separate them)
+	const int kBoxGap = 12;
+	// extra gap between the rows inside a group box (wx: 10 px; the box
+	// layout's own spacing is added on top)
+	const int kRowGap = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +202,7 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer1_4->addSpacing(15);
 	//sizer1
 	sizer1->addLayout(sizer1_1);
-	sizer1->addSpacing(10);
+	sizer1->addSpacing(6);
 	sizer1->addLayout(sizer1_2);
 	sizer1->addWidget(row1_4);
 	row1_4->hide();   // sizer1->Hide(sizer1_4, true)
@@ -217,14 +225,17 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer2_2->addWidget(m_brush_size1_sldr, 1);
 	sizer2_2->addWidget(m_brush_size1_text, 0, Qt::AlignVCenter);
 	sizer2_2->addWidget(Label("px", page, 25), 0, Qt::AlignVCenter);
-	//brush size 2
-	auto* sizer2_3 = new QHBoxLayout();
-	m_brush_size2_chk = CheckRight("GrowSize", page);
+	//brush size 2 (wx: every control hidden; one container so the row's
+	//layout spacing disappears with it)
+	auto* row2_3 = new QWidget(page);
+	auto* sizer2_3 = new QHBoxLayout(row2_3);
+	sizer2_3->setContentsMargins(0, 0, 0, 0);
+	m_brush_size2_chk = CheckRight("GrowSize", row2_3);
 	m_brush_size2_chk->setFixedWidth(80);
-	auto* st_colon = Label(":", page, 5, 20);
+	auto* st_colon = Label(":", row2_3, 5, 20);
 	st_colon->hide();
-	m_brush_size2_sldr = Slider(30, 1, 300, page);
-	m_brush_size2_text = Text("30", page, 50, vald_int);
+	m_brush_size2_sldr = Slider(30, 1, 300, row2_3);
+	m_brush_size2_text = Text("30", row2_3, 50, vald_int);
 	m_brush_size2_chk->setChecked(true);
 	m_brush_size2_sldr->setEnabled(true);
 	m_brush_size2_text->setEnabled(true);
@@ -235,9 +246,10 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer2_3->addWidget(st_colon, 0, Qt::AlignVCenter);
 	sizer2_3->addWidget(m_brush_size2_sldr, 1);
 	sizer2_3->addWidget(m_brush_size2_text, 0, Qt::AlignVCenter);
-	st = Label("px", page, 25);
+	st = Label("px", row2_3, 25);
 	st->hide();
 	sizer2_3->addWidget(st, 0, Qt::AlignVCenter);
+	row2_3->hide();
 	//iterations
 	auto* sizer2_4 = new QHBoxLayout();
 	st = Label("Growth:", page, 70, 20);
@@ -258,45 +270,50 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer2_4->addWidget(m_brush_iterss_rb, 0, Qt::AlignVCenter);
 	sizer2_4->addStretch(1);
 
-	m_dslt_chk = new QCheckBox("Use DSLT", page);
-	st_dslt_r = Label("Radius:", page, 70, 20);
-	m_dslt_r_sldr = Slider(10, 1, 100, page);
-	m_dslt_r_text = Text("10", page, 50, vald_int);
+	//DSLT (hidden below, as in wx): one container so its spacing goes too
+	auto* dslt_box = new QWidget(page);
+	auto* dslt_sizer = new QVBoxLayout(dslt_box);
+	dslt_sizer->setContentsMargins(0, 0, 0, 0);
+	m_dslt_chk = new QCheckBox("Use DSLT", dslt_box);
+	st_dslt_r = Label("Radius:", dslt_box, 70, 20);
+	m_dslt_r_sldr = Slider(10, 1, 100, dslt_box);
+	m_dslt_r_text = Text("10", dslt_box, 50, vald_int);
 	auto* sizer2_5 = new QHBoxLayout();
 	sizer2_5->addSpacing(5);
 	sizer2_5->addWidget(st_dslt_r, 0, Qt::AlignVCenter);
 	sizer2_5->addWidget(m_dslt_r_sldr, 1);
 	sizer2_5->addWidget(m_dslt_r_text, 0, Qt::AlignVCenter);
-	st_dslt_q = Label("Quality:", page, 70, 20);
-	m_dslt_q_sldr = Slider(3, 1, 10, page);
-	m_dslt_q_text = Text("3", page, 50, vald_int);
+	st_dslt_q = Label("Quality:", dslt_box, 70, 20);
+	m_dslt_q_sldr = Slider(3, 1, 10, dslt_box);
+	m_dslt_q_text = Text("3", dslt_box, 50, vald_int);
 	auto* sizer2_6 = new QHBoxLayout();
 	sizer2_6->addSpacing(5);
 	sizer2_6->addWidget(st_dslt_q, 0, Qt::AlignVCenter);
 	sizer2_6->addWidget(m_dslt_q_sldr, 1);
 	sizer2_6->addWidget(m_dslt_q_text, 0, Qt::AlignVCenter);
-	st_dslt_c = Label("C:", page, 70, 20);
-	m_dslt_c_sldr = Slider(0, 0, 2550, page);
-	m_dslt_c_text = Text("0.0", page, 50, vald_fp1);
+	st_dslt_c = Label("C:", dslt_box, 70, 20);
+	m_dslt_c_sldr = Slider(0, 0, 2550, dslt_box);
+	m_dslt_c_text = Text("0.0", dslt_box, 50, vald_fp1);
 	auto* sizer2_7 = new QHBoxLayout();
 	sizer2_7->addSpacing(5);
 	sizer2_7->addWidget(st_dslt_c, 0, Qt::AlignVCenter);
 	sizer2_7->addWidget(m_dslt_c_sldr, 1);
 	sizer2_7->addWidget(m_dslt_c_text, 0, Qt::AlignVCenter);
+	dslt_sizer->addSpacing(10);
+	dslt_sizer->addWidget(m_dslt_chk, 0, Qt::AlignLeft);
+	dslt_sizer->addSpacing(5);
+	dslt_sizer->addLayout(sizer2_5);
+	dslt_sizer->addLayout(sizer2_6);
+	dslt_sizer->addLayout(sizer2_7);
 
 	//sizer2
 	sizer2->addLayout(sizer2_4);
-	sizer2->addSpacing(10);
+	sizer2->addSpacing(6);
 	sizer2->addLayout(sizer2_2);
-	sizer2->addLayout(sizer2_3);
-	sizer2->addSpacing(10);
+	sizer2->addWidget(row2_3);
+	sizer2->addSpacing(6);
 	sizer2->addLayout(sizer2_1);
-	sizer2->addSpacing(10);
-	sizer2->addWidget(m_dslt_chk, 0, Qt::AlignLeft);
-	sizer2->addSpacing(5);
-	sizer2->addLayout(sizer2_5);
-	sizer2->addLayout(sizer2_6);
-	sizer2->addLayout(sizer2_7);
+	sizer2->addWidget(dslt_box);
 
 	auto* box3 = new QGroupBox("Mask Display Settings", page);
 	auto* sizer3 = new QVBoxLayout(box3);
@@ -310,21 +327,20 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer3_1->addWidget(m_mask_overlay_alpha_text, 0, Qt::AlignVCenter);
 	sizer3->addLayout(sizer3_1);
 
-	//vertical sizer
+	//vertical sizer (wx used 30 px gaps; Qt's group boxes and layout margins
+	//already separate the boxes, so keep the page compact)
 	auto* sizer_v = new QVBoxLayout(page);
-	sizer_v->addSpacing(10);
 	sizer_v->addWidget(m_toolbar);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box1);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box2);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box3);
-	sizer_v->addSpacing(30);
 	sizer_v->addStretch(1);
 
 	SetDSLTEnabled(false);
-	for (QWidget* w : std::initializer_list<QWidget*>{ m_dslt_chk, st_dslt_r, m_dslt_r_sldr, m_dslt_r_text,
+	for (QWidget* w : std::initializer_list<QWidget*>{ dslt_box, m_dslt_chk, st_dslt_r, m_dslt_r_sldr, m_dslt_r_text,
 		st_dslt_q, m_dslt_q_sldr, m_dslt_q_text, st_dslt_c, m_dslt_c_sldr, m_dslt_c_text })
 		w->hide();
 
@@ -400,15 +416,13 @@ QWidget* BrushToolDialog::CreateCalculationPage(QWidget* parent)
 
 	//vertical sizer
 	auto* sizer_v = new QVBoxLayout(page);
-	sizer_v->addSpacing(10);
 	sizer_v->addLayout(sizer1);
-	sizer_v->addSpacing(10);
+	sizer_v->addSpacing(6);
 	sizer_v->addLayout(sizer2);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box3);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box4);
-	sizer_v->addSpacing(10);
 	sizer_v->addStretch(1);
 
 	connect(m_calc_load_a_btn, &QPushButton::clicked, this, &BrushToolDialog::OnLoadA);
@@ -486,15 +500,13 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	sizer1_4->addWidget(m_ca_random_color_btn, 0, Qt::AlignVCenter);
 	sizer1_4->addWidget(m_ca_annotations_btn, 0, Qt::AlignVCenter);
 	//sizer1
-	sizer1->addSpacing(10);
 	sizer1->addLayout(sizer1_1);
-	sizer1->addSpacing(10);
+	sizer1->addSpacing(kRowGap);
 	sizer1->addLayout(sizer1_2);
-	sizer1->addSpacing(10);
+	sizer1->addSpacing(kRowGap);
 	sizer1->addLayout(sizer1_3);
-	sizer1->addSpacing(10);
+	sizer1->addSpacing(kRowGap);
 	sizer1->addLayout(sizer1_4);
-	sizer1->addSpacing(10);
 
 	//noise removal
 	auto* box2 = new QGroupBox("Noise Removal", page);
@@ -516,11 +528,9 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	sizer2_2->addWidget(m_nr_analyze_btn, 0, Qt::AlignVCenter);
 	sizer2_2->addWidget(m_nr_remove_btn, 0, Qt::AlignVCenter);
 	//sizer2
-	sizer2->addSpacing(10);
 	sizer2->addLayout(sizer2_1);
-	sizer2->addSpacing(10);
+	sizer2->addSpacing(kRowGap);
 	sizer2->addLayout(sizer2_2);
-	sizer2->addSpacing(10);
 
 	//EVE
 	auto* box3 = new QGroupBox("EVE (Partice Detection)", page);
@@ -556,25 +566,21 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	m_eve_analyze_btn = new QPushButton("Analyze", page);
 	sizer3_4->addStretch(1);
 	sizer3_4->addWidget(m_eve_analyze_btn, 0, Qt::AlignVCenter);
-	sizer3->addSpacing(10);
 	sizer3->addLayout(sizer3_1);
-	sizer3->addSpacing(10);
+	sizer3->addSpacing(kRowGap);
 	sizer3->addLayout(sizer3_2);
-	sizer3->addSpacing(10);
+	sizer3->addSpacing(kRowGap);
 	sizer3->addLayout(sizer3_3);
-	sizer3->addSpacing(10);
+	sizer3->addSpacing(kRowGap);
 	sizer3->addLayout(sizer3_4);
-	sizer3->addSpacing(10);
 
 	//vertical sizer
 	auto* sizer_v = new QVBoxLayout(page);
-	sizer_v->addSpacing(10);
 	sizer_v->addWidget(box1);
-	sizer_v->addSpacing(30);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box2);
-	sizer_v->addSpacing(10);
+	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box3);
-	sizer_v->addSpacing(10);
 	sizer_v->addStretch(1);
 
 	connect(m_ca_thresh_sldr, &QSlider::valueChanged, this, &BrushToolDialog::OnCAThreshChange);
@@ -612,12 +618,10 @@ BrushToolDialog::BrushToolDialog(AnalysisContext* ctx, BrushTool* tool, QWidget*
 	m_notebook->addTab(CreateCalculationPage(m_notebook), "Calculations");
 	m_notebook->addTab(CreateAnalysisPage(m_notebook), "Analysis");
 
-	//all controls
+	//all controls: the notebook takes any extra height the user gives the
+	//window (no trailing stretch, which only left a blank strip)
 	auto* sizerV = new QVBoxLayout(this);
-	sizerV->addSpacing(10);
-	sizerV->addWidget(m_notebook);
-	sizerV->addSpacing(10);
-	sizerV->addStretch(1);
+	sizerV->addWidget(m_notebook, 1);
 
 	LoadDefault();
 
@@ -631,7 +635,39 @@ BrushToolDialog::BrushToolDialog(AnalysisContext* ctx, BrushTool* tool, QWidget*
 	connect(m_idleTimer, &QTimer::timeout, this, &BrushToolDialog::OnIdle);
 	m_idleTimer->start(100);
 
-	resize(400, 550);
+	// wx: wxSize(400, 550). A QTabWidget is as tall as its tallest page
+	// (Analysis), so the Paint Brush page sat in a window half empty: size
+	// the window to the page being shown instead, keeping the width (the
+	// widest page) so the tabs do not jump sideways.
+	connect(m_notebook, &QTabWidget::currentChanged, this, [this](int) { FitToCurrentPage(true); });
+	FitToCurrentPage(false);
+}
+
+void BrushToolDialog::FitToCurrentPage(bool keep_width)
+{
+	if (!m_notebook) return;
+	const int cur = m_notebook->currentIndex();
+	int tallest = 0;
+	for (int i = 0; i < m_notebook->count(); ++i)
+	{
+		// the stack's minimum size skips pages with an Ignored vertical
+		// policy, so the window may shrink to the page being shown
+		QWidget* page = m_notebook->widget(i);
+		page->setSizePolicy(QSizePolicy::Preferred, i == cur ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+		tallest = std::max(tallest, page->sizeHint().height());
+	}
+	m_notebook->updateGeometry();
+	if (layout()) layout()->activate();   // window minimum size follows the page
+	// QTabWidget::sizeHint stays as tall as the tallest page whatever the
+	// policies: swap that page's height for the current page's
+	QWidget* page = m_notebook->widget(cur);
+	QSize hint = sizeHint();
+	hint.setHeight(hint.height() - tallest + (page ? page->sizeHint().height() : tallest));
+	hint = hint.expandedTo(minimumSizeHint());
+	if (keep_width)
+		resize(width(), hint.height());
+	else
+		resize(hint);
 }
 
 BrushToolDialog::~BrushToolDialog()

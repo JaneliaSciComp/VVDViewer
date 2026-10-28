@@ -92,6 +92,7 @@ private:
 	void DrawBrush(double val);
 	void Calc(int type, bool need_b);
 	void SetDSLTEnabled(bool enable);
+	void FitToCurrentPage(bool keep_width);
 	VolumeData* CurSelVol() const;
 
 	//paint tools
