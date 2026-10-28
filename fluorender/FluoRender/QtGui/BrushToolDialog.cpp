@@ -100,6 +100,12 @@ namespace
 	// extra gap between the rows inside a group box (wx: 10 px; the box
 	// layout's own spacing is added on top)
 	const int kRowGap = 4;
+	// macOS Qt pads 20 px round a window's layout and 10 px round every child
+	// layout, so window + page + group box stacked up to 40 px of blank on
+	// each side (wx: 5 px borders). Keep the pages tight instead.
+	const QMargins kWindowMargins(8, 8, 8, 8);
+	const QMargins kPageMargins(8, 8, 8, 8);
+	const QMargins kBoxMargins(8, 4, 8, 8);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +166,7 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	//Selection adjustment
 	auto* box1 = new QGroupBox("Selection Settings", page);
 	auto* sizer1 = new QVBoxLayout(box1);
+	sizer1->setContentsMargins(kBoxMargins);
 	//stop at boundary
 	auto* sizer1_1 = new QHBoxLayout();
 	m_edge_detect_chk = CheckRight("Edge Detect:", page);
@@ -186,7 +193,6 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer1_2->addWidget(st, 0, Qt::AlignVCenter);
 	sizer1_2->addWidget(m_brush_scl_translate_sldr, 1);
 	sizer1_2->addWidget(m_brush_scl_translate_text, 0, Qt::AlignVCenter);
-	sizer1_2->addSpacing(15);
 	//2d
 	auto* row1_4 = new QWidget(page);
 	auto* sizer1_4 = new QHBoxLayout(row1_4);
@@ -199,7 +205,6 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	sizer1_4->addWidget(st, 0, Qt::AlignVCenter);
 	sizer1_4->addWidget(m_brush_2dinfl_sldr, 1);
 	sizer1_4->addWidget(m_brush_2dinfl_text, 0, Qt::AlignVCenter);
-	sizer1_4->addSpacing(15);
 	//sizer1
 	sizer1->addLayout(sizer1_1);
 	sizer1->addSpacing(6);
@@ -210,6 +215,7 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	//Brush properties
 	auto* box2 = new QGroupBox("Brush Properties", page);
 	auto* sizer2 = new QVBoxLayout(box2);
+	sizer2->setContentsMargins(kBoxMargins);
 	auto* sizer2_1 = new QHBoxLayout();
 	st = Label("Brush sizes can also be set with mouse wheel in painting mode.", page);
 	sizer2_1->addSpacing(5);
@@ -317,6 +323,7 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 
 	auto* box3 = new QGroupBox("Mask Display Settings", page);
 	auto* sizer3 = new QVBoxLayout(box3);
+	sizer3->setContentsMargins(kBoxMargins);
 	auto* sizer3_1 = new QHBoxLayout();
 	st = Label("Mask Intensity:", page, 80, 20);
 	m_mask_overlay_alpha_sldr = Slider(255, 0, 255, page);
@@ -330,6 +337,7 @@ QWidget* BrushToolDialog::CreateBrushPage(QWidget* parent)
 	//vertical sizer (wx used 30 px gaps; Qt's group boxes and layout margins
 	//already separate the boxes, so keep the page compact)
 	auto* sizer_v = new QVBoxLayout(page);
+	sizer_v->setContentsMargins(kPageMargins);
 	sizer_v->addWidget(m_toolbar);
 	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box1);
@@ -400,11 +408,13 @@ QWidget* BrushToolDialog::CreateCalculationPage(QWidget* parent)
 	//single operators
 	auto* box3 = new QGroupBox("Single-valued Operators (Require A)", page);
 	auto* sizer3 = new QVBoxLayout(box3);
+	sizer3->setContentsMargins(kBoxMargins);
 	m_calc_fill_btn = new QPushButton("3D Fill Holes", page);
 	sizer3->addWidget(m_calc_fill_btn);
 	//two operators
 	auto* box4 = new QGroupBox("Two-valued Operators (Require both A and B)", page);
 	auto* sizer4 = new QHBoxLayout(box4);
+	sizer4->setContentsMargins(kBoxMargins);
 	m_calc_sub_btn = new QPushButton("Subtract", page);
 	m_calc_add_btn = new QPushButton("Max", page);
 	m_calc_div_btn = new QPushButton("Divide", page);
@@ -416,6 +426,7 @@ QWidget* BrushToolDialog::CreateCalculationPage(QWidget* parent)
 
 	//vertical sizer
 	auto* sizer_v = new QVBoxLayout(page);
+	sizer_v->setContentsMargins(kPageMargins);
 	sizer_v->addLayout(sizer1);
 	sizer_v->addSpacing(6);
 	sizer_v->addLayout(sizer2);
@@ -448,6 +459,7 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	//component analyzer
 	auto* box1 = new QGroupBox("Component Analyzer", page);
 	auto* sizer1 = new QVBoxLayout(box1);
+	sizer1->setContentsMargins(kBoxMargins);
 	//threshold of ccl
 	auto* sizer1_1 = new QHBoxLayout();
 	sizer1_1->addWidget(Label("Threshold:", page, 75, 20), 0, Qt::AlignVCenter);
@@ -511,6 +523,7 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	//noise removal
 	auto* box2 = new QGroupBox("Noise Removal", page);
 	auto* sizer2 = new QVBoxLayout(box2);
+	sizer2->setContentsMargins(kBoxMargins);
 	//size threshold
 	auto* sizer2_1 = new QHBoxLayout();
 	sizer2_1->addSpacing(5);
@@ -535,6 +548,7 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 	//EVE
 	auto* box3 = new QGroupBox("EVE (Partice Detection)", page);
 	auto* sizer3 = new QVBoxLayout(box3);
+	sizer3->setContentsMargins(kBoxMargins);
 	//min radius
 	auto* sizer3_1 = new QHBoxLayout();
 	sizer3_1->addSpacing(5);
@@ -576,6 +590,7 @@ QWidget* BrushToolDialog::CreateAnalysisPage(QWidget* parent)
 
 	//vertical sizer
 	auto* sizer_v = new QVBoxLayout(page);
+	sizer_v->setContentsMargins(kPageMargins);
 	sizer_v->addWidget(box1);
 	sizer_v->addSpacing(kBoxGap);
 	sizer_v->addWidget(box2);
@@ -621,6 +636,7 @@ BrushToolDialog::BrushToolDialog(AnalysisContext* ctx, BrushTool* tool, QWidget*
 	//all controls: the notebook takes any extra height the user gives the
 	//window (no trailing stretch, which only left a blank strip)
 	auto* sizerV = new QVBoxLayout(this);
+	sizerV->setContentsMargins(kWindowMargins);
 	sizerV->addWidget(m_notebook, 1);
 
 	LoadDefault();
@@ -635,39 +651,36 @@ BrushToolDialog::BrushToolDialog(AnalysisContext* ctx, BrushTool* tool, QWidget*
 	connect(m_idleTimer, &QTimer::timeout, this, &BrushToolDialog::OnIdle);
 	m_idleTimer->start(100);
 
-	// wx: wxSize(400, 550). A QTabWidget is as tall as its tallest page
-	// (Analysis), so the Paint Brush page sat in a window half empty: size
-	// the window to the page being shown instead, keeping the width (the
-	// widest page) so the tabs do not jump sideways.
-	connect(m_notebook, &QTabWidget::currentChanged, this, [this](int) { FitToCurrentPage(true); });
-	FitToCurrentPage(false);
+	// wx: wxSize(400, 550). A QTabWidget is as large as its largest page in
+	// each direction (Analysis: tallest and widest), so the Paint Brush page
+	// sat in a window half empty: size the window to the page being shown
+	// instead, like a macOS preferences window.
+	connect(m_notebook, &QTabWidget::currentChanged, this, [this](int) { FitToCurrentPage(); });
+	FitToCurrentPage();
 }
 
-void BrushToolDialog::FitToCurrentPage(bool keep_width)
+void BrushToolDialog::FitToCurrentPage()
 {
 	if (!m_notebook) return;
 	const int cur = m_notebook->currentIndex();
-	int tallest = 0;
+	QSize largest(0, 0);
 	for (int i = 0; i < m_notebook->count(); ++i)
 	{
-		// the stack's minimum size skips pages with an Ignored vertical
-		// policy, so the window may shrink to the page being shown
+		// the stack's minimum size skips pages with an Ignored policy, so
+		// the window may shrink to the page being shown
 		QWidget* page = m_notebook->widget(i);
-		page->setSizePolicy(QSizePolicy::Preferred, i == cur ? QSizePolicy::Preferred : QSizePolicy::Ignored);
-		tallest = std::max(tallest, page->sizeHint().height());
+		const QSizePolicy::Policy policy = i == cur ? QSizePolicy::Preferred : QSizePolicy::Ignored;
+		page->setSizePolicy(policy, policy);
+		largest = largest.expandedTo(page->sizeHint());
 	}
 	m_notebook->updateGeometry();
 	if (layout()) layout()->activate();   // window minimum size follows the page
-	// QTabWidget::sizeHint stays as tall as the tallest page whatever the
-	// policies: swap that page's height for the current page's
-	QWidget* page = m_notebook->widget(cur);
+	// QTabWidget::sizeHint stays as large as the largest page whatever the
+	// policies: swap that page's size for the current page's
 	QSize hint = sizeHint();
-	hint.setHeight(hint.height() - tallest + (page ? page->sizeHint().height() : tallest));
-	hint = hint.expandedTo(minimumSizeHint());
-	if (keep_width)
-		resize(width(), hint.height());
-	else
-		resize(hint);
+	if (QWidget* page = m_notebook->widget(cur))
+		hint -= largest - page->sizeHint();
+	resize(hint.expandedTo(minimumSizeHint()));
 }
 
 BrushToolDialog::~BrushToolDialog()
