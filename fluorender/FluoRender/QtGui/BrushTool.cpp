@@ -331,6 +331,15 @@ bool BrushTool::eventFilter(QObject* obj, QEvent* e)
 	return false;
 }
 
+// Runs on every mouse move / press over the view (eventFilter), like wx
+// OnMouse -> UpdateBrushState. wx refreshes with RefreshGLOverlays here: the
+// brush mode is an overlay, so the frame re-presents the retained image. A
+// RefreshView (RefreshGL) instead restarts the brick loop on each mouse
+// move: on a GPU that needs many frames per pass (MacBook Air, Retina) the
+// volume then never finishes while the pointer moves, RefreshOverlays drops
+// the brush frames (loop never done), the brush circle is not drawn and a
+// stroke's selection is not shown until the pointer rests -- a click worked,
+// a drag did not. Only the Segment branch needs the full redraw (wx RefreshGL).
 void BrushTool::UpdateBrushState()
 {
 	bool shift = KeyHeld(Qt::Key_Shift);
@@ -344,21 +353,21 @@ void BrushTool::UpdateBrushState()
 			SetBrush(2);
 			Q_EMIT brushSelected(2);
 			m_clear_paint = true;
-			if (m_canvas) m_canvas->RefreshView();
+			if (m_canvas) m_canvas->RefreshOverlayChange();
 		}
 		else if (key_z)
 		{
 			SetBrush(4);
 			Q_EMIT brushSelected(4);
 			m_clear_paint = true;
-			if (m_canvas) m_canvas->RefreshView();
+			if (m_canvas) m_canvas->RefreshOverlayChange();
 		}
 		else if (key_x)
 		{
 			SetBrush(3);
 			Q_EMIT brushSelected(3);
 			m_clear_paint = true;
-			if (m_canvas) m_canvas->RefreshView();
+			if (m_canvas) m_canvas->RefreshOverlayChange();
 		}
 	}
 	else
@@ -371,7 +380,7 @@ void BrushTool::UpdateBrushState()
 				SetBrush(2);
 				Q_EMIT brushSelected(2);
 				m_clear_paint = true;
-				if (m_canvas) m_canvas->RefreshView();
+				if (m_canvas) m_canvas->RefreshOverlayChange();
 			}
 			else if (key_z)
 			{
@@ -379,7 +388,7 @@ void BrushTool::UpdateBrushState()
 				SetBrush(4);
 				Q_EMIT brushSelected(4);
 				m_clear_paint = true;
-				if (m_canvas) m_canvas->RefreshView();
+				if (m_canvas) m_canvas->RefreshOverlayChange();
 			}
 			else if (key_x)
 			{
@@ -387,12 +396,12 @@ void BrushTool::UpdateBrushState()
 				SetBrush(3);
 				Q_EMIT brushSelected(3);
 				m_clear_paint = true;
-				if (m_canvas) m_canvas->RefreshView();
+				if (m_canvas) m_canvas->RefreshOverlayChange();
 			}
 			else
 			{
 				SetBrush(m_brush_state);
-				if (m_canvas) m_canvas->RefreshView();
+				if (m_canvas) m_canvas->RefreshOverlayChange();
 			}
 		}
 		else if (!shift && !key_z && !key_x)
@@ -416,7 +425,7 @@ void BrushTool::UpdateBrushState()
 				if (m_ctx) m_ctx->RefreshView();
 			}
 			else if (m_canvas)
-				m_canvas->RefreshView();
+				m_canvas->RefreshOverlayChange();
 
 			if (m_prev_focus)
 			{
