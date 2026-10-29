@@ -112,7 +112,8 @@ void APropView::GetSettings()
 	if (!m_ann)
 		return;
 
-	wxString memo = m_ann->GetMemo();
+	// the engine keeps memos as UTF-8 (Annotations::Load / Save, the Qt panel)
+	wxString memo = wxString::FromUTF8(m_ann->GetMemo());
 	m_memo_text->SetValue(memo);
 	if (m_ann->GetMemoRO())
 	{
@@ -200,7 +201,7 @@ void APropView::OnMemoUpdateBtn(wxCommandEvent& event)
 	if (m_ann)
 	{
 		wxString memo = m_memo_text->GetValue();
-                std::string str = memo.ToStdString();
+		std::string str(memo.utf8_str());   // UTF-8, as the engine stores memos
 		m_ann->SetMemo(str);
 	}
 }

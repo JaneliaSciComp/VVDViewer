@@ -1,5 +1,6 @@
 #include "VulkanDevice.hpp"
 #include "vk_format_utils.h"
+#include "../Core/PaintTiming.h"
 #include <thread>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,8 @@ namespace vks
 {
 	void VulkanDevice::setMemoryLimit(double limit)
 	{
+	  if (dev_max_mem_ < 0.0)
+	  {
 		uint32_t extensionCount = 0;
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
         std::vector<VkExtensionProperties> extensions(extensionCount);
@@ -76,6 +79,9 @@ namespace vks
 		if (dev_max_mem >= 4096.0) dev_max_mem -= 1024.0;
 		else if (dev_max_mem >= 1024.0) dev_max_mem -= 512.0;
 		else dev_max_mem *= 0.8;
+		dev_max_mem_ = dev_max_mem;
+	  }
+		const double dev_max_mem = dev_max_mem_;
 
 		double new_mem_limit = 0.0;
 
@@ -124,7 +130,15 @@ namespace vks
 		zpitch = (VkDeviceSize)b->sy() * b->sx() * b->nb(c);
 
 		vks::VulkanDevice *device = texp.tex->device;
-		void* data = b->get_nrrd_raw(c)->data;
+		//no CPU copy to read back into (e.g. a pyramid level that is not
+		//resident: its nrrd has no data): nothing to write
+		Nrrd* nd = b->get_nrrd_raw(c);
+		if (!nd || !nd->data)
+		{
+			b->set_dirty(c, false);
+			return false;
+		}
+		void* data = nd->data;
 		device->DownloadTexture3D(texp.tex, data, offset, ypitch, zpitch);
 
 		b->set_dirty(c, false);
@@ -182,6 +196,79 @@ namespace vks
 		return bd1.dist < bd2.dist;
 	}
 
+	void VulkanDevice::markTexUse(const std::shared_ptr<VTexture>& tex)
+	{
+		if (tex)
+			tex->gpu_use_serial = m_frame_serial;
+	}
+
+	//A texture last referenced by frame u is idle once frame u's slot fence has
+	//signaled: the frame-end submit carries the fence, and a fence signal covers
+	//all work submitted earlier to the queue (uploads go to the same queue here;
+	//with a separate transfer queue the uploads are chained into the render
+	//semaphore sequence that the frame end waits on).
+	bool VulkanDevice::isTexIdle(const std::shared_ptr<VTexture>& tex)
+	{
+		if (!tex)
+			return true;
+		const uint64_t u = tex->gpu_use_serial;
+		if (u == 0)
+			return true;
+		if (!m_frame_fences_used || u >= m_frame_serial)
+			return false;
+		if (u <= m_completed_serial)
+			return true;
+		//poll the in-flight slots without blocking
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (s == m_cur_frame || !slot.fence_pending || slot.fence == VK_NULL_HANDLE)
+				continue;
+			if (vkGetFenceStatus(logicalDevice, slot.fence) == VK_SUCCESS && slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
+		}
+		return u <= m_completed_serial;
+	}
+
+	void VulkanDevice::waitTexIdle(const std::shared_ptr<VTexture>& tex)
+	{
+		if (isTexIdle(tex))
+		{
+			m_texwait_stats[0]++;
+			return;
+		}
+		const uint64_t u = tex->gpu_use_serial;
+		if (m_frame_fences_used && u < m_frame_serial)
+		{
+			//used by an earlier, still executing frame: wait for that frame only
+			//(not for the work the current frame has already submitted)
+			bool waited = false;
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				FrameSlot& slot = m_frames[s];
+				if (s == m_cur_frame || !slot.fence_pending || slot.fence == VK_NULL_HANDLE || slot.serial < u)
+					continue;
+				//the fence stays pending: ResetMainRenderBuffers waits (no-op) and resets it
+				VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+				if (slot.serial > m_completed_serial)
+					m_completed_serial = slot.serial;
+				waited = true;
+			}
+			if (waited && u <= m_completed_serial)
+			{
+				m_texwait_stats[1]++;
+				if (transfer_queue != queue)
+					VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+				return;
+			}
+		}
+		//used by the current frame (or no frame fences on this device): drain
+		m_texwait_stats[2]++;
+		VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+		if (transfer_queue != queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+	}
+
 	int VulkanDevice::check_swap_memory(FLIVR::TextureBrick* brick, int c, bool *swapped)
 	{
 		unsigned int i;
@@ -207,6 +294,11 @@ namespace vks
 
 		if (swapped)
 			*swapped = true;
+
+		const bool ptm = vvd::ptime::On();
+		vvd::ptime::MaskPassStats& pst = vvd::ptime::Mask();
+		auto is_hot = [&pst](FLIVR::TextureBrick* b) { return pst.hot_tex && b && (const void*)b->get_nrrd_raw(0) == pst.hot_tex; };
+		if (ptm) pst.swaps++;
 
 		std::vector<BrickDist> bd_list;
 		BrickDist bd;
@@ -234,13 +326,44 @@ namespace vks
 			for (i=0; i<bd_list.size(); i++)
 			{
 				FLIVR::TextureBrick* b = bd_list[i].brick;
-				if (b->is_tex_deletion_prevented())
-					continue; //saved bricks are never touched
+				if (b->is_tex_deletion_prevented() || b->is_tex_pinned())
+					continue; //saved / pinned bricks are never touched
 				else if (!b->get_disp())
 					bd_undisp.push_back(bd_list[i]);
 				else
 					bd_others.push_back(bd_list[i]);
 			}
+
+			//a texture with exactly the new brick's properties, preferring one
+			//no GPU work can still access (no wait needed to overwrite it), else
+			//the least recently used one (waitTexIdle then waits for its frame only)
+			auto find_overwrite = [&](std::vector<BrickDist>& bucket) -> int
+			{
+				int first = -1;
+				uint64_t first_use = UINT64_MAX;
+				for (size_t k = 0; k < bucket.size(); k++)
+				{
+					TexParam &texp = tex_pool[bucket[k].index];
+					if( texp.tex
+						&& texp.comp == c
+						&& brick->nx() == texp.tex->w
+						&& brick->ny() == texp.tex->h
+						&& brick->nz() == texp.tex->d
+						&& brick->nb(c) == texp.tex->bytes
+						&& brick->tex_format(c) == texp.tex->format
+						&& !brick->dirty(c))
+					{
+						if (isTexIdle(texp.tex))
+							return (int)bucket[k].index;
+						if (first < 0 || texp.tex->gpu_use_serial < first_use)
+						{
+							first = (int)bucket[k].index;
+							first_use = texp.tex->gpu_use_serial;
+						}
+					}
+				}
+				return first;
+			};
 
 			//pop bricks farthest-first, marking them for delayed deletion until
 			//enough memory would be released
@@ -255,36 +378,20 @@ namespace vks
 					TexParam &texp = tex_pool[bucket[heap_end].index];
 					texp.delayed_del = true;
 					deleted.push_back(bucket[heap_end].index);
+					if (ptm) { pst.evictions++; if (is_hot(texp.brick)) pst.evict_hot++; }
 					est_avlb_mem += texp.tex->memsize / MEM_MB;
 				}
 			};
 
 			//overwrite or remove undisplayed bricks.
 			//try to overwrite (any exact-property match is valid; order-insensitive)
-			for (i=0; i<bd_undisp.size(); i++)
-			{
-				TexParam &texp = tex_pool[bd_undisp[i].index];
-				if( texp.tex
-					&& texp.comp == c
-					&& brick->nx() == texp.tex->w
-					&& brick->ny() == texp.tex->h
-					&& brick->nz() == texp.tex->d
-					&& brick->nb(c) == texp.tex->bytes
-					&& brick->tex_format(c) == texp.tex->format
-					&& !brick->dirty(c))
-				{
-					//over write a texture that has exact same properties.
-					overwrite = bd_undisp[i].index;
-					break;
-				}
-			}
+			overwrite = find_overwrite(bd_undisp);
+			if (overwrite >= 0 && ptm) { pst.overwrites++; if (is_hot(tex_pool[overwrite].brick)) pst.overwrite_hot++; }
 			if (overwrite >= 0)
 			{
 				//the texture is reused in place (a new upload overwrites it), so any
 				//in-flight reads of it must complete first
-				VK_CHECK_RESULT(vkQueueWaitIdle(queue));
-				if (transfer_queue != queue)
-					VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+				waitTexIdle(tex_pool[overwrite].tex);
 				//save before deletion
 				return_brick(tex_pool[overwrite]);
 				return overwrite;
@@ -297,29 +404,12 @@ namespace vks
 			if (est_avlb_mem < new_mem)
 			{
 				//try to overwrite
-				for (i=0; i<bd_others.size(); i++)
-				{
-					TexParam &texp = tex_pool[bd_others[i].index];
-					if( texp.tex
-						&& texp.comp == c
-						&& brick->nx() == texp.tex->w
-						&& brick->ny() == texp.tex->h
-						&& brick->nz() == texp.tex->d
-						&& brick->nb(c) == texp.tex->bytes
-						&& brick->tex_format(c) == texp.tex->format
-						&& !brick->dirty(c))
-					{
-						//over write a texture that has exact same properties.
-						overwrite = bd_others[i].index;
-						break;
-					}
-				}
+				overwrite = find_overwrite(bd_others);
+				if (overwrite >= 0 && ptm) { pst.overwrites++; if (is_hot(tex_pool[overwrite].brick)) pst.overwrite_hot++; }
 				if (overwrite >= 0)
 				{
 					//the texture is reused in place: wait for in-flight reads first
-					VK_CHECK_RESULT(vkQueueWaitIdle(queue));
-					if (transfer_queue != queue)
-						VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+					waitTexIdle(tex_pool[overwrite].tex);
 					//save before deletion
 					return_brick(tex_pool[overwrite]);
 				}
@@ -602,7 +692,11 @@ namespace vks
 			VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
 			VK_CHECK_RESULT(vkResetFences(logicalDevice, 1, &slot.fence));
 			slot.fence_pending = false;
+			if (slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
 		}
+		m_frame_serial++;
+		slot.serial = m_frame_serial;
 
 		//now everything this slot's frame referenced is safe to destroy
 		for (auto& fn : slot.deferred_destroys)
@@ -825,6 +919,66 @@ namespace vks
 		}
 	}
 
+	void VulkanDevice::DrainDeferredDestroys()
+	{
+		if (m_in_shutdown)
+			return;
+		VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+		if (compute_queue != VK_NULL_HANDLE && compute_queue != queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(compute_queue));
+		if (transfer_queue != VK_NULL_HANDLE && transfer_queue != queue && transfer_queue != compute_queue)
+			VK_CHECK_RESULT(vkQueueWaitIdle(transfer_queue));
+		//every submitted frame has executed (the queues are idle)
+		for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+		{
+			FrameSlot& slot = m_frames[s];
+			if (slot.fence_pending && slot.serial > m_completed_serial)
+				m_completed_serial = slot.serial;
+		}
+		//releasing a retired texture queues its handles on the current slot, so
+		//drop the textures first, then run the destructions (loop: a destruction
+		//could release further objects)
+		for (int pass = 0; pass < 4; pass++)
+		{
+			bool any = false;
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				std::vector<std::shared_ptr<VTexture>> texs;
+				texs.swap(m_frames[s].retired_texs);
+				any = any || !texs.empty();
+				texs.clear();
+			}
+			for (uint32_t s = 0; s < FRAME_SLOTS_MAX; s++)
+			{
+				std::vector<std::function<void()>> fns;
+				fns.swap(m_frames[s].deferred_destroys);
+				any = any || !fns.empty();
+				for (auto& fn : fns)
+					fn();
+			}
+			if (!any)
+				break;
+		}
+	}
+
+	void VulkanDevice::TrimUploadStaging(VkDeviceSize keep_bytes)
+	{
+		for (uint32_t i = 0; i < STAGING_RING_SIZE; i++)
+		{
+			StagingRingSlot& slot = m_staging_ring[i];
+			if (slot.buf.buffer == VK_NULL_HANDLE || slot.buf.size <= keep_bytes)
+				continue;
+			if (slot.pending && slot.fence != VK_NULL_HANDLE)
+			{
+				VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &slot.fence, VK_TRUE, UINT64_MAX));
+				slot.pending = false;
+			}
+			slot.buf.unmap();
+			slot.buf.destroy();
+			slot.buf.size = 0;
+		}
+	}
+
 	void VulkanDevice::prepareSamplers()
 	{
 		// Create samplers
@@ -975,10 +1129,22 @@ namespace vks
 		}
 
 		// Fill image descriptor image info to be used descriptor set setup
-		ret->descriptor.imageLayout = 
+		ret->descriptor.imageLayout =
 			(usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ret->descriptor.imageView = ret->view;
 		ret->descriptor.sampler = ret->sampler;
+
+		// the image is created UNDEFINED, but the render passes (attachment
+		// initialLayout) and the shaders expect it in descriptor.imageLayout
+		// from its first use, e.g. a depth-peel layer sampled before anything
+		// was drawn into it (VUID-vkCmdDraw-None-09600): put it there now.
+		// (Uploads still transition from UNDEFINED: the copy overwrites it.)
+		if (usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
+		{
+			VkCommandBuffer cmd = createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			vks::tools::setImageLayout(cmd, ret->image, VK_IMAGE_LAYOUT_UNDEFINED, ret->descriptor.imageLayout, ret->subresourceRange);
+			flushCommandBuffer(cmd, queue, true);
+		}
 
 		return std::move(ret);
 	}
@@ -1531,6 +1697,25 @@ namespace vks
 		return true;
 	}
 
+	//a layout transition in a transfer command buffer: on a transfer-only
+	//queue family the access masks keep what that family supports
+	static void TransferImageLayout(bool transfer_only, VkCommandBuffer cmd, VkImage image,
+		VkImageLayout old_layout, VkImageLayout new_layout, VkImageSubresourceRange range)
+	{
+		if (transfer_only)
+			vks::tools::setImageLayoutOnTransferQueue(cmd, image, old_layout, new_layout, range);
+		else
+			vks::tools::setImageLayout(cmd, image, old_layout, new_layout, range);
+	}
+
+	bool VulkanDevice::IsTransferOnlyQueue() const
+	{
+		if (transfer_queue == queue || queueFamilyIndices.transfer >= queueFamilyProperties.size())
+			return false;
+		return (queueFamilyProperties[queueFamilyIndices.transfer].queueFlags &
+			(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == 0;
+	}
+
 	void VulkanDevice::CopyDataStagingBuf2Tex(const std::shared_ptr<VTexture> &tex, bool flush, vks::VulkanSemaphoreSettings* semaphore, StagingRingSlot* slot)
 	{
 		VkCommandBuffer copyCmd = VK_NULL_HANDLE;
@@ -1556,7 +1741,7 @@ namespace vks
 		// holds the intended sampling layout, not the actual one): passing the true
 		// current layout keeps the barrier spec-valid, and the contents may be discarded
 		// because the copy overwrites the whole image.
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->uploaded ? tex->descriptor.imageLayout : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1581,7 +1766,7 @@ namespace vks
 			1,
 			&bufferCopyRegion);
 
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1647,7 +1832,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1676,7 +1861,7 @@ namespace vks
 			&bufferCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1757,7 +1942,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1783,7 +1968,7 @@ namespace vks
 			&imageCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1807,7 +1992,7 @@ namespace vks
 
 		// Optimal image will be used as destination for the copy, so we must transfer from our
 		// initial undefined image layout to the transfer destination layout
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			tex->descriptor.imageLayout,
@@ -1836,7 +2021,7 @@ namespace vks
 			&imageCopyRegion);
 
 		// Change texture image layout to shader read after all mip levels have been copied
-		vks::tools::setImageLayout(
+		TransferImageLayout(IsTransferOnlyQueue(),
 			copyCmd,
 			tex->image,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1922,6 +2107,7 @@ namespace vks
 		//queue completes, so it covers the whole frame, not just this empty submit
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &si, slot.fence));
 		slot.fence_pending = true;
+		m_frame_fences_used = true;
 	}
 
 	VulkanSemaphoreSettings VulkanDevice::GetNextRenderSemaphoreSettings()

@@ -56,7 +56,20 @@ public:
 		const wstring& text, Color &color, float x, float y);
 	TextDimensions RenderTextDims(wstring& text);
 
+	// HiDPI: the size, in the units the callers lay text out in (font size,
+	// RenderTextDims, NDC positions from 2/nx), of the swapchain images.
+	// When a swapchain image is larger (a Retina CAMetalLayer with
+	// contentsScale 2 hands out physical-pixel drawables), glyphs are
+	// rasterized at size x scale and mapped back so text keeps its apparent
+	// size and RenderTextDims stays in layout units. 0 x 0 (default, the wx
+	// view): glyph pixels are framebuffer pixels.
+	static void SetSwapchainLayoutSize(int w, int h) { s_layout_w = w; s_layout_h = h; }
+
 private:
+	std::shared_ptr<FLFont> LoadFont(const string &lib_name, unsigned int px);
+	static int s_layout_w;
+	static int s_layout_h;
+
 	static FT_Library m_ft;
 	static bool m_init;
 

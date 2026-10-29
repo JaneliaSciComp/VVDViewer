@@ -34,9 +34,7 @@ DEALINGS IN THE SOFTWARE.
 
 #include <tiffio.h>
 
-#include "wx/stdpaths.h"
-#include "wx/zipstrm.h"
-#include "wx/wfstream.h"
+#include "../Core/FileUtil.h"
 
 TIFReader::TIFReader()
 {
@@ -237,7 +235,7 @@ void TIFReader::Preprocess()
 				if (isHsTimeSeq_)
 					sliceinfo.slice = str;
 				else
-					sliceinfo.slice = m_data_name + wxString::Format("_Fr%d", i+1);
+					sliceinfo.slice = m_data_name + vvd::String::Format(L"_Fr%d", i+1);
 				sliceinfo.pagenumber = page_cnt;
 				page_cnt += m_chan_num;
 				info.slices.push_back(sliceinfo);
@@ -2151,30 +2149,19 @@ wstring TIFReader::GetCurName(int t, int c)
 
 wstring TIFReader::ZipDecompressionTemp(wstring path)
 {
-	wxFileInputStream ist(path);
-	if (!ist.IsOk()) return L"";
-	wxZipInputStream stream(ist);
-	if (!stream.IsOk()) return L"";
-	wxZipEntry *entry = stream.GetNextEntry();
-
-	wstring ret = (wxStandardPaths::Get().GetTempDir() + wxFileName::GetPathSeparator() + entry->GetName()).ToStdWstring();
-	wxFileOutputStream file(ret);
-	if (!file.IsOk()) return L"";
-
-	file.Write(stream);
-
-	stream.CloseEntry();
-
+	vvd::String ret;
+	if (!vvd::UnzipFirstFile(path, vvd::GetTempDir(), ret))
+		return L"";
 	return ret;
 }
 
 void TIFReader::DeleteTempFiles()
 {
-	if (!m_decomp_path.empty() && wxFileExists(m_decomp_path))
-		wxRemoveFile(m_decomp_path);
+	if (!m_decomp_path.empty() && vvd::FileExists(m_decomp_path))
+		vvd::RemoveFile(m_decomp_path);
 	for (auto t : m_4d_seq) {
-		if (!t.slices.empty() && !t.slices[0].decomp_slice.empty() && wxFileExists(t.slices[0].decomp_slice))
-			wxRemoveFile(t.slices[0].decomp_slice);
+		if (!t.slices.empty() && !t.slices[0].decomp_slice.empty() && vvd::FileExists(t.slices[0].decomp_slice))
+			vvd::RemoveFile(t.slices[0].decomp_slice);
 	}
 }
 

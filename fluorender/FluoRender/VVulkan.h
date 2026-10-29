@@ -66,6 +66,55 @@ public:
 	bool UploadTextures(std::map<vks::VulkanDevice*, std::shared_ptr<vks::VTexture>> &tex, void *data);
 
 	void ResetRenderSemaphores();
+
+	// ---- several presentation surfaces on one device (Qt front end: one
+	// swapchain per render view, all views sharing this context, its
+	// textures and its pipelines; the wx app never calls these). The
+	// swapchain state of VulkanExampleBase (swap chain, its frame buffers,
+	// current image, present semaphores, depth buffer, size, window handle)
+	// lives in the members while its surface is active; the other surfaces
+	// keep theirs in a SurfaceState. Single-threaded (GUI thread) use only;
+	// a frame (prepareFrame .. submitFrame) must not switch surfaces.
+	struct SurfaceState
+	{
+		VulkanSwapChain swapChain;
+		std::vector<std::unique_ptr<vks::VFrameBuffer>> frameBuffers;
+		uint32_t currentBuffer = 0;
+		std::vector<VkSemaphore> presentSemaphores;
+		std::shared_ptr<vks::VTexture> depthStencil;
+		uint32_t width = 0, height = 0, destWidth = 0, destHeight = 0;
+		bool prepared = false;
+#if defined(_WIN32)
+		HWND window = nullptr;
+		HINSTANCE windowInstance = nullptr;
+#elif (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
+		void* view = nullptr;
+#elif defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
+		wl_display* display = nullptr;
+		wl_surface* surface = nullptr;
+		xcb_connection_t* connection = nullptr;
+		xcb_window_t window = 0;
+#endif
+	};
+	// the surface prepare() was called for
+	SurfaceState* primarySurface();
+	SurfaceState* activeSurface() { return primarySurface(), m_active_surface; }
+	// make s the surface whose state is in the members (no-op when it is)
+	void activateSurface(SurfaceState* s);
+	// a new surface: beginSurface() activates an empty state; set the window
+	// with setWindow(...), then finishSurface(w, h) creates its swapchain,
+	// depth buffer and frame buffers (same render pass / colour format as
+	// the primary surface). The new surface stays active.
+	SurfaceState* beginSurface();
+	bool finishSurface(int w, int h);
+	// destroy a surface made by beginSurface (waits for the device); the
+	// primary surface becomes active
+	void removeSurface(SurfaceState* s);
+
+private:
+	void swapSurfaceState(SurfaceState& s);
+	std::vector<std::unique_ptr<SurfaceState>> m_surfaces;   // [0] = primary
+	SurfaceState* m_active_surface = nullptr;
 };
 
 #endif

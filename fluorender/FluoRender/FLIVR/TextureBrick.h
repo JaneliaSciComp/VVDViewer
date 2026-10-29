@@ -35,7 +35,7 @@
 #include "Plane.h"
 
 #ifndef _UNIT_TEST_VOLUME_RENDERER_
-#include <wx/thread.h>
+#include "../Core/Thread.h"
 #include <curl/curl.h>
 #endif
 
@@ -165,6 +165,33 @@ namespace FLIVR {
 		}
 
 		Nrrd* getNrrd() { return m_nrrd; }
+
+		//Coarse maxima of the voxel values per BLOCK^3 cell (8/16-bit
+		//unsigned data only), computed once right after decoding while the
+		//data are still in memory. TextureBrick::compute_data_max derives a
+		//brick's maximum from it (an upper bound: the cells covering the brick
+		//may reach a little beyond it) without touching the voxels again.
+		struct BlockMax
+		{
+			static const int BLOCK = 16;
+			const void* src = nullptr;  //m_nrrd->data it was computed from
+			size_t nx = 0, ny = 0, nz = 0;   //volume size
+			size_t gx = 0, gy = 0, gz = 0;   //grid size
+			std::vector<uint16_t> v;         //gx*gy*gz cell maxima
+		};
+		//threads: worker threads to use (1 = the calling thread only)
+		void computeBlockMax(int threads);
+		std::shared_ptr<const BlockMax> getBlockMax() const
+		{
+			if (!m_blockmax || !m_nrrd || m_nrrd->data != m_blockmax->src)
+				return nullptr;
+			return m_blockmax;
+		}
+		//the data were modified in place
+		void dropBlockMax() { m_blockmax.reset(); }
+	private:
+		std::shared_ptr<const BlockMax> m_blockmax;
+	public:
 
 		int getNrrdDataType() 
 		{
@@ -545,9 +572,30 @@ namespace FLIVR {
 		{ if (mode>=0 && mode<TEXTURE_RENDER_MODES) return drawn_[mode]; else return false;}
 
 		inline void set_dirty(int comp, bool val)
-		{ if (comp>=0 && comp<TEXTURE_MAX_COMPONENTS) dirty_[comp] = val; }
+		{ if (comp>=0 && comp<TEXTURE_MAX_COMPONENTS) dirty_[comp] = val; if (val && comp == 0) invalidate_data_max(); }
 		inline void set_dirty(bool val)
-		{ for (int i=0; i<TEXTURE_MAX_COMPONENTS; i++) dirty_[i] = val; }
+		{ for (int i=0; i<TEXTURE_MAX_COMPONENTS; i++) dirty_[i] = val; if (val) invalidate_data_max(); }
+
+		//largest raw voxel value of the data component (0) inside this brick's
+		//texture box (ox..ox+nx, oy..oy+ny, oz..oz+nz), used to skip bricks
+		//that are provably invisible (VolumeRenderer::invisible_brick_max).
+		//-1: unknown / not applicable (pyramid bricks, non 8/16-bit data).
+		//The value is cached per data buffer; it is dropped when the data
+		//changes (set_modified/set_dirty/set_nrrd of component 0).
+		int get_data_max() const
+		{
+			if (data_max_ < 0 || !data_[0] || !data_[0]->getNrrd() ||
+				data_[0]->getNrrd()->data != data_max_src_)
+				return -1;
+			return data_max_;
+		}
+		//scan the brick (multithreaded); returns get_data_max() afterwards
+		int compute_data_max(int max_threads = 8);
+		void invalidate_data_max()
+		{
+			data_max_ = -1; data_max_src_ = nullptr;
+			if (data_[0]) data_[0]->dropBlockMax();
+		}
 		inline bool dirty(int comp)
 		{ if (comp>=0 && comp<TEXTURE_MAX_COMPONENTS) return dirty_[comp]; else return false;}
         
@@ -566,6 +614,8 @@ namespace FLIVR {
                 if (val)
                     skip_[comp] = false;
             }
+            if (val && comp <= 0)
+                invalidate_data_max();
         }
         inline void set_modified(bool val)
         {
@@ -575,6 +625,8 @@ namespace FLIVR {
                 if (val)
                     skip_[i] = false;
             }
+            if (val)
+                invalidate_data_max();
         }
         inline bool modified(int comp)
         { if (comp>=0 && comp<TEXTURE_MAX_COMPONENTS) return modified_[comp]; else return false;}
@@ -582,6 +634,7 @@ namespace FLIVR {
 		// Creator of the brick owns the nrrd memory.
 		void set_nrrd(const std::shared_ptr<FLIVR::VL_Nrrd> &data, int index)
 		{if (index>=0&&index<TEXTURE_MAX_COMPONENTS) data_[index] = data;}
+		//(the cached data max is keyed on the data buffer, see get_data_max)
 		std::shared_ptr<FLIVR::VL_Nrrd> get_nrrd(int index)
 		{if (index>=0&&index<TEXTURE_MAX_COMPONENTS) return data_[index]; else return 0;}
 		Nrrd* get_nrrd_raw(int index)
@@ -683,7 +736,7 @@ namespace FLIVR {
 		static void setCURL_Multi(CURLM *c) {s_curlm_ = c;}
 		void set_brkdata(const std::shared_ptr<VL_Array> &brkdata) {brkdata_ = brkdata;}
 		void set_brkdata(void *brkdata, size_t size) {brkdata_ = std::make_shared<VL_Array>((char *)brkdata, size);}
-		static bool read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, wxThread *th=NULL);
+		static bool read_brick_without_decomp(char* &data, size_t &readsize, FileLocInfo* finfo, vvd::Thread *th=NULL);
 		static bool decompress_brick(char *out, char* in, size_t out_size, size_t in_size, int type, int w, int h, int d, int nb, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
         static bool raw_decompressor(char *out, char* in, size_t out_size, size_t in_size, bool ischunked = false, int nb = 1, int w = 0, int h = 0, int d = 0, int n5_w = 0, int n5_h = 0, int n5_d = 0, int endianness = BRICK_ENDIAN_DEFAULT, bool is_row_major = true);
 		static bool jpeg_decompressor(char *out, char* in, size_t out_size, size_t in_size);
@@ -712,6 +765,12 @@ namespace FLIVR {
 
 		void prevent_tex_deletion(bool val) {prevent_tex_deletion_ = val;}
 		bool is_tex_deletion_prevented() {return prevent_tex_deletion_;}
+		//textures of a pinned brick are never swapped out to make room for
+		//another brick (VolumeSelector::Select keeps the bricks of the volume it
+		//segments resident while the diffusion passes revisit them); explicit
+		//releases (clear_tex_*) still free them
+		void pin_tex(bool val) {tex_pinned_ = val;}
+		bool is_tex_pinned() {return tex_pinned_;}
 		void lock_brickdata(bool val) {lock_brickdata_ = val;}
 		bool is_brickdata_locked() {return lock_brickdata_;}
 	private:
@@ -759,12 +818,18 @@ namespace FLIVR {
         bool skip_[TEXTURE_MAX_COMPONENTS];
         bool modified_[TEXTURE_MAX_COMPONENTS];
 
+		//cached raw maximum of component 0 (see get_data_max) and the data
+		//buffer it was computed from
+		int data_max_;
+		const void* data_max_src_;
+
 		long long offset_;
 		long long fsize_;
 		std::shared_ptr<VL_Array> brkdata_;
 		bool loading_;
 
 		bool prevent_tex_deletion_;
+		bool tex_pinned_;
 		bool lock_brickdata_;
 
 		int findex_;

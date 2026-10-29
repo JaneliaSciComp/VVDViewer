@@ -23,6 +23,86 @@
 #include "nrrd.h"
 #include "privateNrrd.h"
 
+#if TEEM_ZLIB && TEEM_LIBDEFLATE
+/* VVDViewer: whole-buffer gzip decoding with libdeflate.  The size of the
+   decoded data is known from the header, so the rest of the file can be
+   inflated straight into the data buffer in one call; libdeflate does that
+   about 4x faster than zlib's streaming inflate through gzio.c (and checks
+   the CRC32 / ISIZE trailers with the hardware CRC instructions).  Anything the fast path does
+   not handle (non-seekable input, byte skipping, a stream that decodes to
+   more or less than the expected size, corrupt data) rewinds the file and
+   falls through to the zlib reader below, which produces identical data or
+   the usual error message. */
+#include <stdlib.h>
+#include <libdeflate.h>
+#ifdef _WIN32
+#  define _NRRD_FTELL _ftelli64
+#  define _NRRD_FSEEK _fseeki64
+typedef __int64 _nrrdFileOff;
+#else
+#  include <sys/types.h>
+#  define _NRRD_FTELL ftello
+#  define _NRRD_FSEEK fseeko
+typedef off_t _nrrdFileOff;
+#endif
+
+/* returns 1 when the data was decoded, 0 to use the zlib reader instead
+   (the file position is then restored) */
+static int
+_nrrdEncodingGzip_readLibdeflate(FILE *file, void *_data, size_t sizeData) {
+  _nrrdFileOff start, end;
+  size_t sizeComp, inPos = 0, outPos = 0;
+  unsigned char *comp;
+  struct libdeflate_decompressor *dec;
+  int ok = 0;
+
+  start = _NRRD_FTELL(file);
+  if (start < 0 || _NRRD_FSEEK(file, 0, SEEK_END)) {
+    return 0;
+  }
+  end = _NRRD_FTELL(file);
+  if (end < start || _NRRD_FSEEK(file, start, SEEK_SET)) {
+    _NRRD_FSEEK(file, start, SEEK_SET);
+    return 0;
+  }
+  sizeComp = (size_t)(end - start);
+  if (!sizeComp) {
+    return 0;
+  }
+  comp = (unsigned char *)malloc(sizeComp);
+  dec = libdeflate_alloc_decompressor();
+  if (comp && dec && fread(comp, 1, sizeComp, file) == sizeComp) {
+    /* concatenated gzip members are decoded one after the other, like
+       gzio.c does; decoding stops once sizeData bytes are out (any data
+       after that is ignored, as with the zlib reader) */
+    inPos = outPos = 0;
+    while (outPos < sizeData && inPos < sizeComp) {
+      size_t inUsed = 0, outUsed = 0;
+      enum libdeflate_result res = libdeflate_gzip_decompress_ex(
+        dec, comp + inPos, sizeComp - inPos,
+        (char *)_data + outPos, sizeData - outPos, &inUsed, &outUsed);
+      if (res != LIBDEFLATE_SUCCESS || !inUsed) {
+        break;
+      }
+      inPos += inUsed;
+      outPos += outUsed;
+    }
+    ok = (outPos == sizeData);
+  }
+  if (dec) {
+    libdeflate_free_decompressor(dec);
+  }
+  free(comp);
+  if (ok) {
+    /* leave the file where the data ended, like the zlib reader */
+    _NRRD_FSEEK(file, start + (_nrrdFileOff)inPos, SEEK_SET);
+  } else {
+    _NRRD_FSEEK(file, start, SEEK_SET);
+  }
+  return ok;
+}
+#endif
+
 typedef union {
   char **c;
   void **v;
@@ -56,6 +136,13 @@ _nrrdEncodingGzip_read(FILE *file, void *_data, size_t elNum,
   ptrHack hack;
 
   sizeData = nrrdElementSize(nrrd)*elNum;
+#if TEEM_LIBDEFLATE
+  /* VVD_NRRD_ZLIB=1 in the environment: always use zlib (A/B testing) */
+  if (!nio->byteSkip && sizeData && !getenv("VVD_NRRD_ZLIB")
+      && _nrrdEncodingGzip_readLibdeflate(file, _data, sizeData)) {
+    return 0;
+  }
+#endif
   /* Create the gzFile for reading in the gzipped data. */
   if ((gzfin = _nrrdGzOpen(file, "rb")) == Z_NULL) {
     /* there was a problem */

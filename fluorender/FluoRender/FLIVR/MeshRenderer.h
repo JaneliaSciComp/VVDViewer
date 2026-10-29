@@ -73,7 +73,9 @@ namespace FLIVR
 		MeshRenderer(MeshRenderer&);
 		~MeshRenderer();
 
-		void ReleaseVertexBuffers();
+		//immediate: the queue is idle, destroy now (default: deferred, an
+		//in-flight frame may still bind them)
+		void ReleaseVertexBuffers(bool immediate = false);
         
         void set_model(GLMmodel* data);
         void init_palette();

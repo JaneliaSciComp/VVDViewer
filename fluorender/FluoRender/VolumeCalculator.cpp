@@ -26,7 +26,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "VolumeCalculator.h"
-#include <wx/progdlg.h>
+#include "Core/UICallbacks.h"
 
 VolumeCalculator::VolumeCalculator()
 : m_vd_r(0),
@@ -164,8 +164,8 @@ void VolumeCalculator::CreateVolumeResult1()
          spc_x, spc_y, spc_z);
    m_vd_r->SetSpcFromFile(true);
 
-   wxString name = m_vd_a->GetName();
-   wxString str_type;
+   VVDString name = m_vd_a->GetName();
+   VVDString str_type;
    switch (m_type)
    {
    case 5://substraction
@@ -234,14 +234,14 @@ void VolumeCalculator::CreateVolumeResult2()
          spc_x, spc_y, spc_z);
    m_vd_r->SetSpcFromFile(true);
 
-   wxString name_a = m_vd_a->GetName();
-   wxString name_b = m_vd_b->GetName();
+   VVDString name_a = m_vd_a->GetName();
+   VVDString name_b = m_vd_b->GetName();
    size_t len = 15;
    if (name_a.length() > len)
       name_a = name_a.Left(len);
    if (name_b.length() > len)
       name_b = name_b.Left(len);
-   wxString str_type;
+   VVDString str_type;
    switch (m_type)
    {
    case 1://substraction
@@ -257,7 +257,7 @@ void VolumeCalculator::CreateVolumeResult2()
       str_type = "_AND_";
       break;
    }
-   wxString name = name_a + str_type + name_b;
+   VVDString name = name_a + str_type + name_b;
    m_vd_r->SetName(name);
 }
 
@@ -311,8 +311,8 @@ void VolumeCalculator::CreateVolumeResult3()
         spc_x, spc_y, spc_z);
     m_vd_r->SetSpcFromFile(true);
 
-    wxString name = m_vd_a->GetName();
-    wxString str_type;
+    VVDString name = m_vd_a->GetName();
+    VVDString str_type;
     switch (m_type)
     {
     case 11:
@@ -361,11 +361,7 @@ void VolumeCalculator::FillHoles(double thresh)
    int nx, ny, nz;
    m_vd_a->GetResolution(nx, ny, nz);
 
-   wxProgressDialog *prog_diag = new wxProgressDialog(
-         "FluoRender: Voxel Consolidation",
-         "Consolidating... Please wait.",
-         100, 0,
-         wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+   vvd::Progress *prog_diag = vvd::UI::CreateProgress("FluoRender: Voxel Consolidation", "Consolidating... Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
    int progress = 0;
    int total_prg = nx*2;
 

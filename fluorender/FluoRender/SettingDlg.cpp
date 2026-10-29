@@ -26,6 +26,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "SettingDlg.h"
+#include <memory>
 #include "VRenderFrame.h"
 #include "VRenderView.h"
 #include <wx/valnum.h>
@@ -674,15 +675,7 @@ void SettingDlg::GetSettings()
 	m_show_cursor = true;
     m_use_fog_mesh = false;
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
-#else
-    wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
-#endif
+	wxString dft = vvd::SettingsReadPath(L"" SETTING_FILE_NAME);
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -979,7 +972,20 @@ void SettingDlg::UpdateUI()
 
 void SettingDlg::SaveSettings()
 {
-	wxFileConfig fconfig("FluoRender Settings");
+	// Start from the current file so keys this app does not write (the Qt
+	// app's extra groups, e.g. [rigid cells], [warp target]) survive a save.
+	std::unique_ptr<wxFileConfig> fconfig_ptr;
+	wxString prev = vvd::SettingsReadPath(L"" SETTING_FILE_NAME);
+	if (wxFileExists(prev))
+	{
+		wxFileInputStream prev_is(prev);
+		if (prev_is.IsOk())
+			fconfig_ptr.reset(new wxFileConfig(prev_is));
+	}
+	if (!fconfig_ptr)
+		fconfig_ptr.reset(new wxFileConfig("FluoRender Settings"));
+	wxFileConfig& fconfig = *fconfig_ptr;
+	fconfig.SetPath("/");
 
 	fconfig.Write("ver_major", VERSION_MAJOR_TAG);
 	fconfig.Write("ver_minor", VERSION_MINOR_TAG);
@@ -1107,16 +1113,7 @@ void SettingDlg::SaveSettings()
     fconfig.SetPath("/use fog mesh");
     fconfig.Write("use_fog_mesh", m_use_fog_mesh);
 
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-    wxString dft = expath + "/../Resources/" + SETTING_FILE_NAME;
-#else
-	wxString dft = expath + GETSLASHS() + SETTING_FILE_NAME;
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + SETTING_FILE_NAME;
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"" SETTING_FILE_NAME);
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 }

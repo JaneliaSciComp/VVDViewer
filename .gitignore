@@ -181,3 +181,11 @@ vcpkg_installed/
 !packaging/*.cmake
 # release packages written by package.ps1 / package.sh
 /dist/
+# local working files (not part of the source)
+Claude outputs/
+qt-port-*.patch
+review-fixes.bundle
+build-qt-port.log
+build_tps/
+/build*.log
+brush-trace.log

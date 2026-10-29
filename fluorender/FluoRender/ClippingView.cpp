@@ -3454,7 +3454,8 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 		if (m_link_y)
 		{
 			dist = (long)(m_y2_clip_sldr->GetValue() - m_y1_clip_sldr->GetValue());
-			str.ToLong(&dist);
+			// (a stray str.ToLong(&dist) here overwrote the slab thickness
+			// with the previous axis's text)
 			str = m_y2_clip_text->GetValue();
 			long y2;
 			double dval;
@@ -3468,7 +3469,6 @@ void ClippingView::MoveLinkedClippingPlanes(int dir)
 		if (m_link_z)
 		{
 			dist = (long)(m_z2_clip_sldr->GetValue() - m_z1_clip_sldr->GetValue());
-			str.ToLong(&dist);
 			str = m_z2_clip_text->GetValue();
 			long z2;
 			double dval;
@@ -3720,15 +3720,7 @@ void ClippingView::OnHoldPlanesCheck(wxCommandEvent& event)
 
 void ClippingView::LoadDefault()
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_clip_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_clip_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_clip_settings.dft";
-#endif
+	wxString dft = vvd::SettingsReadPath(L"default_clip_settings.dft");
 	wxFileInputStream is(dft);
 	if (!is.IsOk())
 		return;
@@ -3766,16 +3758,7 @@ void ClippingView::SaveDefault()
 	bool link = m_link_channels->GetValue();
 	fconfig.Write("link_channels", link);
 	
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_clip_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_clip_settings.dft";
-	wxString dft2 = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_clip_settings.dft";
-	if (!wxFileExists(dft) && wxFileExists(dft2))
-		dft = dft2;
-#endif
+	wxString dft = vvd::SettingsWritePath(L"default_clip_settings.dft");
 	wxFileOutputStream os(dft);
 	fconfig.Save(os);
 }

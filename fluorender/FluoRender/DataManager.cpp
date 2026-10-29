@@ -1,13 +1,7 @@
 #include "DataManager.h"
 #include "teem/Nrrd/nrrd.h"
-#include <wx/msgdlg.h>
-#include <wx/progdlg.h>
-#include <wx/wfstream.h>
-#include <wx/txtstrm.h>
-#include <wx/zipstrm.h>
-#include <wx/url.h>
-#include <wx/file.h>
-#include <wx/stdpaths.h>
+#include "Core/UICallbacks.h"
+#include "Core/FileUtil.h"
 #include "utility.h"
 #include <iostream>
 #include <sstream>
@@ -16,6 +10,13 @@
 #include <set>
 #include <thread>
 #include <mutex>
+#include <random>
+#include <cmath>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -176,7 +177,7 @@ VolumeData::VolumeData(VolumeData &copy)
 
 	//layer properties
 	type = 2;//volume
-	SetName(copy.GetName()+wxString::Format("_%d", m_dup_counter));
+	SetName(copy.GetName()+VVDString::Format("_%d", m_dup_counter));
 	SetGamma(copy.GetGamma());
 	SetBrightness(copy.GetBrightness());
 	SetHdr(copy.GetHdr());
@@ -336,8 +337,8 @@ VolumeData* VolumeData::DeepCopy(VolumeData &copy, bool use_default_settings, Da
         }
     }
 
-	if (is_brxml) vd->Load(nv, copy.GetName()+wxString::Format("_%d", vd->m_dup_counter), wxString(""), (BRKXMLReader*)vd->m_reader);
-	else vd->Load(nv, copy.GetName()+wxString::Format("_%d", vd->m_dup_counter), wxString(""));
+	if (is_brxml) vd->Load(nv, copy.GetName()+VVDString::Format("_%d", vd->m_dup_counter), VVDString(""), (BRKXMLReader*)vd->m_reader);
+	else vd->Load(nv, copy.GetName()+VVDString::Format("_%d", vd->m_dup_counter), VVDString(""));
 
 	if (use_default_settings && d_manager)
 	{
@@ -849,7 +850,7 @@ bool VolumeData::GetSkipBrick()
 	return m_skip_brick;
 }
 
-int VolumeData::Load(const shared_ptr<VL_Nrrd> &data, const wxString &name, const wxString &path, BRKXMLReader *breader)
+int VolumeData::Load(const shared_ptr<VL_Nrrd> &data, const VVDString &name, const VVDString &path, BRKXMLReader *breader)
 {
 	if (!data || !data->getNrrd() || data->getNrrd()->dim != 3)
 		return 0;
@@ -1054,7 +1055,7 @@ void VolumeData::AddEmptyData(int bits,
 		uint8 *val8 = new (std::nothrow) uint8[mem_size];
 		if (!val8)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 		memset((void*)val8, 0, sizeof(uint8)*nx*ny*nz);
@@ -1067,7 +1068,7 @@ void VolumeData::AddEmptyData(int bits,
 		uint16 *val16 = new (std::nothrow) uint16[mem_size];
 		if (!val16)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 		memset((void*)val16, 0, sizeof(uint16)*nx*ny*nz);
@@ -1080,7 +1081,7 @@ void VolumeData::AddEmptyData(int bits,
 		float* val32 = new (std::nothrow) float[mem_size];
 		if (!val32)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 		memset((void*)val32, 0, sizeof(float) * nx * ny * nz);
@@ -1278,7 +1279,7 @@ void VolumeData::AddEmptyMask()
 		uint8 *val8 = new (std::nothrow) uint8[mem_size];
 		if (!val8)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 		double spcx, spcy, spcz;
@@ -1325,7 +1326,7 @@ void VolumeData::AddEmptyStroke()
 		uint8 *val8 = new (std::nothrow) uint8[mem_size];
 		if (!val8)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 		double spcx, spcy, spcz;
@@ -1443,7 +1444,7 @@ void VolumeData::AddEmptyLabel(int mode)
 		val32 = new (std::nothrow) unsigned int[mem_size];
 		if (!val32)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return;
 		}
 
@@ -1949,7 +1950,7 @@ int VolumeData::GetLabellValue(int i, int j, int k)
 
 
 //save
-void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bool save_msk, bool save_label, VolumeLoader *vl, bool crop, int lv)
+void VolumeData::Save(const VVDString &filename, int mode, bool bake, bool compress, bool save_msk, bool save_label, VolumeLoader *vl, bool crop, int lv)
 {
 	if (m_vr && m_tex)
 	{
@@ -2073,10 +2074,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                 
 				if (bake)
 				{
-					wxProgressDialog *prg_diag = new wxProgressDialog(
-						"VVDViewer: Baking volume data...",
-						"Baking volume data. Please wait.",
-						100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+					vvd::Progress *prg_diag = vvd::UI::CreateProgress("VVDViewer: Baking volume data...", "Baking volume data. Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
 
 					//process the data
 					int bits = vlnrrd->getBytesPerSample() * 8;
@@ -2092,7 +2090,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						uint8 *val8 = new (std::nothrow) uint8[mem_size];
 						if (!val8)
 						{
-							wxMessageBox("Not enough memory. Please save project and restart.");
+							vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 							return;
 						}
 						//transfer function
@@ -2132,7 +2130,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						uint16 *val16 = new (std::nothrow) uint16[mem_size];
 						if (!val16)
 						{
-							wxMessageBox("Not enough memory. Please save project and restart.");
+							vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 							return;
 						}
 						//transfer function
@@ -2172,7 +2170,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 						float* val32 = new (std::nothrow) float[mem_size];
 						if (!val32)
 						{
-							wxMessageBox("Not enough memory. Please save project and restart.");
+							vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 							return;
 						}
 						//transfer function
@@ -2223,10 +2221,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 				{
                     if (crop || (m_tex->nmask() != -1 && save_msk && GetMaskHideMode() != VOL_MASK_HIDE_NONE))
                     {
-                        wxProgressDialog *prg_diag = new wxProgressDialog(
-                                                                          "VVDViewer: Saving volume data...",
-                                                                          "Saving volume data. Please wait.",
-                                                                          100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+                        vvd::Progress *prg_diag = vvd::UI::CreateProgress("VVDViewer: Saving volume data...", "Saving volume data. Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
                         
                         uint8 *mskdata = NULL;
                         if (m_tex->nmask() != -1 && save_msk && GetMaskHideMode() != VOL_MASK_HIDE_NONE)
@@ -2252,7 +2247,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                             uint8 *val8 = new (std::nothrow) uint8[mem_size];
                             if (!val8)
                             {
-                                wxMessageBox("Not enough memory. Please save project and restart.");
+                                vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
                                 return;
                             }
                             //transfer function
@@ -2293,7 +2288,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
                             uint16 *val16 = new (std::nothrow) uint16[mem_size];
                             if (!val16)
                             {
-                                wxMessageBox("Not enough memory. Please save project and restart.");
+                                vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
                                 return;
                             }
                             //transfer function
@@ -2333,7 +2328,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 							float* val32 = new (std::nothrow) float[mem_size];
 							if (!val32)
 							{
-								wxMessageBox("Not enough memory. Please save project and restart.");
+								vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 								return;
 							}
 							//transfer function
@@ -2390,10 +2385,7 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 			}
 			else if (vl)
 			{
-                wxProgressDialog *prg_diag = new wxProgressDialog(
-                                                                  "VVDViewer: Saving volume data...",
-                                                                  "Saving volume data. Please wait.",
-                                                                  100, 0, wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+                vvd::Progress *prg_diag = vvd::UI::CreateProgress("VVDViewer: Saving volume data...", "Saving volume data. Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
                 
 				int curlv = -1;
 				curlv = GetLevel();
@@ -2724,12 +2716,14 @@ void VolumeData::Save(wxString &filename, int mode, bool bake, bool compress, bo
 		if ( isBrxml() )
 			SetLevel(curlv);
 
-		if ( !isBrxml() ) m_tex_path = filename;
+		// stored (and written to projects) with native separators: the wx
+		// project loader splits paths on GETSLASH()
+		if ( !isBrxml() ) m_tex_path = vvd::NativeSeparators(filename);
 	}
 }
 
 
-void VolumeData::ExportMask(wxString &filename)
+void VolumeData::ExportMask(const VVDString &filename)
 {
 	if (m_vr && m_tex)
 	{
@@ -2762,31 +2756,29 @@ void VolumeData::ExportMask(wxString &filename)
 	}
 }
 
-void VolumeData::ImportMask(wxString &filename)
+void VolumeData::ImportMask(const VVDString &filename)
 {
 	MSKReader msk_reader;
 	msk_reader.SetAddExt(false);
-    std::string str = filename.ToStdString();
+	// the wide overload: SetFile(string&) widens byte by byte, which breaks
+	// UTF-8 (non-ASCII) names
+    std::wstring str = filename.ToStdWstring();
 	msk_reader.SetFile(str);
 	auto mask = msk_reader.Convert(0, 0, true);
 	if (mask)
 	{
 		if (!LoadMask(mask))
 		{
-			wxMessageBox(wxT("Unable to load the mask data.\nMask data must have same dimensions as the volume data."), wxT("Mask Import Error"));
+			vvd::UI::MessageBox(L"Unable to load the mask data.\nMask data must have same dimensions as the volume data.", L"Mask Import Error");
 		}
 	}
 }
 
-void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd, int mode, bool compress)
+void VolumeData::ExportEachSegment(VVDString dir, const std::shared_ptr<VL_Nrrd>& label_nrrd, int mode, bool compress)
 {
 	if (m_vr && m_tex)
 	{
-		wxProgressDialog* prog_diag = new wxProgressDialog(
-			"VVDViewer: Export Segments...",
-			"Please wait.",
-			100, 0,
-			wxPD_APP_MODAL|wxPD_SMOOTH|wxPD_ELAPSED_TIME|wxPD_AUTO_HIDE);
+		vvd::Progress* prog_diag = vvd::UI::CreateProgress("VVDViewer: Export Segments...", "Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
 		int progress = 0;
 
 		BaseWriter *writer = 0;
@@ -2865,7 +2857,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 
 			//save segments
 			main->getNrrd()->data = tmpdata;
-			if (!dir.EndsWith(wxFileName::GetPathSeparator())) dir += wxFileName::GetPathSeparator();
+			if (!dir.EndsWith(vvd::PathSeparator())) dir += vvd::PathSeparator();
 			unordered_map <unsigned int, vector<size_t>>:: const_iterator cite;
 			int segcount = 0;
 			if (main->getNrrd()->type == nrrdTypeChar || main->getNrrd()->type == nrrdTypeUChar) {
@@ -2873,7 +2865,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 				unsigned char *tar = (unsigned char *)tmpdata;
 				for ( cite = segs.begin(); cite != segs.end(); ++cite )
 				{
-					wxString fname = dir + wxString::Format("%05d", cite->first) + "_" + m_name;
+					VVDString fname = dir + VVDString::Format("%05d", cite->first) + "_" + m_name;
 					size_t segsize = cite->second.size();
 					for (size_t i = 0; i < segsize; i++)
 						tar[cite->second[i]] = src[cite->second[i]];
@@ -2894,7 +2886,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 				unsigned short *tar = (unsigned short *)tmpdata;
 				for ( cite = segs.begin(); cite != segs.end(); ++cite )
 				{
-					wxString fname = dir + wxString::Format("%05d", cite->first) + "_" + m_name;
+					VVDString fname = dir + VVDString::Format("%05d", cite->first) + "_" + m_name;
 					size_t segsize = cite->second.size();
 					for (size_t i = 0; i < segsize; i++)
 						tar[cite->second[i]] = src[cite->second[i]];
@@ -2915,7 +2907,7 @@ void VolumeData::ExportEachSegment(wxString dir, const std::shared_ptr<VL_Nrrd>&
 				float* tar = (float*)tmpdata;
 				for (cite = segs.begin(); cite != segs.end(); ++cite)
 				{
-					wxString fname = dir + wxString::Format("%05d", cite->first) + "_" + m_name;
+					VVDString fname = dir + VVDString::Format("%05d", cite->first) + "_" + m_name;
 					size_t segsize = cite->second.size();
 					for (size_t i = 0; i < segsize; i++)
 						tar[cite->second[i]] = src[cite->second[i]];
@@ -2950,12 +2942,12 @@ BBox VolumeData::GetBounds()
 }
 
 //path
-void VolumeData::SetPath(wxString path)
+void VolumeData::SetPath(VVDString path)
 {
-	m_tex_path = path;
+	m_tex_path = vvd::NativeSeparators(path);
 }
 
-wxString VolumeData::GetPath()
+VVDString VolumeData::GetPath()
 {
 	return m_tex_path;
 }
@@ -3217,6 +3209,36 @@ void VolumeData::DrawBounds()
 //paint_mode: 1-select; 2-append; 3-erase; 4-diffuse; 5-flood; 6-clear, 7-all
 //			  11-posterize
 //hr_mode (hidden removal): 0-none; 1-ortho; 2-persp
+void VolumeData::BeginVolumeWrites()
+{
+	if (!m_vr)
+		return;
+	int curlv = -1;
+	if (isBrxml())
+	{
+		curlv = GetLevel();
+		SetLevel(GetMaskLv());
+	}
+	m_vr->begin_volume_writes();
+	if (curlv >= 0)
+		SetLevel(curlv);
+}
+
+void VolumeData::EndVolumeWrites()
+{
+	if (!m_vr)
+		return;
+	int curlv = -1;
+	if (isBrxml())
+	{
+		curlv = GetLevel();
+		SetLevel(GetMaskLv());
+	}
+	m_vr->end_volume_writes();
+	if (curlv >= 0)
+		SetLevel(curlv);
+}
+
 void VolumeData::DrawMask(int type, int paint_mode, int hr_mode,
 						  double ini_thresh, double gm_falloff, double scl_falloff, double scl_translate,
 						  double w2d, double bins, bool ortho, Texture* ext_msk, bool clear_msk_cache, bool use_absolute_value, bool save_stroke, bool force_clear_stroke)
@@ -3249,6 +3271,40 @@ void VolumeData::DrawMask(int type, int paint_mode, int hr_mode,
 		}
 		//OutputDebugStringA("DrawMask Leave\n");
 	}
+}
+
+bool VolumeData::PinMaskBricks(bool pin, double budget_mb)
+{
+	if (!GetTexture())
+		return false;
+	int curlv = -1;
+	if (isBrxml())
+	{
+		curlv = GetLevel();
+		SetLevel(GetMaskLv());
+	}
+	bool ok = false;
+	vector<FLIVR::TextureBrick*>* bricks = GetTexture()->get_bricks();
+	if (bricks)
+	{
+		ok = true;
+		if (pin)
+		{
+			//data + 8-bit mask + 8-bit stroke per voxel
+			double mb = 0.0;
+			for (FLIVR::TextureBrick* b : *bricks)
+				if (b)
+					mb += double(b->nx()) * b->ny() * b->nz() * (b->nb(0) + 2) / 1048576.0;
+			ok = budget_mb > 0.0 && mb <= budget_mb;
+		}
+		if (ok || !pin)
+			for (FLIVR::TextureBrick* b : *bricks)
+				if (b)
+					b->pin_tex(pin);
+	}
+	if (isBrxml())
+		SetLevel(curlv);
+	return ok && pin;
 }
 
 void VolumeData::DrawMaskThreshold(float th, bool ortho, bool use_absolute_value)
@@ -3380,11 +3436,12 @@ void VolumeData::Calculate(int type, VolumeData *vd_a, VolumeData *vd_b, VolumeD
 }
 
 //thin plate spline warp: resample vd_in (moving) into this volume (fixed)
-void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp)
+void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int interp,
+	const glm::dvec3* out_scale, const glm::dvec3* out_off)
 {
 	if (m_vr && vd_in && vd_in->GetVR())
 	{
-		m_vr->warp(vd_in->GetVR(), tps, interp);
+		m_vr->warp(vd_in->GetVR(), tps, interp, out_scale, out_off);
 		m_vr->return_volume();
 		if (m_tex && m_tex->get_nrrd(0))
 		{
@@ -3402,6 +3459,304 @@ void VolumeData::Warp(VolumeData* vd_in, const FLIVR::ThinPlateSpline& tps, int 
 			SetMaxValue(max_val);
 		}
 	}
+}
+
+void CopyWarpDisplayProperties(VolumeData* src, VolumeData* vd)
+{
+	if (!src || !vd)
+		return;
+	vector<Plane*>* planes = src->GetVR() ? src->GetVR()->get_planes() : 0;
+	if (planes && vd->GetVR())
+		vd->GetVR()->set_planes(planes);
+	vd->Set3DGamma(src->Get3DGamma());
+	vd->SetBoundary(src->GetBoundary());
+	vd->SetOffset(src->GetOffset());
+	vd->SetLeftThresh(src->GetLeftThresh());
+	vd->SetRightThresh(src->GetRightThresh());
+	FLIVR::Color col = src->GetColor();
+	vd->SetColor(col);
+	vd->SetAlpha(src->GetAlpha());
+	vd->SetShading(src->GetShading());
+	double amb, diff, spec, shine;
+	src->GetMaterial(amb, diff, spec, shine);
+	vd->SetMaterial(amb, diff, spec, shine);
+	vd->SetShadow(src->GetShadow());
+	double shadow_int;
+	src->GetShadowParams(shadow_int);
+	vd->SetShadowParams(shadow_int);
+	vd->SetSampleRate(src->GetSampleRate());
+	col = src->GetGamma(); vd->SetGamma(col);
+	col = src->GetBrightness(); vd->SetBrightness(col);
+	col = src->GetHdr(); vd->SetHdr(col);
+	col = src->GetLevels(); vd->SetLevels(col);
+	vd->SetSyncR(src->GetSyncR());
+	vd->SetSyncG(src->GetSyncG());
+	vd->SetSyncB(src->GetSyncB());
+	vd->SetScalarScale(src->GetScalarScale());
+}
+
+//installed physical memory in bytes (0: unknown)
+static unsigned long long WarpPhysicalMemory()
+{
+#if defined(__APPLE__)
+	unsigned long long mem = 0;
+	size_t len = sizeof(mem);
+	if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0)
+		return mem;
+	return 0;
+#elif defined(_WIN32)
+	MEMORYSTATUSEX st;
+	st.dwLength = sizeof(st);
+	if (GlobalMemoryStatusEx(&st))
+		return (unsigned long long)st.ullTotalPhys;
+	return 0;
+#else
+	long pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
+	return (pages > 0 && psize > 0) ? (unsigned long long)pages * (unsigned long long)psize : 0;
+#endif
+}
+
+bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<Ruler*>& rulers)
+{
+	if (!src || !target || src == target)
+		return false;
+	const VVDString sn = src->GetName(), tn = target->GetName();
+	int n = 0;
+	for (Ruler* r : rulers)
+	{
+		if (!r || r->GetRulerType() != 0 || r->GetNumPoint() < 2)
+			continue;
+		if (r->GetPointVolName(0) != tn || r->GetPointVolName(1) != sn)
+			return false;
+		n++;
+	}
+	return n > 0;
+}
+
+bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3], VVDString* error)
+{
+	if (error)
+		error->clear();
+	Texture* stex = src ? src->GetTexture() : nullptr;
+	Texture* gtex = grid ? grid->GetTexture() : nullptr;
+	Transform* stf = stex ? stex->transform() : nullptr;
+	Transform* gtf = gtex ? gtex->transform() : nullptr;
+	if (!stf || !gtf)
+		return false;
+	//source-normalized coords of the grid box's corner and unit axes
+	auto map = [&](double x, double y, double z) {
+		return stf->unproject(gtf->project(Point(x, y, z)));
+	};
+	Point o = map(0, 0, 0);
+	Point ex = map(1, 0, 0), ey = map(0, 1, 0), ez = map(0, 0, 1);
+	const double m[3][3] = {
+		{ ex.x() - o.x(), ey.x() - o.x(), ez.x() - o.x() },
+		{ ex.y() - o.y(), ey.y() - o.y(), ez.y() - o.y() },
+		{ ex.z() - o.z(), ey.z() - o.z(), ez.z() - o.z() } };
+	double dmax = 0.0;
+	for (int i = 0; i < 3; ++i)
+		dmax = (std::max)(dmax, std::fabs(m[i][i]));
+	bool ok = dmax > 0.0;
+	for (int i = 0; ok && i < 3; ++i)
+	{
+		if (!(m[i][i] > 0.0) || !std::isfinite(m[i][i]))
+			ok = false;
+		for (int j = 0; ok && j < 3; ++j)
+			if (i != j && std::fabs(m[i][j]) > 1e-9 * dmax)
+				ok = false;
+	}
+	if (!ok)
+	{
+		if (error) *error = L"The target volume is rotated or flipped relative to the source volume; "
+			L"the warp can only write to a target grid whose axes are aligned with the source's. "
+			L"Choose \"Same as source\" as the target.";
+		return false;
+	}
+	scale[0] = m[0][0]; scale[1] = m[1][1]; scale[2] = m[2][2];
+	off[0] = o.x(); off[1] = o.y(); off[2] = o.z();
+	return true;
+}
+
+VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error)
+{
+	if (error)
+		error->clear();
+	Texture* stex = src ? src->GetTexture() : nullptr;
+	if (!stex)
+		return nullptr;
+	int bits = stex->nb(0) * 8;
+	VolumeData* grid = (target && target != src) ? target : src;
+	int resx, resy, resz;
+	double spcx, spcy, spcz;
+	grid->GetResolution(resx, resy, resz);
+	grid->GetSpacings(spcx, spcy, spcz);
+	if (grid != src)
+	{
+		if (!grid->GetTexture() || resx <= 0 || resy <= 0 || resz <= 0)
+		{
+			if (error) *error = L"The target volume has no data.";
+			return nullptr;
+		}
+		//the result lives in main memory (and is streamed to the GPU in bricks):
+		//refuse what cannot fit instead of letting the system swap or fail
+		const unsigned long long bytes = (unsigned long long)resx * resy * resz * (unsigned long long)(bits / 8);
+		const unsigned long long phys = WarpPhysicalMemory();
+		if (phys > 0 && bytes > phys / 2)
+		{
+			if (error) *error = VVDString::Format(
+				"The result on the target grid (%d x %d x %d, %d-bit) needs %.1f GB, more than half of the "
+				"installed memory (%.1f GB).", resx, resy, resz, bits, bytes / 1073741824.0, phys / 1073741824.0);
+			return nullptr;
+		}
+	}
+	VolumeData* vd = new VolumeData();
+	vd->AddEmptyData(bits, resx, resy, resz, spcx, spcy, spcz);
+	vd->SetSpcFromFile(true);
+	if (!vd->GetTexture())
+	{
+		delete vd;
+		return nullptr;
+	}
+	if (grid != src)
+	{
+		//the target's placement in world space (BigDataViewer transforms)
+		Transform* at = grid->GetTexture()->additional_transform();
+		if (at && !at->is_identity())
+		{
+			vd->GetTexture()->set_additional_transform(*at);
+			vd->SetSpacings(spcx, spcy, spcz);
+		}
+	}
+	return vd;
+}
+
+VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
+	int ttype, double lambda, int interp, VVDString* error, VolumeData* target)
+{
+	if (error)
+		error->clear();
+	if (!src)
+		return nullptr;
+	if (target == src)
+		target = nullptr;
+	//landmark roles: point 0 moving, point 1 fixed; swapped when every ruler
+	//goes from the target to the source volume (WarpRulersReversed)
+	const bool reversed = WarpRulersReversed(src, target, rulers);
+	const int im = reversed ? 1 : 0, ifx = reversed ? 0 : 1;
+
+	Texture* tex = src->GetTexture();
+	if (!tex)
+		return nullptr;
+
+	//single-channel scalar only (1/2/4 bytes per voxel)
+	int src_nb = tex->nb(0);
+	if (tex->nc() > 1 || (src_nb != 1 && src_nb != 2 && src_nb != 4))
+	{
+		if (error) *error = L"GPU warp supports single-channel scalar volumes only.";
+		return nullptr;
+	}
+
+	//collect landmark pairs in normalized [0,1] coords (src=moving p1, tgt=fixed p2)
+	Transform* tf = tex->transform();
+	if (!tf)
+		return nullptr;
+	std::vector<glm::dvec3> srcPts, tgtPts;
+	for (size_t i = 0; i < rulers.size(); ++i)
+	{
+		Ruler* r = rulers[i];
+		if (!r) continue;
+		if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
+		{
+			Point* p0 = r->GetPoint(im);
+			Point* p1 = r->GetPoint(ifx);
+			if (!p0 || !p1) continue;
+			Point pm = tf->unproject(*p0); //moving -> src
+			Point pf = tf->unproject(*p1); //fixed  -> tgt
+			srcPts.push_back(glm::dvec3(pm.x(), pm.y(), pm.z()));
+			tgtPts.push_back(glm::dvec3(pf.x(), pf.y(), pf.z()));
+		}
+		else if (r->GetRulerType() == 2 && r->GetNumPoint() >= 1)
+		{
+			Point* p0 = r->GetPoint(0);
+			if (!p0) continue;
+			Point pp = tf->unproject(*p0); //locator = zero-displacement anchor
+			srcPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
+			tgtPts.push_back(glm::dvec3(pp.x(), pp.y(), pp.z()));
+		}
+	}
+
+	//minimum landmark pairs required by the chosen model
+	size_t minpts = (ttype == 4) ? 1 : (ttype == 2 || ttype == 3) ? 3 : 4;
+	if (srcPts.size() < minpts)
+	{
+		if (error) *error = VVDString::Format(
+			"Need at least %d landmark pair(s) (2-point rulers) for this transform.",
+			(int)minpts);
+		return nullptr;
+	}
+
+	//landmarks are in grid-normalized [0,1] coords whose axes are physically
+	//anisotropic (each axis length = res*spacing). TPS (radial kernel) and
+	//Rigid/Similarity must be fit in isotropic physical space, like BigWarp,
+	//so pass the per-axis physical length as the aspect.
+	int arx = 0, ary = 0, arz = 0;
+	double aspx = 1.0, aspy = 1.0, aspz = 1.0;
+	src->GetResolution(arx, ary, arz);
+	src->GetSpacings(aspx, aspy, aspz);
+	glm::dvec3 aspect(
+		(arx > 0 ? arx : 1) * (aspx > 0.0 ? aspx : 1.0),
+		(ary > 0 ? ary : 1) * (aspy > 0.0 ? aspy : 1.0),
+		(arz > 0 ? arz : 1) * (aspz > 0.0 ? aspz : 1.0));
+
+	//the TPS is fit fixed -> moving and evaluated directly per output voxel
+	//(BigWarp); lambda is the dimensionless stiffness of the ImageJ "Apply
+	//BigWarp with Stiffness" plugin (0 = exact interpolation, as BigWarp)
+	FLIVR::ThinPlateSpline tps;
+	bool ok = false;
+	VVDString suffix;
+	switch (ttype)
+	{
+	case 1: ok = tps.solveAffine(srcPts, tgtPts);              suffix = L"_AFFINE"; break;
+	case 2: ok = tps.solveSimilarity(srcPts, tgtPts, aspect);  suffix = L"_SIM";    break;
+	case 3: ok = tps.solveRigid(srcPts, tgtPts, aspect);       suffix = L"_RIGID";  break;
+	case 4: ok = tps.solveTranslation(srcPts, tgtPts);         suffix = L"_TRANS";  break;
+	default: ok = tps.solve(srcPts, tgtPts, lambda, aspect);   suffix = L"_WARPED"; break;
+	}
+	if (!ok)
+	{
+		if (error) *error = L"Transform solve failed (duplicate fixed-point landmarks, or "
+			L"degenerate, collinear or coplanar landmarks).";
+		return nullptr;
+	}
+
+	//create the result volume: the source's bits on the source's grid, or on
+	//the target's grid (size, spacing, world placement)
+	VolumeData* vd = NewWarpResultVolume(src, target, error);
+	if (!vd)
+		return nullptr;
+	vd->SetName(src->GetName() + suffix);
+
+	//GPU warp
+	if (!target)
+		vd->Warp(src, tps, interp);
+	else
+	{
+		//the map is fit in the source's normalized box; the output voxels are
+		//in the result's box: map one to the other first
+		double ms[3], mo[3];
+		if (!WarpTargetGridMap(src, vd, ms, mo, error))
+		{
+			delete vd;
+			return nullptr;
+		}
+		const glm::dvec3 dms(ms[0], ms[1], ms[2]), dmo(mo[0], mo[1], mo[2]);
+		vd->Warp(src, tps, interp, &dms, &dmo);
+	}
+
+	//copy display properties from the source
+	CopyWarpDisplayProperties(src, vd);
+
+	return vd;
 }
 
 //set 2d mask for segmentation
@@ -4001,7 +4356,7 @@ VolumeData* VolumeData::CopyLevel(int lv)
 	m_tex->set_FrameAndChannel(m_time, m_chan);
 	auto src_nv = make_shared<VL_Nrrd>(m_tex->loadData(lv));
 	if (!src_nv) return NULL;
-	vd->Load(src_nv, GetName() + wxT("_Copy_Lv") + wxString::Format("%d", lv), wxString(""));
+	vd->Load(src_nv, GetName() + L"_Copy_Lv" + VVDString::Format("%d", lv), VVDString(""));
 
 	vd->m_dup = true;
 	vd->m_dup_counter = m_dup_counter;
@@ -4270,7 +4625,7 @@ MeshData *VolumeData::ExportMeshMask()
 //
 //	result = new MeshData();
 //	result->Load(model);
-//	wxString newname = m_name + wxT("_MeshMask");
+//	VVDString newname = m_name + L"_MeshMask";
 //	result->SetName(newname);
 //    
 //#endif
@@ -4869,7 +5224,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 		uint8* val8 = new (std::nothrow) uint8[mem_size];
 		if (!val8)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return nullptr;
 		}
 		memset((void*)val8, 0, sizeof(uint8) * nx * ny * nz);
@@ -4882,7 +5237,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 		uint16* val16 = new (std::nothrow) uint16[mem_size];
 		if (!val16)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return nullptr;
 		}
 		memset((void*)val16, 0, sizeof(uint16) * nx * ny * nz);
@@ -4895,7 +5250,7 @@ Nrrd* VolumeData::NrrdScale(Nrrd* src, size_t nx, size_t ny, size_t nz, bool int
 		float* val32 = new (std::nothrow) float[mem_size];
 		if (!val32)
 		{
-			wxMessageBox("Not enough memory. Please save project and restart.");
+			vvd::UI::MessageBox("Not enough memory. Please save project and restart.");
 			return nullptr;
 		}
 		memset((void*)val32, 0, sizeof(float) * nx * ny * nz);
@@ -4942,7 +5297,7 @@ void NrrdScaler::Run()
 
 	int nz = dsize[2];
 
-	int thread_num = wxThread::GetCPUCount() - 1;
+	int thread_num = vvd::Thread::GetCPUCount() - 1;
 	if (thread_num <= 0)
 		thread_num = 1;
 	if (nz / thread_num == 0)
@@ -4953,17 +5308,24 @@ void NrrdScaler::Run()
 	{
 		int zed = (z + interval > nz) ? nz : z + interval;
 		NrrdScaleThread* th = new NrrdScaleThread(this, m_src, m_dst, z, zed, m_interpolation);
+		// counted here, before the thread runs: counted in Entry(), the wait
+		// below could see 0 before any thread had started and return with the
+		// result unscaled while the threads still used this (stack) scaler
+		{
+			vvd::CriticalSectionLocker enter(m_pThreadCS);
+			m_running_nrrd_scale_th++;
+		}
 		th->Run();
 	}
 
 	while (1)
 	{
 		{
-			wxCriticalSectionLocker enter(m_pThreadCS);
+			vvd::CriticalSectionLocker enter(m_pThreadCS);
 			if (m_running_nrrd_scale_th <= 0)
 				break;
 		}
-		wxThread::This()->Sleep(10);
+		vvd::MilliSleep(10);
 	}
 	m_running_nrrd_scale_th = 0;
 
@@ -4983,16 +5345,14 @@ NrrdScaleThread::~NrrdScaleThread()
 {
 	if (m_scaler)
 	{
-		wxCriticalSectionLocker enter(m_scaler->m_pThreadCS);
+		vvd::CriticalSectionLocker enter(m_scaler->m_pThreadCS);
 		m_scaler->m_running_nrrd_scale_th--;
 	}
 }
 
-wxThread::ExitCode NrrdScaleThread::Entry()
+vvd::Thread::ExitCode NrrdScaleThread::Entry()
 {
-	m_scaler->m_pThreadCS.Enter();
-	m_scaler->m_running_nrrd_scale_th++;
-	m_scaler->m_pThreadCS.Leave();
+	// (m_running_nrrd_scale_th was incremented by NrrdScaler::Run)
 
 	int bits = 0;
 
@@ -5006,7 +5366,7 @@ wxThread::ExitCode NrrdScaleThread::Entry()
 	size_t dim = m_src->dim;
 
 	if (dim <= 2)
-		return (wxThread::ExitCode)1;
+		return (vvd::Thread::ExitCode)1;
 
 	std::vector<size_t> ssize(dim);
 	std::vector<double> sspc(dim);
@@ -5274,7 +5634,7 @@ wxThread::ExitCode NrrdScaleThread::Entry()
 			}
 		}
 	}
-	return (wxThread::ExitCode)0;
+	return (vvd::Thread::ExitCode)0;
 }
 
 
@@ -5309,7 +5669,7 @@ m_data(0),
 	m_scale[2] = 1.0;
 
 	double hue, sat, val;
-	hue = double(rand()%360);
+	hue = double(NextRandomColorValue()%360);
 	sat = 1.0;
 	val = 1.0;
 	Color color(HSVColor(hue, sat, val));
@@ -5419,11 +5779,11 @@ int MeshData::Load(GLMmodel* mesh)
 	return 1;
 }
 
-int MeshData::Load(wxString &filename)
+int MeshData::Load(const VVDString &filename)
 {
 	m_data_path = filename;
 	m_name = m_data_path.Mid(m_data_path.Find(GETSLASH(), true)+1);
-	wxString suffix = m_data_path.Mid(m_data_path.Find('.', true)).MakeLower();
+	VVDString suffix = m_data_path.Mid(m_data_path.Find('.', true)).MakeLower();
 
 	if (m_data)
 		glmDelete(m_data);
@@ -5434,11 +5794,11 @@ int MeshData::Load(wxString &filename)
 		bool no_fail = true;
 		m_data = glmReadOBJ(str_fn.c_str(),&no_fail);
 		while (!no_fail) {
-			wxMessageDialog *dial = new wxMessageDialog(NULL, 
-				wxT("A part of the OBJ file failed to load. Would you like to try re-loading?"), 
-				wxT("OBJ Load Failure"), 
-				wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
-			if (dial->ShowModal() == wxID_YES) {
+			int answer = vvd::UI::MessageBox(
+				L"A part of the OBJ file failed to load. Would you like to try re-loading?",
+				L"OBJ Load Failure",
+				vvd::MSG_YES_NO | vvd::MSG_NO_DEFAULT | vvd::MSG_ICON_QUESTION);
+			if (answer == vvd::MSG_RESULT_YES) {
 				if (m_data)
 					delete m_data;
 				m_data = glmReadOBJ(str_fn.c_str(),&no_fail);
@@ -5758,17 +6118,16 @@ MeshData* MeshData::DeepCopy(MeshData &copy, bool use_default_settings, DataMana
 	return md;
 }
 
-void MeshData::Save(wxString& filename)
+void MeshData::Save(const VVDString &filename)
 {
 	if (m_data)
 	{
-		char* str = new char[filename.length()+1];
-		for (int i=0; i<(int)filename.length(); i++)
-			str[i] = (char)filename[i];
-		str[filename.length()] = 0;
-		glmWriteOBJ(m_data, str, GLM_SMOOTH);
-		delete []str;
-		m_data_path = filename;
+		//UTF-8, as MeshData::Load passes it: glm opens it with FOPEN, which
+		//takes UTF-8 on Windows (a (char) cast of each UTF-16 unit wrote
+		//nothing, or a stray file, for names outside Latin-1)
+		std::string str = filename.ToStdString();
+		glmWriteOBJ(m_data, &str[0], GLM_SMOOTH);
+		m_data_path = vvd::NativeSeparators(filename);
 	}
 }
 
@@ -6084,7 +6443,7 @@ void MeshData::GetShadowParams(double &val)
 	val = m_shadow_darkness;
 }
 
-wxString MeshData::GetPath()
+VVDString MeshData::GetPath()
 {
 	return m_data_path;
 }
@@ -6204,10 +6563,26 @@ void MeshData::GetScaling(double &x, double &y, double &z)
 	z = m_scale[2];
 }
 
+//Mesh default colours used to come straight from the C library rand(). Its
+//state is process-global and other code calls it too -- on macOS some system
+//worker threads (libdispatch) call rand() a timing-dependent number of times
+//during start-up -- so the same file opened the same way got a different
+//colour from run to run. A private generator keeps the sequence reproducible.
+//minstd_rand0 seeded with 1 is the generator the macOS rand() uses, so there
+//the colours are the ones rand() gave when nothing else called it first.
+int MeshData::NextRandomColorValue()
+{
+	static std::mutex mtx;
+	static std::minstd_rand0 gen(1u);
+	std::lock_guard<std::mutex> lock(mtx);
+	unsigned long v = (unsigned long)gen();
+	return (int)(v % ((unsigned long)RAND_MAX + 1ul));
+}
+
 //randomize color
 void MeshData::RandomizeColor()
 {
-	double hue = (double)rand()/(RAND_MAX) * 360.0;
+	double hue = (double)NextRandomColorValue()/(RAND_MAX) * 360.0;
 	Color color(HSVColor(hue, 1.0, 1.0));
 	SetColor(color, MESH_COLOR_DIFF);
     Color amb = color * 0.3;
@@ -6685,7 +7060,7 @@ Annotations::Annotations()
 {
 	type = 4;//annotations
 	m_num++;
-	m_name = wxString::Format("Antn_%d", m_num);
+	m_name = VVDString::Format("Antn_%d", m_num);
 	m_tform = 0;
 	m_vd = 0;
 	m_disp = true;
@@ -6733,8 +7108,9 @@ Point Annotations::GetTextTransformedPos(int index)
 	if (index>=0 && index<(int)m_alist.size())
 	{
 		AText* atext = m_alist[index];
-		if (atext && m_tform)
-			return m_tform->transform(atext->m_pos);
+		Transform* tform = GetCurTransform();
+		if (atext && tform)
+			return tform->transform(atext->m_pos);
 	}
 	return Point(Vector(0.0));
 }
@@ -6767,11 +7143,38 @@ void Annotations::SetVolume(VolumeData *vd)
 	m_vd = vd;
 	if (m_vd)
 		m_name += "_FROM_" + m_vd->GetName();
+	else
+		//m_tform points into the volume's texture (SetTransform / Load): the
+		//volume is going away (DataManager::RemoveVolumeData), and the next
+		//draw read the freed transform (GetTextTransformedPos)
+		m_tform = nullptr;
 }
 
 VolumeData* Annotations::GetVolume()
 {
 	return m_vd;
+}
+
+void Annotations::RebindVolume(VolumeData *vd)
+{
+	//the name keeps its "_FROM_<volume>" part (SetVolume would append again)
+	m_vd = vd;
+	m_tform = (vd && vd->GetTexture()) ? vd->GetTexture()->transform() : nullptr;
+}
+
+Transform* Annotations::GetCurTransform()
+{
+	//from the volume when there is one: VolumeData::Replace(data, true)
+	//(3D batch frames) builds a new texture, and a cached m_tform pointed
+	//into the deleted one
+	if (m_vd)
+		return m_vd->GetTexture() ? m_vd->GetTexture()->transform() : nullptr;
+	return m_tform;
+}
+
+bool Annotations::HasTransform()
+{
+	return GetCurTransform() != nullptr;
 }
 
 void Annotations::SetMesh(MeshData *md)
@@ -6820,23 +7223,23 @@ bool Annotations::GetMemoRO()
 }
 
 //save/load
-wxString Annotations::GetPath()
+VVDString Annotations::GetPath()
 {
 	return m_data_path;
 }
 
-int Annotations::Load(wxString &filename, DataManager* mgr)
+int Annotations::Load(const VVDString &filename, DataManager* mgr)
 {
-	wxFileInputStream fis(filename);
+	vvd::TextFileReader fis(filename);
 	if (!fis.Ok())
 		return 0;
 
-	wxTextInputStream tis(fis);
-	wxString str;
+	vvd::TextFileReader& tis = fis;
+	VVDString str;
 
 	while (!fis.Eof())
 	{
-		wxString sline = tis.ReadLine();
+		VVDString sline = tis.ReadLine();
 
 		if (sline.SubString(0, 5) == "Name: ")
 		{
@@ -6856,7 +7259,7 @@ int Annotations::Load(wxString &filename, DataManager* mgr)
 			while (str.SubString(0, 12) != "Memo Update: " &&
 				!fis.Eof())
 			{
-				m_memo += str + "\n";
+				m_memo += str.ToStdString() + "\n";
 				str = tis.ReadLine();
 			}
 			if (str.SubString(13, 13) == "0")
@@ -6935,13 +7338,13 @@ int Annotations::Load(wxString &filename, DataManager* mgr)
 	return 1;
 }
 
-void Annotations::Save(wxString &filename)
+void Annotations::Save(const VVDString &filename)
 {
-	wxFileOutputStream fos(filename);
+	vvd::TextFileWriter fos(filename);
 	if (!fos.Ok())
 		return;
 
-	wxTextOutputStream tos(fos);
+	vvd::TextFileWriter& tos = fos;
 
 	int resx = 1;
 	int resy = 1;
@@ -6980,7 +7383,7 @@ void Annotations::Save(wxString &filename)
 
 	m_data_path = filename;
 
-	wxString labelpath = filename.Mid(0, filename.find_last_of(wxT('.'))) + ".lbl";
+	VVDString labelpath = filename.Mid(0, filename.find_last_of(L'.')) + ".lbl";
 
 	if (m_label && m_vd)
 	{
@@ -6995,7 +7398,7 @@ void Annotations::Save(wxString &filename)
     
     if (m_md)
     {
-        wxString mesh_path = filename.Mid(0, filename.find_last_of(wxT('.'))) + ".swc";
+        VVDString mesh_path = filename.Mid(0, filename.find_last_of(L'.')) + ".swc";
         tos << "Mesh: " << m_md->GetName() << "\n";
         tos << "Alpha: " << m_alpha << "\n";
         tos << "Threshold: " << m_md->GetThreshold() << "\n";
@@ -7003,12 +7406,12 @@ void Annotations::Save(wxString &filename)
     }
 }
 
-wxString Annotations::GetInfoMeaning()
+VVDString Annotations::GetInfoMeaning()
 {
 	return m_info_meaning;
 }
 
-void Annotations::SetInfoMeaning(wxString &str)
+void Annotations::SetInfoMeaning(const VVDString &str)
 {
 	m_info_meaning = str;
 }
@@ -7016,7 +7419,7 @@ void Annotations::SetInfoMeaning(wxString &str)
 //test if point is inside the clipping planes
 bool Annotations::InsideClippingPlanes(Point &pos)
 {
-	if (!m_vd)
+	if (!m_vd || !m_vd->GetVR())
 		return true;
 
 	vector<Plane*> *planes = m_vd->GetVR()->get_planes();
@@ -7038,14 +7441,14 @@ bool Annotations::InsideClippingPlanes(Point &pos)
 	return true;
 }
 
-AText* Annotations::GetAText(wxString str)
+AText* Annotations::GetAText(VVDString str)
 {
 	AText *atext = 0;
-	wxString sID;
-	wxString sX;
-	wxString sY;
-	wxString sZ;
-	wxString sInfo;
+	VVDString sID;
+	VVDString sX;
+	VVDString sY;
+	VVDString sZ;
+	VVDString sInfo;
 	int tab_counter = 0;
 
 	for (int i=0; i<(int)str.Length(); i++)
@@ -7099,7 +7502,7 @@ size_t callbackWriteAnnotation(char *ptr, size_t size, size_t nmemb, string *str
 	return data_len;
 }
 
-RulerBalloon::RulerBalloon(bool visibility, Point point, wxArrayString annotations)
+RulerBalloon::RulerBalloon(bool visibility, Point point, vvd::StringArray annotations)
 	: m_visibility(visibility), m_point(point), m_annotations(annotations), m_annotationdb(vector<AnnotationDB>())
 {
 	//m_curl = curl_easy_init();
@@ -7130,15 +7533,15 @@ void RulerBalloon::SetAnnotationsFromDatabase(vector<AnnotationDB> ann, Point ne
 	if(m_bufs.size() < m_annotationdb.size()) m_bufs.resize(m_annotationdb.size(), string());
 
 	for(int i = 0; i < m_annotationdb.size(); i++){
-		wxString url = m_annotationdb[i].url;
+		VVDString url = m_annotationdb[i].url;
 
-		url << wxT("?annotations=");
+		url << L"?annotations=";
 		for(int j = 0; j < m_annotationdb[i].contents.size(); j++)
 		{
-			if(j != 0) url << wxT("+");
+			if(j != 0) url << L"+";
 			url << m_annotationdb[i].contents[j];
 		}
-		url << wxT("&coordinate=");
+		url << L"&coordinate=";
 		url << (int)(m_point.x()/spcx) << "+" << (int)(m_point.y()/spcy) << "+" << (int)(m_point.z()/spcz);
 		/*
 		stringstream coord;
@@ -7186,14 +7589,14 @@ void RulerBalloon::SetAnnotationsFromDatabase(vector<AnnotationDB> ann, Point ne
 		{
 			ss << a[rand() % 62];
 		}
-		m_annotations.Add(wxString(ss.str()));
+		m_annotations.Add(VVDString(ss.str()));
 	}
 */
 }
 
-wxArrayString RulerBalloon::GetAnnotations()
+vvd::StringArray RulerBalloon::GetAnnotations()
 {
-    wxArrayString annotations;
+    vvd::StringArray annotations;
     
     int stline = 0;
     for(int a = 0; a < m_bufs.size(); a++)
@@ -7207,8 +7610,8 @@ wxArrayString RulerBalloon::GetAnnotations()
             int j = stline;
             while (getline(ls, elem, '\t'))
             {
-                if(i == 0) annotations.Add(wxString(elem) + wxT(": "));
-                else if (j < annotations.size()) annotations.Item(j) += wxT(" ") + wxString(elem);
+                if(i == 0) annotations.Add(VVDString(elem) + L": ");
+                else if (j < annotations.size()) annotations.Item(j) += L" " + VVDString(elem);
                 j++;
             }
             i++;
@@ -7228,7 +7631,7 @@ wxArrayString RulerBalloon::GetAnnotations()
         {
             ss << a[rand() % 62];
         }
-        annotations.Add(wxString(ss.str()));
+        annotations.Add(VVDString(ss.str()));
     }
 */    
     return annotations;
@@ -7239,7 +7642,7 @@ Ruler::Ruler()
 {
 	type = 7;//ruler
 	m_num++;
-	m_name = wxString::Format("%d", m_num);
+	m_name = VVDString::Format("%d", m_num);
 	m_disp = true;
 	m_tform = 0;
 	m_ruler_type = 0;
@@ -7250,8 +7653,8 @@ Ruler::Ruler()
 	m_time_dep = false;
 	m_time = 0;
 
-	m_name_disp = wxString::Format("%d", m_num);
-	m_desc = wxString();
+	m_name_disp = VVDString::Format("%d", m_num);
+	m_desc = VVDString();
 
 }
 
@@ -7379,7 +7782,7 @@ bool Ruler::AddPoint(const Point &point)
 	else
 	{
 		m_ruler.push_back(point);
-		m_balloons.push_back(RulerBalloon(false, point, wxArrayString()));
+		m_balloons.push_back(RulerBalloon(false, point, vvd::StringArray()));
 		if (m_ruler_type == 2 &&
 			m_ruler.size() == 1)
 			m_finished = true;
@@ -7402,20 +7805,38 @@ void Ruler::SetTransform(Transform *tform)
 void Ruler::Clear()
 {
 	m_ruler.clear();
+	m_point_vols.clear();
 }
 
-wxArrayString Ruler::GetAnnotations(int index, vector<AnnotationDB> annotationdb, double spcx, double spcy, double spcz)
+void Ruler::SetPointVolName(int index, const VVDString &name)
+{
+	if (index < 0 || (size_t)index >= m_ruler.size())
+		return;
+	if (m_point_vols.size() < m_ruler.size())
+		m_point_vols.resize(m_ruler.size());
+	m_point_vols[index] = name;
+}
+
+VVDString Ruler::GetPointVolName(int index)
+{
+	if (index < 0 || (size_t)index >= m_point_vols.size() ||
+		(size_t)index >= m_ruler.size())
+		return VVDString();
+	return m_point_vols[index];
+}
+
+vvd::StringArray Ruler::GetAnnotations(int index, vector<AnnotationDB> annotationdb, double spcx, double spcy, double spcz)
 {
     if (index < 0 || (size_t)index >= m_ruler.size())
-        return wxArrayString();
+        return vvd::StringArray();
     
     m_balloons[index].SetAnnotationsFromDatabase(annotationdb, m_ruler[index], spcx, spcy, spcz);
     return m_balloons[index].GetAnnotations();
 }
 
-wxString Ruler::GetDelInfoValues(wxString del)
+VVDString Ruler::GetDelInfoValues(VVDString del)
 {
-	wxString output;
+	VVDString output;
 
 	for (size_t i=0; i<m_info_values.length(); i++)
 	{
@@ -7428,7 +7849,7 @@ wxString Ruler::GetDelInfoValues(wxString del)
 	return output;
 }
 
-void Ruler::SaveProfile(wxString &filename)
+void Ruler::SaveProfile(const VVDString &filename)
 {
 }
 
@@ -7438,7 +7859,7 @@ TraceGroup::TraceGroup()
 {
 	type = 8;//traces
 	m_num++;
-	m_name = wxString::Format("Traces %d", m_num);
+	m_name = VVDString::Format("Traces %d", m_num);
 	m_cur_time = -1;
 	m_prv_time = -1;
 	m_ghost_num = 10;
@@ -7654,7 +8075,7 @@ bool TraceGroup::GetMappedRulers(FL::RulerList &rulers)
 	return true;
 }
 
-bool TraceGroup::Load(wxString &filename)
+bool TraceGroup::Load(const VVDString &filename)
 {
 	m_data_path = filename;
 	FL::TrackMapProcessor tm_processor;
@@ -7662,7 +8083,7 @@ bool TraceGroup::Load(wxString &filename)
 	return tm_processor.Import(m_track_map, str);
 }
 
-bool TraceGroup::Save(wxString &filename)
+bool TraceGroup::Save(const VVDString &filename)
 {
 	m_data_path = filename;
 	FL::TrackMapProcessor tm_processor;
@@ -7734,7 +8155,7 @@ DataGroup::DataGroup()
 {
 	type = 5;//group
 	m_num++;
-	m_name = wxString::Format("Group %d", m_num);
+	m_name = VVDString::Format("Group %d", m_num);
 	m_disp = true;
 	m_sync_volume_prop = false;
 	m_sync_volume_spc = false;
@@ -8550,7 +8971,7 @@ MeshGroup::MeshGroup()
 {
 	type = 6;//mesh group
 	m_num++;
-	m_name = wxString::Format("MGroup %d", m_num);
+	m_name = VVDString::Format("MGroup %d", m_num);
 	m_disp = true;
 	m_sync_mesh_prop = false;
 
@@ -8577,7 +8998,7 @@ void MeshGroup::RandomizeColor()
 		MeshData* md = GetMeshData(i);
 		if (md)
 		{
-			double hue = (double)rand()/(RAND_MAX) * 360.0;
+			double hue = (double)MeshData::NextRandomColorValue()/(RAND_MAX) * 360.0;
 			Color color(HSVColor(hue, 1.0, 1.0));
 			md->SetColor(color, MESH_COLOR_DIFF);
             Color amb = color * 0.3;
@@ -8953,19 +9374,10 @@ m_vol_exb(0.0),
 	m_use_defaults(true),
 	m_override_vox(true)
 {
-	wxString expath = wxStandardPaths::Get().GetExecutablePath();
-	expath = expath.BeforeLast(GETSLASH(),NULL);
-#ifdef _DARWIN
-	wxString dft = expath + "/../Resources/default_volume_settings.dft";
-#else
-	wxString dft = expath + GETSLASHS() + "default_volume_settings.dft";
-	if (!wxFileExists(dft))
-		dft = wxStandardPaths::Get().GetUserConfigDir() + GETSLASHS() + "default_volume_settings.dft";
-#endif
-	wxFileInputStream is(dft);
-	if (!is.IsOk())
+	VVDString dft = vvd::SettingsReadPath(L"default_volume_settings.dft");
+	if (!vvd::FileExists(dft))
 		return;
-	wxFileConfig fconfig(is);
+	vvd::IniFile fconfig(dft);
 
 	double val;
 	int ival;
@@ -9131,93 +9543,204 @@ void DataManager::SetVolumeDefault(VolumeData* vd)
 //set project path
 //when data and project are moved, use project file's path
 //if data's directory doesn't exist
-void DataManager::SetProjectPath(wxString path)
+void DataManager::SetProjectPath(VVDString path)
 {
 	m_prj_path.Clear();
+	// the Qt app passes '/' paths; GETSLASH() is a backslash on Windows
+	path = vvd::NativeSeparators(path);
 	int sep = path.Find(GETSLASH(), true);
-	if (sep != wxNOT_FOUND)
+	if (sep != VVDString::npos)
 		m_prj_path = path.Left(sep);
 }
 
-wxString DataManager::SearchProjectPath(wxString &filename)
+VVDString DataManager::SearchProjectPath(const VVDString &filename)
 {
 	int i;
 
-	wxString pathname = filename;
+	VVDString pathname = filename;
 
 	if (m_prj_path == "")
 		return "";
-	wxString search_str;
+	VVDString search_str;
 	for (i=pathname.Length()-1; i>=0; i--)
 	{
 		search_str.Prepend(pathname[i]);
 		if (pathname[i]=='\\' || pathname[i]=='/')
 		{
             search_str[0] = GETSLASH();
-			wxString name_temp = m_prj_path + search_str;
-			if (wxFileExists(name_temp))
+			VVDString name_temp = m_prj_path + search_str;
+			if (vvd::FileExists(name_temp))
 				return name_temp;
 		}
 	}
 	return "";
 }
 
-bool DataManager::DownloadToCurrentDir(wxString &filename)
+bool DataManager::DownloadToCurrentDir(VVDString &filename)
 {
-	wxString pathname = filename;
-	wxURL url(pathname);
-	if (!url.IsOk())
+	VVDString pathname = filename;
+	if (!vvd::IsURL(pathname))
 		return false;
-	url.GetProtocol().SetTimeout(10);
-	wxString suffix = pathname.Mid(pathname.Find('.', true)).MakeLower();
-	if(url.GetError() != wxURL_NOERR) return false;
-	wxInputStream *in = url.GetInputStream();
-	if(!in || !in->IsOk()) return false;
-#define DOWNLOAD_BUFSIZE 8192
-	unsigned char buffer[DOWNLOAD_BUFSIZE];
-	size_t count = -1;
-	wxMemoryBuffer mem_buf;
-	while(!in->Eof() && count != 0)
-	{
-		in->Read(buffer, DOWNLOAD_BUFSIZE-1);
-		count = in->LastRead();
-		if(count > 0) mem_buf.AppendData(buffer, count);
-	}
-
-#ifdef _WIN32
-	wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "\\" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#else
-    wxString tmpfname = wxStandardPaths::Get().GetTempDir() + "/" + pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
-#endif
-
-	wxFile of(tmpfname, wxFile::write);
-	of.Write(mem_buf.GetData(), mem_buf.GetDataLen());
-	of.Close();
+	VVDString tmpfname = vvd::JoinPath(vvd::GetTempDir(), pathname.AfterLast(L'/'));
+	if (!vvd::DownloadToFile(pathname, tmpfname))
+		return false;
 
 	filename = tmpfname;
 
 	return true;
 }
 
-int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_num, size_t datasize, wxString prefix, wxString metadata)
+namespace
 {
-	wxString pathname = filename;
+	// readers whose Preprocess/Convert must not run concurrently (wx
+	// ProjectDataLoaderThread holds its critical section around them)
+	std::mutex& PrefetchSerialMutex()
+	{
+		static std::mutex m;
+		return m;
+	}
+}
+
+void DataManager::PrefetchVolume(VolumePrefetch &pre)
+{
+	// same normalisation as LoadVolumeData, which compares pre->filename
+	pre.filename = vvd::NativeSeparators(pre.filename);
+	pre.valid = false;
+	pre.channels.clear();
+	delete pre.reader;
+	pre.reader = nullptr;
+
+	const int type = pre.type;
+	// bricked data (lazy, possibly remote) and .idi archives (extracted to the
+	// temp dir) go through the normal LoadVolumeData path
+	if (type == LOAD_TYPE_BRKXML || type == LOAD_TYPE_IDI || type == LOAD_TYPE_PVXML || type == 0)
+		return;
+
+	// same lookup as LoadVolumeData; URLs (download) are not prefetched
+	VVDString pathname = pre.filename;
+	if (!vvd::FileExists(pathname))
+	{
+		pathname = SearchProjectPath(pre.filename);
+		if (!vvd::FileExists(pathname))
+			return;
+	}
+
+	BaseReader* reader = nullptr;
+	if (type == LOAD_TYPE_TIFF)
+		reader = new TIFReader();
+	else if (type == LOAD_TYPE_NRRD)
+		reader = new NRRDReader();
+	else if (type == LOAD_TYPE_OIB)
+		reader = new OIBReader();
+	else if (type == LOAD_TYPE_OIF)
+		reader = new OIFReader();
+	else if (type == LOAD_TYPE_LSM)
+		reader = new LSMReader();
+	else if (type == LOAD_TYPE_CZI)
+		reader = new CZIReader();
+#if defined(_ENABLE_ND2) && !defined(_DARWIN)
+	else if (type == LOAD_TYPE_ND2)
+		reader = new ND2Reader();
+#endif
+	else if (type == LOAD_TYPE_H5J)
+		reader = new H5JReader();
+	else if (type == LOAD_TYPE_V3DPBD)
+		reader = new V3DPBDReader();
+	if (!reader)
+		return;
+
+	std::unique_lock<std::mutex> serial(PrefetchSerialMutex(), std::defer_lock);
+	if (type == LOAD_TYPE_H5J)
+		serial.lock();
+
+	wstring str_w = pathname.ToStdWstring();
+	reader->SetFile(str_w);
+	reader->SetSliceSeq(pre.slice_seq);
+	reader->SetTimeSeq(pre.time_seq);
+	str_w = pre.time_id.ToStdWstring();
+	reader->SetTimeId(str_w);
+	reader->Preprocess();
+
+	pre.reader = reader;
+	pre.pathname = pathname;
+	pre.error_msg = reader->GetErrorMsg();
+	pre.chan_num = reader->GetChanNum();
+	pre.valid = true;
+	if (!pre.error_msg.IsEmpty())
+		return;   // LoadVolumeData reports it
+
+	const int chan = pre.chan_num;
+	const int ch_num = pre.ch_num;
+	const int t_num = pre.t_num;
+	for (int i = (ch_num >= 0 ? ch_num : 0); i < (ch_num >= 0 ? ch_num + 1 : chan); i++)
+	{
+		VolumePrefetch::Channel c;
+		c.index = i;
+		c.data = reader->Convert(t_num >= 0 ? t_num : reader->GetCurTime(), i, true);
+		//brick maxima for empty-brick skipping, while the data are in memory
+		//(the prefetch workers already run in parallel: one thread each)
+		if (c.data) c.data->computeBlockMax(1);
+		c.data_name = reader->GetDataName();
+		c.valid_spc = reader->IsSpcInfoValid();
+		c.xspc = reader->GetXSpc();
+		c.yspc = reader->GetYSpc();
+		c.zspc = reader->GetZSpc();
+		c.scalar_scale = reader->GetScalarScale();
+		c.max_value = reader->GetMaxValue();
+		c.cur_time = reader->GetCurTime();
+		pre.channels.push_back(std::move(c));
+	}
+}
+
+int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_num, int t_num, size_t datasize, VVDString prefix, VVDString metadata, VolumePrefetch* pre)
+{
+	// paths from the Qt app use '/'; the readers need native separators
+	const VVDString filename = vvd::NativeSeparators(filename_in);
+	VVDString pathname = filename;
 	bool isURL = false;
 	bool downloaded = false;
-	wxString downloaded_filepath;
+	VVDString downloaded_filepath;
 	bool downloaded_metadata = false;
-	wxString downloaded_metadatafilepath;
+	VVDString downloaded_metadatafilepath;
     
-    wxString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
+    VVDString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
+
+	// prefetched reader + data (PrefetchVolume) for exactly this request
+	bool use_pre = pre && pre->valid && pre->reader &&
+		pre->filename == filename && pre->type == type &&
+		pre->ch_num == ch_num && pre->t_num == t_num && datasize == 0 &&
+		pre->slice_seq == m_sliceSequence && pre->time_seq == m_timeSequence &&
+		pre->time_id == m_timeId;
+	if (use_pre)
+	{
+		// the sequential path would reuse a reader already open for the file
+		wstring wstr = pre->pathname.ToStdWstring();
+		for (size_t r = 0; r < m_reader_list.size(); r++)
+			if (m_reader_list[r] && m_reader_list[r]->Match(wstr))
+			{
+				use_pre = false;
+				break;
+			}
+	}
+	if (pre && !use_pre)
+	{
+		// not usable: drop it and load normally
+		delete pre->reader;
+		pre->reader = nullptr;
+		pre->channels.clear();
+		pre->valid = false;
+	}
 	
-	if (!wxFileExists(pathname) && suffix != ".n5fs_ch" && suffix != ".n5" && suffix != ".zarr" && suffix != ".zfs_ch")
+	if (use_pre)
+		pathname = pre->pathname;
+	else if (!vvd::FileExists(pathname) && suffix != ".n5fs_ch" && suffix != ".n5" && suffix != ".zarr" && suffix != ".zfs_ch")
 	{
 		pathname = SearchProjectPath(filename);
-		if (!wxFileExists(pathname))
+		if (!vvd::FileExists(pathname))
 		{
 			pathname = filename;
 			if (!DownloadToCurrentDir(pathname)) return 0;
-			//wxString tmpfname = pathname.Mid(pathname.Find(wxT('/'), true)).Mid(1);
+			//VVDString tmpfname = pathname.Mid(pathname.Find(L'/', true)).Mid(1);
 			//pathname = tmpfname;
 			
 			downloaded = true;
@@ -9225,8 +9748,8 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 
 			if(type == LOAD_TYPE_BRKXML)
 			{
-				wxString metadatapath = filename;
-				metadatapath = metadatapath.Mid(0, metadatapath.Find(wxT('/'), true)+1) + wxT("_metadata.xml");
+				VVDString metadatapath = filename;
+				metadatapath = metadatapath.Mid(0, metadatapath.Find(L'/', true)+1) + L"_metadata.xml";
 				//std::remove("_metadata.xml");
 				if (DownloadToCurrentDir(metadatapath))
 				{
@@ -9241,52 +9764,59 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 	int i;
 	int result = 0;
 	BaseReader* reader = 0;
-    
-    wxString idi_metadata_path;
+	//a reader made by this call: dropped again if nothing loads (a failed
+	//reader matched the path on the next open and was reused without a new
+	//Preprocess, so a fixed file still failed)
+	bool new_reader = false;
+	auto drop_new_reader = [&]() {
+		if (!new_reader || !reader)
+			return;
+		auto it = std::find(m_reader_list.begin(), m_reader_list.end(), reader);
+		if (it != m_reader_list.end())
+			m_reader_list.erase(it);
+		delete reader;
+		reader = 0;
+		new_reader = false;
+	};
+
+    VVDString idi_metadata_path;
     int idi_type = 0;
     if (type == LOAD_TYPE_IDI)
     {
-        wxString idi_volpath;
-        wxFileInputStream ist(pathname);
-        if (!ist.IsOk()) return result;
-        wxZipInputStream zstream(ist);
-        if (!zstream.IsOk()) return result;
-        
-        wxZipEntry *entry;
-        while (entry = zstream.GetNextEntry())
+        VVDString idi_volpath;
+        std::vector<VVDString> extracted;
+        static const std::vector<VVDString> idi_exts = { L".nrrd", L".tif", L".xml" };
+        if (!vvd::UnzipToDir(pathname, vvd::GetTempDir(), extracted, true, &idi_exts)) return result;
+        for (const VVDString& ret : extracted)
         {
-            wxString ename = entry->GetName();
-            if (entry->IsDir())
-                continue;
-            if (ename.Mid(ename.Find(wxFileName::GetPathSeparator(), true)+1).StartsWith("."))
-                continue;
-            wxString ret = (wxStandardPaths::Get().GetTempDir() + wxFileName::GetPathSeparator() + ename).ToStdWstring();
-            wxString esuffix = ret.Mid(ret.Find('.', true)).MakeLower();
-            if (esuffix == ".nrrd" || esuffix == ".tif" || esuffix == ".xml")
+            VVDString esuffix = ret.Mid(ret.Find('.', true)).MakeLower();
+            if (esuffix == ".nrrd")
             {
-                if (esuffix == ".nrrd")
-                {
-                    idi_volpath = ret;
-                    idi_type = LOAD_TYPE_NRRD;
-                }
-                else if (esuffix == ".tif")
-                {
-                    idi_volpath = ret;
-                    idi_type = LOAD_TYPE_TIFF;
-                }
-                else if (esuffix == ".xml")
-                    idi_metadata_path = ret;
-                wxFileOutputStream file(ret);
-                if (!file.IsOk()) return result;
-                file.Write(zstream);
+                idi_volpath = ret;
+                idi_type = LOAD_TYPE_NRRD;
             }
+            else if (esuffix == ".tif")
+            {
+                idi_volpath = ret;
+                idi_type = LOAD_TYPE_TIFF;
+            }
+            else if (esuffix == ".xml")
+                idi_metadata_path = ret;
         }
-        zstream.CloseEntry();
         if (idi_volpath.IsEmpty() || idi_metadata_path.IsEmpty())
             return result;
         pathname = idi_volpath;
     }
 
+	if (use_pre)
+	{
+		// a new reader, set up and preprocessed by PrefetchVolume
+		reader = pre->reader;
+		pre->reader = nullptr;
+		m_reader_list.push_back(reader);
+		new_reader = true;
+	}
+	else
 	for (i=0; i<(int)m_reader_list.size(); i++)
 	{
 		wstring wstr = pathname.ToStdWstring();
@@ -9297,7 +9827,9 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 		}
 	}
 
-	if (reader)
+	if (use_pre)
+		;
+	else if (reader)
 	{
 		bool preprocess = false;
 		if (reader->GetSliceSeq() != m_sliceSequence)
@@ -9320,7 +9852,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
         {
             if (type == LOAD_TYPE_BRKXML)
             {
-                wxString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
+                VVDString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
                 if (msuffix.compare(".xml") == 0)
                 {
                     BRKXMLReader* br = (BRKXMLReader *)reader;
@@ -9359,6 +9891,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 			reader = new V3DPBDReader();
 
 		m_reader_list.push_back(reader);
+		new_reader = true;
 		wstring str_w = pathname.ToStdWstring();
 		reader->SetFile(str_w);
 		reader->SetSliceSeq(m_sliceSequence);
@@ -9380,7 +9913,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
         
         if (type == LOAD_TYPE_BRKXML)
         {
-            wxString suffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
+            VVDString suffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
             if (suffix.compare(".xml") == 0)
             {
                 BRKXMLReader* br = (BRKXMLReader *)reader;
@@ -9391,7 +9924,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 
 		if (type == LOAD_TYPE_BRKXML && !((BRKXMLReader *)reader)->GetExMetadataURL().empty())
 		{
-			wxString metadatapath = ((BRKXMLReader *)reader)->GetExMetadataURL();
+			VVDString metadatapath = ((BRKXMLReader *)reader)->GetExMetadataURL();
 			if (DownloadToCurrentDir(metadatapath))
 			{
 				downloaded_metadata = true;
@@ -9401,17 +9934,18 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 		}
 	}
     
-    wxString msg = reader->GetErrorMsg();
+    VVDString msg = use_pre ? pre->error_msg : VVDString(reader->GetErrorMsg());
     if (!msg.IsEmpty())
     {
-        wxMessageBox(msg);
+        vvd::UI::MessageBox(msg);
+        drop_new_reader();
         return result;
     }
 
 	if (!m_latest_vols.empty())
 		m_latest_vols.clear();
 
-	int chan = reader->GetChanNum();
+	int chan = use_pre ? pre->chan_num : reader->GetChanNum();
 	size_t voxnum = reader->GetXSize() * reader->GetYSize() * reader->GetSliceNum();
 	size_t ch_datasize = 0;
 	size_t bytes = 0;
@@ -9441,7 +9975,19 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 		{
 			VolumeData *vd = new VolumeData();
 			vd->SetSkipBrick(m_skip_brick);
-			auto data = reader->Convert(t_num>=0?t_num:reader->GetCurTime(), i, true);
+			// prefetched channel: its data and the reader state after its Convert
+			VolumePrefetch::Channel* pc = nullptr;
+			if (use_pre)
+				for (VolumePrefetch::Channel& c : pre->channels)
+					if (c.index == i) { pc = &c; break; }
+			std::shared_ptr<VL_Nrrd> data;
+			if (pc)
+				data = std::move(pc->data);   // vd owns it from here on
+			else
+			{
+				data = reader->Convert(t_num>=0?t_num:reader->GetCurTime(), i, true);
+				if (data && type != LOAD_TYPE_BRKXML) data->computeBlockMax(8);
+			}
 
 			if (datasize > 0)
 			{
@@ -9477,32 +10023,32 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 			if (!data)
 				continue;
 
-			wxString name;
+			VVDString name;
 			if (type != LOAD_TYPE_BRKXML)
 			{
-				name = wxString(reader->GetDataName());
+				name = VVDString(pc ? pc->data_name : reader->GetDataName());
 				if (chan > 1)
-					name += wxString::Format("_Ch%d", i+1);
+					name += VVDString::Format("_Ch%d", i+1);
 			}
 			else 
 			{
 				BRKXMLReader* breader = (BRKXMLReader*)reader;
 				name = reader->GetDataName();
-				name = name.Mid(0, name.find_last_of(wxT('.')));
+				name = name.Mid(0, name.find_last_of(L'.'));
                 wstring chan_name = breader->getChannelName(i);
                 if (!chan_name.empty())
-                    name += wxT("_") + chan_name;
+                    name += L"_" + chan_name;
 				else if(chan > 1)
-                    name += wxT("_Ch") + wxString::Format("%i", i);
+                    name += L"_Ch" + VVDString::Format("%i", i);
 				pathname = filename;
 				breader->SetCurChan(i);
 				breader->SetCurTime(0);
 			}
             
             if (!prefix.IsEmpty())
-                name = prefix + wxT("_") + name;
+                name = prefix + L"_" + name;
 
-			bool valid_spc = reader->IsSpcInfoValid();
+			bool valid_spc = pc ? pc->valid_spc : reader->IsSpcInfoValid();
 			if (vd && vd->Load(data, name, pathname, (type == LOAD_TYPE_BRKXML) ? (BRKXMLReader*)reader : NULL))
 			{
 				if (m_load_mask)
@@ -9511,7 +10057,8 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 					MSKReader msk_reader;
 					std::wstring str = reader->GetPathName();
 					msk_reader.SetFile(str);
-					auto mask = msk_reader.Convert(t_num>=0?t_num:reader->GetCurTime(), i, true);
+					const int rd_t = pc ? pc->cur_time : reader->GetCurTime();
+					auto mask = msk_reader.Convert(t_num>=0?t_num:rd_t, i, true);
 					if (mask)
 						vd->LoadMask(mask);
 					//label mask
@@ -9519,23 +10066,26 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 					str = reader->GetPathName();
 					lbl_reader.SetFile(str);
 
-					auto label = lbl_reader.Convert(t_num>=0?t_num:reader->GetCurTime(), i, true);
+					auto label = lbl_reader.Convert(t_num>=0?t_num:rd_t, i, true);
 					if (label)
 						vd->LoadLabel(label);
 				}
 				if (type == LOAD_TYPE_BRKXML) ((BRKXMLReader*)reader)->SetLevel(0);
+				const double rd_xspc = pc ? pc->xspc : reader->GetXSpc();
+				const double rd_yspc = pc ? pc->yspc : reader->GetYSpc();
+				const double rd_zspc = pc ? pc->zspc : reader->GetZSpc();
 				//for 2D data
 				int xres, yres, zres;
 				vd->GetResolution(xres, yres, zres);
 				double zspcfac = (double)Max(xres,yres)/256.0;
 				if (zspcfac < 1.0) zspcfac = 1.0;
-				if (zres == 1) vd->SetBaseSpacings(reader->GetXSpc(), reader->GetYSpc(), reader->GetXSpc()*zspcfac);
+				if (zres == 1) vd->SetBaseSpacings(rd_xspc, rd_yspc, rd_xspc*zspcfac);
 				else if (sspcx > 0.0 && sspcy > 0.0 && sspcz > 0.0) vd->SetBaseSpacings(sspcx, sspcy, sspcz);
-                else vd->SetBaseSpacings(reader->GetXSpc(), reader->GetYSpc(), reader->GetZSpc());
+                else vd->SetBaseSpacings(rd_xspc, rd_yspc, rd_zspc);
 				vd->SetSpcFromFile(valid_spc);
-				vd->SetScalarScale(reader->GetScalarScale());
-				vd->SetMaxValue(reader->GetMaxValue());
-				vd->SetCurTime(reader->GetCurTime());
+				vd->SetScalarScale(pc ? pc->scalar_scale : reader->GetScalarScale());
+				vd->SetMaxValue(pc ? pc->max_value : reader->GetMaxValue());
+				vd->SetCurTime(pc ? pc->cur_time : reader->GetCurTime());
 				vd->SetCurChannel(i);
 				//++
 				result++;
@@ -9623,7 +10173,7 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
             
             if (type == LOAD_TYPE_BRKXML)
             {
-                wxString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
+                VVDString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
                 if (msuffix.compare(".xml") == 0)
                 {
                     BRKXMLReader* br = (BRKXMLReader *)reader;
@@ -9649,19 +10199,22 @@ int DataManager::LoadVolumeData(wxString &filename, int type, int ch_num, int t_
 
 	cout << "complete" << endl;
 
-	if (downloaded) wxRemoveFile(downloaded_filepath);
-	if (downloaded_metadata) wxRemoveFile(downloaded_metadatafilepath);
+	if (downloaded) vvd::RemoveFile(downloaded_filepath);
+	if (downloaded_metadata) vvd::RemoveFile(downloaded_metadatafilepath);
 
+	if (result == 0)
+		drop_new_reader();
 	return result;
 }
 
-int DataManager::LoadMeshData(wxString &filename, wxString prefix)
+int DataManager::LoadMeshData(const VVDString &filename_in, VVDString prefix)
 {
-	wxString pathname = filename;
-	if (!wxFileExists(pathname))
+	const VVDString filename = vvd::NativeSeparators(filename_in);
+	VVDString pathname = filename;
+	if (!vvd::FileExists(pathname))
 	{
 		pathname = SearchProjectPath(filename);
-		if (!wxFileExists(pathname))
+		if (!vvd::FileExists(pathname))
 			return 0;
 	}
 
@@ -9669,11 +10222,11 @@ int DataManager::LoadMeshData(wxString &filename, wxString prefix)
 	if (!md->Load(pathname))
         return 0;
 
-	wxString name = md->GetName();
-    wxString new_name = (prefix.IsEmpty() ? wxT("") : prefix + wxT("_")) + name;
+	VVDString name = md->GetName();
+    VVDString new_name = (prefix.IsEmpty() ? L"" : prefix + L"_") + name;
 	int i;
 	for (i=1; CheckNames(new_name, DATA_MESH); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 	if (i>1 || !prefix.IsEmpty())
 		md->SetName(new_name);
 	m_md_list.push_back(md);
@@ -9688,11 +10241,11 @@ int DataManager::LoadMeshData(GLMmodel* mesh)
 	MeshData *md = new MeshData();
 	md->Load(mesh);
 
-	wxString name = md->GetName();
-	wxString new_name = name;
+	VVDString name = md->GetName();
+	VVDString new_name = name;
 	int i;
 	for (i=1; CheckNames(new_name, DATA_MESH); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 	if (i>1)
 		md->SetName(new_name);
 	m_md_list.push_back(md);
@@ -9716,7 +10269,7 @@ MeshData* DataManager::GetMeshData(int index)
 		return 0;
 }
 
-VolumeData* DataManager::GetVolumeData(const wxString &name)
+VolumeData* DataManager::GetVolumeData(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_vd_list.size() ; i++)
 	{
@@ -9728,7 +10281,7 @@ VolumeData* DataManager::GetVolumeData(const wxString &name)
 	return 0;
 }
 
-MeshData* DataManager::GetMeshData(wxString &name)
+MeshData* DataManager::GetMeshData(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_md_list.size() ; i++)
 	{
@@ -9740,7 +10293,7 @@ MeshData* DataManager::GetMeshData(wxString &name)
 	return 0;
 }
 
-int DataManager::GetVolumeIndex(wxString &name)
+int DataManager::GetVolumeIndex(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_vd_list.size() ; i++)
 	{
@@ -9754,7 +10307,7 @@ int DataManager::GetVolumeIndex(wxString &name)
 	return -1;
 }
 
-int DataManager::GetMeshIndex(wxString &name)
+int DataManager::GetMeshIndex(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_md_list.size() ; i++)
 	{
@@ -9774,6 +10327,14 @@ void DataManager::ReplaceVolumeData(int index, VolumeData *vd)
 	VolumeData* data = m_vd_list[index];
 	if (data)
 	{
+		//annotations of the old volume follow its replacement (Fiji round
+		//trip): they kept m_vd / m_tform into the deleted volume
+		for (int i = 0; i < (int)m_annotation_list.size(); i++)
+		{
+			if (m_annotation_list[i] && data == m_annotation_list[i]->GetVolume())
+				m_annotation_list[i]->RebindVolume(vd);
+		}
+
 		auto p = find(m_latest_vols.begin(), m_latest_vols.end(), data);
 		if (p != m_latest_vols.end())
 			m_latest_vols.erase(p);
@@ -9808,7 +10369,7 @@ void DataManager::RemoveVolumeData(int index)
 	}	
 }
 
-void DataManager::RemoveVolumeData(const wxString &name)
+void DataManager::RemoveVolumeData(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_vd_list.size() ; i++)
 	{
@@ -9848,7 +10409,7 @@ void DataManager::RemoveMeshData(int index)
 	}
 }
 
-void DataManager::RemoveMeshData(const wxString &name)
+void DataManager::RemoveMeshData(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_md_list.size() ; i++)
 	{
@@ -9874,12 +10435,12 @@ void DataManager::AddVolumeData(VolumeData* vd)
 	if (!vd)
 		return;
 
-	wxString name = vd->GetName();
-	wxString new_name = name;
+	VVDString name = vd->GetName();
+	VVDString new_name = name;
 
 	int i;
 	for (i=1; CheckNames(new_name, DATA_VOLUME); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 
 	if (i>1)
 		vd->SetName(new_name);
@@ -9898,13 +10459,13 @@ void DataManager::AddVolumeData(VolumeData* vd)
 	m_vd_list.push_back(vd);
 }
 
-void DataManager::AddEmptyVolumeData(wxString name, int bits, int nx, int ny, int nz, double spcx, double spcy, double spcz)
+void DataManager::AddEmptyVolumeData(VVDString name, int bits, int nx, int ny, int nz, double spcx, double spcy, double spcz)
 {
-	wxString new_name = name;
+	VVDString new_name = name;
 
 	int i;
 	for (i = 1; CheckNames(new_name, DATA_VOLUME); i++)
-		new_name = name + wxString::Format("_%d", i);
+		new_name = name + VVDString::Format("_%d", i);
 
 	VolumeData* vd = new VolumeData();
 	vd->AddEmptyData(bits, nx, ny, nz, spcx, spcy, spcz);
@@ -9927,11 +10488,11 @@ void DataManager::AddEmptyVolumeData(wxString name, int bits, int nx, int ny, in
 
 void DataManager::AddMeshData(MeshData *md)
 {
-	wxString name = md->GetName();
-	wxString new_name = name;
+	VVDString name = md->GetName();
+	VVDString new_name = name;
 	int i;
 	for (i=1; CheckNames(new_name, DATA_MESH); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 	if (i>1)
 		md->SetName(new_name);
 	m_md_list.push_back(md);
@@ -9965,36 +10526,37 @@ MeshData* DataManager::DuplicateMeshData(MeshData* md, bool use_default_settings
 	return md_new;
 }
 
-Annotations* DataManager::LoadAnnotations(wxString &filename)
+Annotations* DataManager::LoadAnnotations(const VVDString &filename_in)
 {
-	wxString pathname = filename;
-	if (!wxFileExists(pathname))
+	const VVDString filename = vvd::NativeSeparators(filename_in);
+	VVDString pathname = filename;
+	if (!vvd::FileExists(pathname))
 	{
 		pathname = SearchProjectPath(filename);
-		if (!wxFileExists(pathname))
+		if (!vvd::FileExists(pathname))
 			return nullptr;
 	}
 
 	Annotations* ann = new Annotations();
 	ann->Load(pathname, this);
 
-	wxString name = ann->GetName();
-	wxString new_name = name;
+	VVDString name = ann->GetName();
+	VVDString new_name = name;
 	int i;
 	for (i=1; CheckNames(new_name, DATA_ANNOTATIONS); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 	if (i>1)
 		ann->SetName(new_name);
 
-	wxString labelpathname = filename.Mid(0, filename.find_last_of(wxT('.'))) + ".lbl";
-	if (!wxFileExists(labelpathname))
+	VVDString labelpathname = filename.Mid(0, filename.find_last_of(L'.')) + ".lbl";
+	if (!vvd::FileExists(labelpathname))
 	{
 		labelpathname = SearchProjectPath(labelpathname);
-		if (!wxFileExists(labelpathname)) 
+		if (!vvd::FileExists(labelpathname)) 
 			labelpathname = "";
 	}
 
-	if (wxFileExists(labelpathname)) {
+	if (vvd::FileExists(labelpathname)) {
 		LBLReader reader;
         wstring fn = labelpathname.ToStdWstring();
 		reader.SetFile(fn);
@@ -10011,12 +10573,12 @@ void DataManager::AddAnnotations(Annotations* ann)
 	if (!ann)
 		return;
 
-	wxString name = ann->GetName();
-	wxString new_name = name;
+	VVDString name = ann->GetName();
+	VVDString new_name = name;
 
 	int i;
 	for (i=1; CheckNames(new_name, DATA_ANNOTATIONS); i++)
-		new_name = name+wxString::Format("_%d", i);
+		new_name = name+VVDString::Format("_%d", i);
 
 	if (i>1)
 		ann->SetName(new_name);
@@ -10080,7 +10642,7 @@ void DataManager::RemoveAnnotations(int index)
 	}
 }
 
-void DataManager::RemoveAnnotations(const wxString &name)
+void DataManager::RemoveAnnotations(const VVDString &name)
 {
 	for (int i=0 ; i<(int)m_annotation_list.size() ; i++)
 	{
@@ -10104,7 +10666,7 @@ Annotations* DataManager::GetAnnotations(int index)
 		return 0;
 }
 
-Annotations* DataManager::GetAnnotations(wxString &name)
+Annotations* DataManager::GetAnnotations(const VVDString &name)
 {
 	for (int i=0; i<(int)m_annotation_list.size(); i++)
 	{
@@ -10114,7 +10676,7 @@ Annotations* DataManager::GetAnnotations(wxString &name)
 	return 0;
 }
 
-int DataManager::GetAnnotationIndex(wxString &name)
+int DataManager::GetAnnotationIndex(const VVDString &name)
 {
 	for (int i=0; i<(int)m_annotation_list.size(); i++)
 	{
@@ -10126,18 +10688,18 @@ int DataManager::GetAnnotationIndex(wxString &name)
 	return -1;
 }
 
-wxString DataManager::CheckNewName(const wxString &name, int type)
+VVDString DataManager::CheckNewName(const VVDString &name, int type)
 {
-	wxString result = name;
+	VVDString result = name;
 
 	int i;
 	for (i=1; CheckNames(result, type); i++)
-		result = name+wxString::Format("_%d", i);
+		result = name+VVDString::Format("_%d", i);
 
 	return result;
 }
 
-bool DataManager::CheckNames(const wxString &str, int type)
+bool DataManager::CheckNames(const VVDString &str, int type)
 {
 	bool result = false;
 
@@ -10183,7 +10745,7 @@ bool DataManager::CheckNames(const wxString &str, int type)
 	return result;
 }
 
-bool DataManager::CheckNames(const wxString &str)
+bool DataManager::CheckNames(const VVDString &str)
 {
 	bool result = false;
 	for (unsigned int i=0; i<m_vd_list.size(); i++)
@@ -10332,25 +10894,25 @@ Color DataManager::GetWavelengthColor(double wavelength)
 /////////////////////////////////////////////////////////////////////////
 
 VolumeDecompressorThread::VolumeDecompressorThread(VolumeLoader *vl)
-	: wxThread(wxTHREAD_DETACHED), m_vl(vl)
+	: vvd::Thread(vvd::THREAD_DETACHED), m_vl(vl)
 {
-	wxCriticalSectionLocker enter(*m_vl->ms_pThreadCS);
+	vvd::CriticalSectionLocker enter(*m_vl->ms_pThreadCS);
 	m_vl->m_running_decomp_th++;
 }
 
 VolumeDecompressorThread::~VolumeDecompressorThread()
 {
-	wxCriticalSectionLocker enter(*m_vl->ms_pThreadCS);
+	vvd::CriticalSectionLocker enter(*m_vl->ms_pThreadCS);
 	// the thread is being destroyed; make sure not to leave dangling pointers around
 	m_vl->m_running_decomp_th--;
 }
 
-wxThread::ExitCode VolumeDecompressorThread::Entry()
+vvd::Thread::ExitCode VolumeDecompressorThread::Entry()
 {
 	unsigned int st_time = GET_TICK_COUNT();
 
 	if (!m_vl->ms_pThreadCS)
-		return (wxThread::ExitCode)0;
+		return (vvd::Thread::ExitCode)0;
 
 	while(1)
 	{
@@ -10460,7 +11022,7 @@ wxThread::ExitCode VolumeDecompressorThread::Entry()
 		}
 	}
 
-	return (wxThread::ExitCode)0;
+	return (vvd::Thread::ExitCode)0;
 }
 
 /*
@@ -10468,14 +11030,14 @@ wxDEFINE_EVENT(wxEVT_VLTHREAD_COMPLETED, wxCommandEvent);
 wxDEFINE_EVENT(wxEVT_VLTHREAD_PAUSED, wxCommandEvent);
 */
 VolumeLoaderThread::VolumeLoaderThread(VolumeLoader *vl)
-	: wxThread(wxTHREAD_JOINABLE), m_vl(vl)
+	: vvd::Thread(vvd::THREAD_JOINABLE), m_vl(vl)
 {
 
 }
 
 VolumeLoaderThread::~VolumeLoaderThread()
 {
-	wxCriticalSectionLocker enter(*m_vl->ms_pThreadCS);
+	vvd::CriticalSectionLocker enter(*m_vl->ms_pThreadCS);
 	if (!m_vl->m_decomp_queues.empty())
 	{
 		for (int i = 0; i < m_vl->m_decomp_queues.size(); i++)
@@ -10504,14 +11066,14 @@ VolumeLoaderThread::~VolumeLoaderThread()
 	// the thread is being destroyed; make sure not to leave dangling pointers around
 }
 
-wxThread::ExitCode VolumeLoaderThread::Entry()
+vvd::Thread::ExitCode VolumeLoaderThread::Entry()
 {
 	unsigned int st_time = GET_TICK_COUNT();
 
 	while(m_vl->m_running_decomp_th > 0)
 	{
 		if (TestDestroy())
-			return (wxThread::ExitCode)0;
+			return (vvd::Thread::ExitCode)0;
 		Sleep(10);
 	}
 	
@@ -10640,7 +11202,7 @@ wxThread::ExitCode VolumeLoaderThread::Entry()
 						m_vl->m_running_decomp_th < m_vl->m_max_decomp_th)
 					{
 						VolumeDecompressorThread* dthread = new VolumeDecompressorThread(m_vl);
-						if (dthread->Create() == wxTHREAD_NO_ERROR)
+						if (dthread->Create() == vvd::THREAD_NO_ERROR)
 						{
 							m_vl->ms_pThreadCS->Enter();
 
@@ -10796,7 +11358,7 @@ wxThread::ExitCode VolumeLoaderThread::Entry()
 				m_vl->m_running_decomp_th < m_vl->m_frame_reader_max_decomp_th)
 			{
 				VolumeDecompressorThread* dthread = new VolumeDecompressorThread(m_vl);
-				if (dthread->Create() == wxTHREAD_NO_ERROR)
+				if (dthread->Create() == vvd::THREAD_NO_ERROR)
 				{
 					m_vl->ms_pThreadCS->Enter();
 					m_vl->m_decomp_queues.push_back(dq);
@@ -10863,16 +11425,16 @@ wxThread::ExitCode VolumeLoaderThread::Entry()
 	evt.SetClientData(data);
 	wxPostEvent(m_pParent, evt);
 	*/
-	return (wxThread::ExitCode)0;
+	return (vvd::Thread::ExitCode)0;
 }
 
-wxCriticalSection* VolumeLoader::ms_pThreadCS = nullptr;
+vvd::CriticalSection* VolumeLoader::ms_pThreadCS = nullptr;
 
 VolumeLoader::VolumeLoader()
 {
 	m_thread = NULL;
 	m_running_decomp_th = 0;
-	m_max_decomp_th = wxThread::GetCPUCount()-1;
+	m_max_decomp_th = vvd::Thread::GetCPUCount()-1;
 	if (m_max_decomp_th < 0)
 		m_max_decomp_th = -1;
 	m_frame_reader_max_decomp_th = 6;
@@ -10896,7 +11458,7 @@ VolumeLoader::~VolumeLoader()
 
 void VolumeLoader::Queue(VolumeLoaderData brick)
 {
-	wxCriticalSectionLocker enter(*ms_pThreadCS);
+	vvd::CriticalSectionLocker enter(*ms_pThreadCS);
 	m_queues.push_back(brick);
 }
 
@@ -10936,7 +11498,7 @@ void VolumeLoader::StopAll()
 
 	while(m_running_decomp_th > 0)
 	{
-		wxMilliSleep(10);
+		vvd::MilliSleep(10);
 	}
 }
 
@@ -10944,7 +11506,7 @@ void VolumeLoader::Join()
 {
 	while(m_thread->IsRunning() || m_running_decomp_th > 0)
 	{
-		wxMilliSleep(10);
+		vvd::MilliSleep(10);
 	}
 }
 
@@ -10956,7 +11518,7 @@ bool VolumeLoader::Run()
 		m_queued.clear();
 
 	m_thread = new VolumeLoaderThread(this);
-	if (m_thread->Create() != wxTHREAD_NO_ERROR)
+	if (m_thread->Create() != vvd::THREAD_NO_ERROR)
 	{
 		delete m_thread;
 		m_thread = NULL;
@@ -11649,23 +12211,23 @@ void VolumeLoader::GetPalams(long long &used_mem, int &running_decomp_th, int &q
 
 
 ProjectDataLoaderThread::ProjectDataLoaderThread(ProjectDataLoader *pdl)
-: wxThread(wxTHREAD_DETACHED), m_pdl(pdl)
+: vvd::Thread(vvd::THREAD_DETACHED), m_pdl(pdl)
 {
-    wxCriticalSectionLocker enter(*m_pdl->ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*m_pdl->ms_pThreadCS);
     m_pdl->m_running_th++;
 }
 
 ProjectDataLoaderThread::~ProjectDataLoaderThread()
 {
-    wxCriticalSectionLocker enter(*m_pdl->ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*m_pdl->ms_pThreadCS);
     // the thread is being destroyed; make sure not to leave dangling pointers around
     m_pdl->m_running_th--;
 }
 
-wxThread::ExitCode ProjectDataLoaderThread::Entry()
+vvd::Thread::ExitCode ProjectDataLoaderThread::Entry()
 {
     if (!m_pdl || !m_pdl->m_dm)
-        return (wxThread::ExitCode)0;
+        return (vvd::Thread::ExitCode)0;
     
     while(1)
     {
@@ -11679,40 +12241,67 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             break;
         }
         
-        wxString filename = m_pdl->m_queues[0].path;
-        wxString name = m_pdl->m_queues[0].name;
-        wxString metadata = m_pdl->m_queues[0].metadata;
+        // a project saved by the Qt app on Windows stores '/' paths; the
+        // readers split on GETSLASH() (a backslash there)
+        VVDString filename = vvd::NativeSeparators(m_pdl->m_queues[0].path);
+        VVDString name = m_pdl->m_queues[0].name;
+        VVDString metadata = m_pdl->m_queues[0].metadata;
         int ch_num = m_pdl->m_queues[0].ch;
         int t_num = m_pdl->m_queues[0].t;
         bool compression = m_pdl->m_queues[0].compression;
         bool skip_brick = m_pdl->m_queues[0].skip_brick;
         bool slice_seq =m_pdl->m_queues[0].slice_seq;
         bool time_seq = m_pdl->m_queues[0].time_seq;
-        wxString time_id = m_pdl->m_queues[0].time_id;
+        VVDString time_id = m_pdl->m_queues[0].time_id;
         bool load_mask = m_pdl->m_queues[0].load_mask;
-        wxString mskpath = m_pdl->m_queues[0].mskpath;
-        wxString lblpath = m_pdl->m_queues[0].lblpath;
+        VVDString mskpath = vvd::NativeSeparators(m_pdl->m_queues[0].mskpath);
+        VVDString lblpath = vvd::NativeSeparators(m_pdl->m_queues[0].lblpath);
         int type = m_pdl->m_queues[0].type;
+        size_t queue_index = m_pdl->m_next_index++;
         
         m_pdl->m_queued.push_back(m_pdl->m_queues[0]);
         m_pdl->m_queues.erase(m_pdl->m_queues.begin());
         
         m_pdl->ms_pThreadCS->Leave();
         
+        if (m_pdl->m_prefetch_mode)
+        {
+            // decode only; the caller finishes the load on its own thread
+            auto pre = std::make_unique<VolumePrefetch>();
+            pre->filename = filename;
+            pre->type = type;
+            pre->ch_num = ch_num;
+            pre->t_num = t_num;
+            pre->slice_seq = slice_seq;
+            pre->time_seq = time_seq;
+            pre->time_id = time_id;
+            m_pdl->m_dm->PrefetchVolume(*pre);
+            
+            m_pdl->ms_pThreadCS->Enter();
+            if (queue_index < m_pdl->m_prefetched.size())
+            {
+                m_pdl->m_prefetched[queue_index] = std::move(pre);
+                m_pdl->m_prefetch_ready[queue_index] = 1;
+            }
+            m_pdl->m_progress++;
+            m_pdl->ms_pThreadCS->Leave();
+            continue;
+        }
         
-        wxString pathname = filename;
+        
+        VVDString pathname = filename;
         bool isURL = false;
         bool downloaded = false;
-        wxString downloaded_filepath;
+        VVDString downloaded_filepath;
         bool downloaded_metadata = false;
-        wxString downloaded_metadatafilepath;
+        VVDString downloaded_metadatafilepath;
         
-        wxString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
+        VVDString suffix = filename.Mid(filename.Find('.', true)).MakeLower();
         
-        if (!wxFileExists(pathname) && suffix != ".n5fs_ch")
+        if (!vvd::FileExists(pathname) && suffix != ".n5fs_ch")
         {
             pathname = m_pdl->m_dm->SearchProjectPath(filename);
-            if (!wxFileExists(pathname))
+            if (!vvd::FileExists(pathname))
             {
                 pathname = filename;
                 if (!m_pdl->m_dm->DownloadToCurrentDir(pathname)) continue;
@@ -11722,8 +12311,8 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
                 
                 if(type == LOAD_TYPE_BRKXML)
                 {
-                    wxString metadatapath = filename;
-                    metadatapath = metadatapath.Mid(0, metadatapath.Find(wxT('/'), true)+1) + wxT("_metadata.xml");
+                    VVDString metadatapath = filename;
+                    metadatapath = metadatapath.Mid(0, metadatapath.Find(L'/', true)+1) + L"_metadata.xml";
                     //std::remove("_metadata.xml");
                     if (m_pdl->m_dm->DownloadToCurrentDir(metadatapath))
                     {
@@ -11735,57 +12324,41 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             }
         }
         
-        if (!mskpath.IsEmpty() && !wxFileExists(mskpath))
+        if (!mskpath.IsEmpty() && !vvd::FileExists(mskpath))
             mskpath = m_pdl->m_dm->SearchProjectPath(mskpath);
-        if (!lblpath.IsEmpty() && !wxFileExists(lblpath))
+        if (!lblpath.IsEmpty() && !vvd::FileExists(lblpath))
             lblpath = m_pdl->m_dm->SearchProjectPath(lblpath);
         
         int i;
         int result = 0;
         BaseReader* reader = 0;
         
-        wxString idi_metadata_path;
+        VVDString idi_metadata_path;
         int idi_type = 0;
         if (type == LOAD_TYPE_IDI)
         {
-            wxString idi_volpath;
-            wxFileInputStream ist(pathname);
-            if (!ist.IsOk()) return (wxThread::ExitCode)1;
-            wxZipInputStream zstream(ist);
-            if (!zstream.IsOk()) return (wxThread::ExitCode)1;
-            
-            wxZipEntry *entry;
-            while (entry = zstream.GetNextEntry())
+            VVDString idi_volpath;
+            std::vector<VVDString> extracted;
+            static const std::vector<VVDString> idi_exts = { L".nrrd", L".tif", L".xml" };
+            if (!vvd::UnzipToDir(pathname, vvd::GetTempDir(), extracted, true, &idi_exts)) return (vvd::Thread::ExitCode)1;
+            for (const VVDString& ret : extracted)
             {
-                wxString ename = entry->GetName();
-                if (entry->IsDir())
-                    continue;
-                if (ename.Mid(ename.Find(wxFileName::GetPathSeparator(), true)+1).StartsWith("."))
-                    continue;
-                wxString ret = (wxStandardPaths::Get().GetTempDir() + wxFileName::GetPathSeparator() + ename).ToStdWstring();
-                wxString esuffix = ret.Mid(ret.Find('.', true)).MakeLower();
-                if (esuffix == ".nrrd" || esuffix == ".tif" || esuffix == ".xml")
+                VVDString esuffix = ret.Mid(ret.Find('.', true)).MakeLower();
+                if (esuffix == ".nrrd")
                 {
-                    if (esuffix == ".nrrd")
-                    {
-                        idi_volpath = ret;
-                        idi_type = LOAD_TYPE_NRRD;
-                    }
-                    else if (esuffix == ".tif")
-                    {
-                        idi_volpath = ret;
-                        idi_type = LOAD_TYPE_TIFF;
-                    }
-                    else if (esuffix == ".xml")
-                        idi_metadata_path = ret;
-                    wxFileOutputStream file(ret);
-                    if (!file.IsOk()) return (wxThread::ExitCode)1;
-                    file.Write(zstream);
+                    idi_volpath = ret;
+                    idi_type = LOAD_TYPE_NRRD;
                 }
+                else if (esuffix == ".tif")
+                {
+                    idi_volpath = ret;
+                    idi_type = LOAD_TYPE_TIFF;
+                }
+                else if (esuffix == ".xml")
+                    idi_metadata_path = ret;
             }
-            zstream.CloseEntry();
             if (idi_volpath.IsEmpty() || idi_metadata_path.IsEmpty())
-                return (wxThread::ExitCode)1;
+                return (vvd::Thread::ExitCode)1;
             pathname = idi_volpath;
         }
         
@@ -11840,7 +12413,7 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
         
         if (type == LOAD_TYPE_BRKXML)
         {
-            wxString suffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
+            VVDString suffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
             if (suffix.compare(".xml") == 0)
             {
                 BRKXMLReader* br = (BRKXMLReader *)reader;
@@ -11858,7 +12431,7 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
         
         if (type == LOAD_TYPE_BRKXML && !((BRKXMLReader *)reader)->GetExMetadataURL().empty())
         {
-            wxString metadatapath = ((BRKXMLReader *)reader)->GetExMetadataURL();
+            VVDString metadatapath = ((BRKXMLReader *)reader)->GetExMetadataURL();
             if (m_pdl->m_dm->DownloadToCurrentDir(metadatapath))
             {
                 downloaded_metadata = true;
@@ -11889,6 +12462,9 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             
             if (type == LOAD_TYPE_H5J)
                 m_pdl->ms_pThreadCS->Leave();
+
+            //brick maxima for empty-brick skipping (one thread per loader worker)
+            if (data && type != LOAD_TYPE_BRKXML) data->computeBlockMax(1);
             
             /*
             if (datasize > 0)
@@ -11942,16 +12518,16 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             {
                 if (type != LOAD_TYPE_BRKXML)
                 {
-                    name = wxString(reader->GetDataName());
+                    name = VVDString(reader->GetDataName());
                     if (chan > 1)
-                        name += wxString::Format("_Ch%d", i+1);
+                        name += VVDString::Format("_Ch%d", i+1);
                 }
                 else
                 {
                     BRKXMLReader* breader = (BRKXMLReader*)reader;
                     name = reader->GetDataName();
-                    name = name.Mid(0, name.find_last_of(wxT('.')));
-                    if(ch_num > 1) name = wxT("_Ch") + wxString::Format("%i", i);
+                    name = name.Mid(0, name.find_last_of(L'.'));
+                    if(ch_num > 1) name = L"_Ch" + VVDString::Format("%i", i);
                     pathname = filename;
                     breader->SetCurChan(i);
                     breader->SetCurTime(0);
@@ -12090,7 +12666,7 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
             
             if (type == LOAD_TYPE_BRKXML)
             {
-                wxString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
+                VVDString msuffix = metadata.Mid(metadata.Find('.', true)).MakeLower();
                 if (msuffix.compare(".xml") == 0)
                 {
                     BRKXMLReader* br = (BRKXMLReader *)reader;
@@ -12114,31 +12690,36 @@ wxThread::ExitCode ProjectDataLoaderThread::Entry()
         if (downloaded)
         {
             m_pdl->ms_pThreadCS->Enter();
-            wxRemoveFile(downloaded_filepath);
+            vvd::RemoveFile(downloaded_filepath);
             m_pdl->ms_pThreadCS->Leave();
         }
 
         if (downloaded_metadata)
         {
             m_pdl->ms_pThreadCS->Enter();
-            wxRemoveFile(downloaded_metadatafilepath);
+            vvd::RemoveFile(downloaded_metadatafilepath);
             m_pdl->ms_pThreadCS->Leave();
         }
         
         m_pdl->m_progress++;
     }
     
-    return (wxThread::ExitCode)0;
+    return (vvd::Thread::ExitCode)0;
 }
 
-wxCriticalSection* ProjectDataLoader::ms_pThreadCS = nullptr;
+vvd::CriticalSection* ProjectDataLoader::ms_pThreadCS = nullptr;
 
 ProjectDataLoader::ProjectDataLoader()
 {
-    m_max_th = wxThread::GetCPUCount()-1;
+    m_max_th = vvd::Thread::GetCPUCount()-1;
     if (m_max_th < 0)
         m_max_th = -1;
     m_running_th = 0;
+    m_dm = nullptr;
+    m_queue_count = 0;
+    m_progress = 0;
+    m_prefetch_mode = false;
+    m_next_index = 0;
 }
 
 ProjectDataLoader::~ProjectDataLoader()
@@ -12150,14 +12731,14 @@ ProjectDataLoader::~ProjectDataLoader()
 void ProjectDataLoader::Queue(ProjectDataLoaderQueue path)
 {
 	if (!ms_pThreadCS) return;
-    wxCriticalSectionLocker enter(*ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
     m_queues.push_back(path);
 }
 
 void ProjectDataLoader::ClearQueues()
 {
 	if (!ms_pThreadCS) return;
-    wxCriticalSectionLocker enter(*ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
     if (!m_queues.empty())
     {
         m_queues.clear();
@@ -12174,7 +12755,7 @@ void ProjectDataLoader::Join()
 {
     while(m_running_th > 0)
     {
-        wxMilliSleep(10);
+        vvd::MilliSleep(10);
     }
     m_running_th = 0;
 }
@@ -12187,11 +12768,19 @@ bool ProjectDataLoader::Run()
     
     m_queue_count = m_queues.size();
     m_progress = 0;
+    m_next_index = 0;
+    m_prefetched.clear();
+    m_prefetch_ready.clear();
+    if (m_prefetch_mode)
+    {
+        m_prefetched.resize(m_queue_count);
+        m_prefetch_ready.assign(m_queue_count, 0);
+    }
     
     for (int i = 0; i < m_max_th; i++)
     {
         ProjectDataLoaderThread* th = new ProjectDataLoaderThread(this);
-        if (th->Create() == wxTHREAD_NO_ERROR)
+        if (th->Create() == vvd::THREAD_NO_ERROR)
         {
             th->Run();
         }
@@ -12200,26 +12789,42 @@ bool ProjectDataLoader::Run()
     return true;
 }
 
+bool ProjectDataLoader::IsPrefetchReady(size_t index)
+{
+    if (!ms_pThreadCS) return false;
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
+    return index < m_prefetch_ready.size() && m_prefetch_ready[index];
+}
+
+std::unique_ptr<VolumePrefetch> ProjectDataLoader::TakePrefetch(size_t index)
+{
+    if (!ms_pThreadCS) return nullptr;
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
+    if (index >= m_prefetched.size() || !m_prefetch_ready[index])
+        return nullptr;
+    return std::move(m_prefetched[index]);
+}
+
 
 
 EmptyBlockDetectorThread::EmptyBlockDetectorThread(EmptyBlockDetector *ebd)
-: wxThread(wxTHREAD_DETACHED), m_ebd(ebd)
+: vvd::Thread(vvd::THREAD_DETACHED), m_ebd(ebd)
 {
-    wxCriticalSectionLocker enter(*m_ebd->ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*m_ebd->ms_pThreadCS);
     m_ebd->m_running_th++;
 }
 
 EmptyBlockDetectorThread::~EmptyBlockDetectorThread()
 {
-    wxCriticalSectionLocker enter(*m_ebd->ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*m_ebd->ms_pThreadCS);
     // the thread is being destroyed; make sure not to leave dangling pointers around
     m_ebd->m_running_th--;
 }
 
-wxThread::ExitCode EmptyBlockDetectorThread::Entry()
+vvd::Thread::ExitCode EmptyBlockDetectorThread::Entry()
 {
     if (!m_ebd)
-        return (wxThread::ExitCode)0;
+        return (vvd::Thread::ExitCode)0;
     
     while(1)
     {
@@ -12359,14 +12964,14 @@ wxThread::ExitCode EmptyBlockDetectorThread::Entry()
         m_ebd->ms_pThreadCS->Leave();
     }
     
-    return (wxThread::ExitCode)0;
+    return (vvd::Thread::ExitCode)0;
 }
 
-wxCriticalSection* EmptyBlockDetector::ms_pThreadCS = nullptr;
+vvd::CriticalSection* EmptyBlockDetector::ms_pThreadCS = nullptr;
 
 EmptyBlockDetector::EmptyBlockDetector()
 {
-    m_max_th = wxThread::GetCPUCount()-1;
+    m_max_th = vvd::Thread::GetCPUCount()-1;
     if (m_max_th < 0)
         m_max_th = -1;
     m_running_th = 0;
@@ -12381,14 +12986,14 @@ EmptyBlockDetector::~EmptyBlockDetector()
 void EmptyBlockDetector::Queue(EmptyBlockDetectorQueue path)
 {
     if (!ms_pThreadCS) return;
-    wxCriticalSectionLocker enter(*ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
     m_queues.push_back(path);
 }
 
 void EmptyBlockDetector::ClearQueues()
 {
     if (!ms_pThreadCS) return;
-    wxCriticalSectionLocker enter(*ms_pThreadCS);
+    vvd::CriticalSectionLocker enter(*ms_pThreadCS);
     if (!m_queues.empty())
     {
         m_queues.clear();
@@ -12408,7 +13013,7 @@ void EmptyBlockDetector::Join()
 {
     while(m_running_th > 0)
     {
-        wxMilliSleep(10);
+        vvd::MilliSleep(10);
     }
     m_running_th = 0;
 }
@@ -12425,7 +13030,7 @@ bool EmptyBlockDetector::Run()
     for (int i = 0; i < m_max_th; i++)
     {
         EmptyBlockDetectorThread* th = new EmptyBlockDetectorThread(this);
-        if (th->Create() == wxTHREAD_NO_ERROR)
+        if (th->Create() == vvd::THREAD_NO_ERROR)
         {
             th->Run();
         }

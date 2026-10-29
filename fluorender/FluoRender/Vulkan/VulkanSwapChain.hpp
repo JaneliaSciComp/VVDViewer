@@ -298,13 +298,21 @@ public:
 	* @param height Pointer to the height of the swapchain (may be adjusted to fit the requirements of the swapchain)
 	* @param vsync (Optional) Can be used to force vsync'd rendering (by using VK_PRESENT_MODE_FIFO_KHR as presentation mode)
 	*/
-	void create(uint32_t *width, uint32_t *height, bool vsync = false)
+	//false: the swapchain could not be (re)built, the old one is kept
+	bool create(uint32_t *width, uint32_t *height, bool vsync = false)
 	{
 		VkSwapchainKHR oldSwapchain = swapChain;
 
 		// Get physical device surface properties and formats
 		VkSurfaceCapabilitiesKHR surfCaps;
-		VK_CHECK_RESULT(fpGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfCaps));
+		// a lost surface (window being destroyed) leaves surfCaps undefined:
+		// keep the old swapchain instead of building one from garbage extents
+		const VkResult capsRes = fpGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfCaps);
+		if (capsRes != VK_SUCCESS)
+		{
+			std::cerr << "VulkanSwapChain::create: surface capabilities query failed (" << capsRes << "), swapchain kept" << std::endl;
+			return false;
+		}
 
 		// Get available present modes
 		uint32_t presentModeCount;
@@ -332,7 +340,7 @@ public:
 		}
         
         if (surfCaps.currentExtent.width <= 0 || surfCaps.currentExtent.height <= 0)
-            return;
+            return false;
 
 
 		// Select a present mode for the swapchain
@@ -424,7 +432,37 @@ public:
 			swapchainCI.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		}
 
-		VK_CHECK_RESULT(fpCreateSwapchainKHR(device, &swapchainCI, nullptr, &swapChain));
+		VkSwapchainKHR newSwapchain = VK_NULL_HANDLE;
+		const VkResult createRes = fpCreateSwapchainKHR(device, &swapchainCI, nullptr, &newSwapchain);
+		if (createRes != VK_SUCCESS || newSwapchain == VK_NULL_HANDLE)
+		{
+			std::cerr << "VulkanSwapChain::create: vkCreateSwapchainKHR failed (" << createRes << ")" << std::endl;
+			//the call retired the old swapchain even though it failed: its
+			//images can no longer be acquired, and it must not be passed as
+			//oldSwapchain again. Release it; acquireNextImage / queuePresent
+			//report OUT_OF_DATE until a create succeeds (frames are skipped)
+			if (oldSwapchain != VK_NULL_HANDLE)
+			{
+				for (uint32_t i = 0; i < imageCount && i < buffers.size(); i++)
+				{
+					if (!buffers[i])
+						continue;
+					if (buffers[i]->view != VK_NULL_HANDLE)
+						vkDestroyImageView(device, buffers[i]->view, nullptr);
+					if (buffers[i]->sampler != VK_NULL_HANDLE)
+						vkDestroySampler(device, buffers[i]->sampler, nullptr);
+					buffers[i]->view = VK_NULL_HANDLE;
+					buffers[i]->sampler = VK_NULL_HANDLE;
+					buffers[i]->descriptor.imageView = VK_NULL_HANDLE;
+					buffers[i]->descriptor.sampler = VK_NULL_HANDLE;
+					buffers[i]->image = VK_NULL_HANDLE;
+				}
+				fpDestroySwapchainKHR(device, oldSwapchain, nullptr);
+				swapChain = VK_NULL_HANDLE;
+			}
+			return false;
+		}
+		swapChain = newSwapchain;
 
 		// If an existing swap chain is re-created, destroy the old swap chain
 		// This also cleans up all the presentable images
@@ -481,6 +519,8 @@ public:
 			buffers[i]->subresourceRange = colorAttachmentView.subresourceRange;
 			buffers[i]->mipLevels = 1;
 			buffers[i]->is_swapchain_images = true;
+			//not yet in PRESENT_SRC: Vulkan2dRender transitions it on first use
+			buffers[i]->uploaded = false;
 			buffers[i]->descriptor.imageLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
             
             // Create sampler
@@ -506,6 +546,7 @@ public:
             
             buffers[i]->descriptor.imageView = buffers[i]->view;
 		}
+		return true;
 	}
 
 	/** 
@@ -522,6 +563,9 @@ public:
 	{
 		// By setting timeout to UINT64_MAX we will always wait until the next image has been acquired or an actual error is thrown
 		// With that we don't have to handle VK_NOT_READY
+		//no swapchain (a failed rebuild released it): out of date until recreated
+		if (swapChain == VK_NULL_HANDLE)
+			return VK_ERROR_OUT_OF_DATE_KHR;
 		return fpAcquireNextImageKHR(device, swapChain, UINT64_MAX, presentCompleteSemaphore, (VkFence)nullptr, imageIndex);
 	}
 
@@ -536,6 +580,8 @@ public:
 	*/
 	VkResult queuePresent(VkQueue queue, uint32_t imageIndex, VkSemaphore waitSemaphore = VK_NULL_HANDLE)
 	{
+		if (swapChain == VK_NULL_HANDLE)
+			return VK_ERROR_OUT_OF_DATE_KHR;
 		VkPresentInfoKHR presentInfo = {};
 		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 		presentInfo.pNext = NULL;
@@ -562,6 +608,15 @@ public:
 			for (uint32_t i = 0; i < imageCount; i++)
 			{
 				vkDestroyImageView(device, buffers[i]->view, nullptr);
+				//create() makes a sampler per image (a recreate destroys it, the
+				//last ones leaked at exit: VUID-vkDestroyDevice-device-05137)
+				if (buffers[i]->sampler != VK_NULL_HANDLE)
+				{
+					vkDestroySampler(device, buffers[i]->sampler, nullptr);
+					buffers[i]->sampler = VK_NULL_HANDLE;
+					buffers[i]->descriptor.sampler = VK_NULL_HANDLE;
+				}
+				buffers[i]->view = VK_NULL_HANDLE;
 			}
 		}
 		if (surface != VK_NULL_HANDLE)

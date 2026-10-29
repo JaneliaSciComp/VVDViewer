@@ -112,11 +112,8 @@ void MSKWriter::Save(wstring filename, int mode)
 		nrrdAxisInfoSet(data, nrrdAxisInfoMin, AIR_NAN, AIR_NAN, AIR_NAN);
 	}
 
-	string str;
-	str.assign(str_name.length(), 0);
-	for (int i=0; i<(int)str_name.length(); i++)
-		str[i] = (char)str_name[i];
-	nrrdSave(str.c_str(), data, nio);
+	if (SaveNrrdFile(str_name, data, nio))
+		fprintf(stderr, "MSKWriter: could not save %ls\n", str_name.c_str());
 
 	nrrdIoStateNix(nio);
 
