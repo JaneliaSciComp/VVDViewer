@@ -170,8 +170,11 @@ bool BrushTool::GetPaintUse2d() const
 
 void BrushTool::SetBrush(int mode)
 {
-	// wx: m_prev_focus = FindFocus(); SetFocus();
-	if (m_canvas && !m_canvas->hasFocus())
+	// wx: m_prev_focus = FindFocus(); SetFocus(); -- but a text field being
+	// edited (the Analyze dialog's Threshold / size fields, a property
+	// panel's) keeps the keyboard: the brush is driven by the mouse and the
+	// modifier state, so it needs no focus of its own
+	if (m_canvas && !m_canvas->hasFocus() && !Editing())
 	{
 		if (!m_prev_focus)
 			m_prev_focus = QApplication::focusWidget();
@@ -209,6 +212,10 @@ void BrushTool::SelectBrushMode(int paint_mode)
 	{
 		SetIntMode(2);
 		SetPaintMode(paint_mode);
+		// arm the brush now rather than at the first mouse event over the
+		// view (wx UpdateBrushState -> SetBrush): the circle is drawn as soon
+		// as the pointer arrives
+		SetBrush(paint_mode);
 	}
 	else
 		SetIntMode(1);
@@ -241,7 +248,12 @@ bool BrushTool::MouseInCanvas() const
 		return false;
 	if (QGuiApplication::applicationState() != Qt::ApplicationActive)
 		return false;
-	return m_canvas->rect().contains(m_canvas->mapFromGlobal(QCursor::pos()));
+	// wx: GetScreenRect().Contains(mouse). The widget under the pointer
+	// rather than the rectangle: the floating Analyze window usually lies
+	// over the view, and a Shift typed into one of its fields must not
+	// switch the brush
+	QWidget* under = QApplication::widgetAt(QCursor::pos());
+	return under && (under == m_canvas || m_canvas->isAncestorOf(under));
 }
 
 // wx: the focused window is a wxTextCtrl ("editting") / m_key_lock
@@ -314,8 +326,14 @@ bool BrushTool::eventFilter(QObject* obj, QEvent* e)
 	}
 	case QEvent::MouseMove:
 	case QEvent::MouseButtonPress:
-		// wx OnMouse: UpdateBrushState() first when the pointer is in the view
-		if (obj && obj->isWindowType() && MouseInCanvas() && !Editing())
+		// wx OnMouse: UpdateBrushState() first when the pointer is in the view.
+		// Not gated on Editing(): the Analyze window keeps the keyboard focus
+		// in one of its text fields from the moment it opens, so moving into
+		// the view never applied the brush chosen with Select / Diffuse /
+		// Unselect (no circle, no paint) until a click on the view moved the
+		// focus. SetBrush leaves the text field's focus alone; the hold keys
+		// are skipped while editing in the KeyPress case above.
+		if (obj && obj->isWindowType() && MouseInCanvas())
 			UpdateBrushState();
 		break;
 	case QEvent::ApplicationStateChange:

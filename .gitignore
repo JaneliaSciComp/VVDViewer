@@ -188,3 +188,4 @@ review-fixes.bundle
 build-qt-port.log
 build_tps/
 /build*.log
+brush-trace.log
