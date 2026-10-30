@@ -165,7 +165,7 @@ if [ -z "$NBLAST_JAR" ]; then
 fi
 copy_resources() {  # $1 = destination directory
   local dest="$1" h
-  for d in CL_code Fonts Scripts; do rm -rf "${dest:?}/$d"; cp -R "$REPO/$d" "$dest/$d"; done
+  for d in CL_code Fonts Scripts ColorDepthMIP; do rm -rf "${dest:?}/$d"; cp -R "$REPO/$d" "$dest/$d"; done
   cp "$REPO"/Settings/* "$dest/"
   for h in $HELPERS; do
     [ -f "$REPO/$h" ] || fail "Plugin helper file missing: $REPO/$h"

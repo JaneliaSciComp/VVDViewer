@@ -22,6 +22,7 @@ inline bool VVDQtPaintTestKind(const QString& kind)
 		kind == "hide" || kind == "ctx" || kind == "ui" || kind == "diffuse" || kind == "rulervol" || kind == "rulerauto" ||
 		kind == "rulerlist" || kind == "warp" || kind == "warptarget" || kind == "cells" || kind == "view3d" || kind == "na" || kind == "legend2" ||
 		kind == "layout" ||   // MainWindowLayout.cpp
+		kind == "cdm" ||      // MainWindowCDM.cpp
 		kind.startsWith("b3_") ||   // MainWindowBatch3Test.cpp
 		kind.startsWith("b4_") ||   // MainWindowBatch4Test.cpp
 		kind.startsWith("b4b_");    // MainWindowPluginTest.cpp

@@ -148,6 +148,19 @@ void MainWindow::ApplyViewSettings(RenderCanvas* c)
 	c->SetBlendSlices(m_settings->GetMicroBlend());
 	c->SetAdaptive(m_settings->GetMouseInt());
 	c->SetAdaptiveRes(m_settings->GetMouseLv());
+	// Settings > Performance: the sample rate while the mouse is down, 1/N of
+	// the normal rate. The engine keeps it as a static (the wx build leaves
+	// it at its old fixed 1/2); a renderer derives its reduced rate when its
+	// sample rate is set, so the volumes already loaded are set again.
+	const double div = m_settings->GetMouseIntDiv();
+	if (div != FLIVR::TextureRenderer::get_interactive_rate_div())
+	{
+		FLIVR::TextureRenderer::set_interactive_rate_div(div);
+		if (m_data_mgr)
+			for (int i = 0; i < m_data_mgr->GetVolumeNum(); i++)
+				if (VolumeData* vd = m_data_mgr->GetVolumeData(i))
+					if (vd->GetVR()) vd->GetVR()->set_sampling_rate(vd->GetSampleRate());
+	}
 	c->SetUseFogMesh(m_settings->GetUseFogMesh());
 	// wx DrawOLShadows / DrawOLShadowsMesh read SettingDlg::GetShadowDir;
 	// VRenderFrame ctor / SettingDlg::OnGradBgCheck -> SetGradBg

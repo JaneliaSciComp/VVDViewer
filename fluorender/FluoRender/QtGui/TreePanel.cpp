@@ -1631,6 +1631,8 @@ QMenu* TreePanel::BuildContextMenu(QTreeWidgetItem* item)
 		add(tr("Duplicate"), &TreePanel::OnDuplicate);
 		add(tr("Save"), &TreePanel::OnSave);
 		add(tr("Save 3D Painted Region"), &TreePanel::OnSaveSegmentedVolume);
+		// Qt only: the Fiji macro Color_Depth_MIP_batch (MainWindowCDM.cpp)
+		add(tr("Save Color Depth MIP..."), &TreePanel::OnSaveColorDepthMIP);
 		add_f(tr("Show Entire Volume"), [this]() { OnSetMaskHideMode(VOL_MASK_HIDE_NONE); });
 		add_f(tr("Show Only Inside of Mask"), [this]() { OnSetMaskHideMode(VOL_MASK_HIDE_OUTSIDE); });
 		add_f(tr("Show Only Outside of Mask"), [this]() { OnSetMaskHideMode(VOL_MASK_HIDE_INSIDE); });
@@ -1838,6 +1840,14 @@ void TreePanel::OnSaveSegmentedVolume()
 		FileDialogs::GetCropToClip(), FileDialogs::GetScaleLevel());
 	vd->SetMaskHideMode(mskmode);
 	if (vd->isBrxml()) RefreshViews();
+}
+
+// Qt only: "Save Color Depth MIP..." (MainWindow::SaveColorDepthMIP)
+void TreePanel::OnSaveColorDepthMIP()
+{
+	if (m_fixed) return;
+	if (VolumeData* vd = VolumeOf(m_tree->currentItem()))
+		Q_EMIT colorDepthMipRequested(vd);
 }
 
 // wx OnShowEntireVolume / OnHideOutsideOfMask / OnHideInsideOfMask

@@ -874,6 +874,11 @@ void MainWindow::RunTestScript(const QString& name)
 		RunLayoutTest(name);   // MainWindowLayout.cpp; quits when done
 		return;
 	}
+	if (name == "cdm")
+	{
+		RunCdmTest();   // MainWindowCDM.cpp; quits when done
+		return;
+	}
 	if (name.startsWith("b4b_"))
 	{
 		RunPluginTest(name);   // MainWindowPluginTest.cpp; quits when done

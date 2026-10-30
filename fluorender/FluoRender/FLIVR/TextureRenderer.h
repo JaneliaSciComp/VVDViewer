@@ -265,6 +265,10 @@ namespace FLIVR
                //interactive mdoe
                static void set_interactive(bool mode) {interactive_ = mode;}
                static bool get_interactive() {return interactive_;}
+               //sample rate while the mouse is down: 1/N of the normal rate
+               //(Settings > Performance; 2 = the historical fixed half rate)
+               static void set_interactive_rate_div(double div) {interactive_rate_div_ = div > 1.0 ? div : 1.0;}
+               static double get_interactive_rate_div() {return interactive_rate_div_;}
                //number of bricks rendered before time is up
                static void reset_finished_bricks();
                static int get_finished_bricks() {return finished_bricks_;}
@@ -380,6 +384,7 @@ namespace FLIVR
                static unsigned long consumed_time_;
                //interactive mode
                static bool interactive_;
+               static double interactive_rate_div_;
                //number of rendered blocks before time is up
                static int finished_bricks_;
                //update order

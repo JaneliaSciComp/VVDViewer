@@ -189,6 +189,13 @@ public:
 	void RunBatch4Test(const QString& kind);
 	// Testing aid (VVD_QT_TEST=b4b_*, MainWindowPluginTest.cpp): plugins
 	void RunPluginTest(const QString& kind);
+	// "Save Color Depth MIP..." of a volume (the tree's volume menu; Qt only,
+	// MainWindowCDM.cpp): options dialog, save dialog, cdm::Compute on a
+	// worker thread with a progress dialog, PackBits RGB TIFF
+	void SaveColorDepthMIP(VolumeData* vd);
+	// Testing aid (VVD_QT_TEST=cdm, MainWindowCDM.cpp): the first volume's
+	// "Save Color Depth MIP..." without dialogs (VVD_QT_CDM_OUT); quits
+	void RunCdmTest();
 	// Testing aid (VVD_QT_TEST=layout, MainWindowLayout.cpp): window / pane
 	// sizes against the screen
 	void RunLayoutTest(const QString& kind);

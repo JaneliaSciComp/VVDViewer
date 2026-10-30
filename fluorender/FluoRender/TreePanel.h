@@ -125,6 +125,7 @@ class EXPORT_API DataTreeCtrl: public wxTreeCtrl, Notifier
 		ID_Duplicate,
 		ID_Save,
         ID_SaveSegVol,
+        ID_SaveCDM,
         ID_ShowEntireVolume,
         ID_HideOutsideMask,
         ID_HideInsideMask,
@@ -340,6 +341,7 @@ private:
 	void OnDuplicate(wxCommandEvent& event);
 	void OnSave(wxCommandEvent& event);
     void OnSaveSegmentedVolume(wxCommandEvent& event);
+    void OnSaveColorDepthMIP(wxCommandEvent& event);
     void OnShowEntireVolume(wxCommandEvent& event);
     void OnHideOutsideOfMask(wxCommandEvent& event);
     void OnHideInsideOfMask(wxCommandEvent& event);

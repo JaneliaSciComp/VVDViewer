@@ -663,8 +663,10 @@ endforeach()
 file(GLOB rsc ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/img/*.xpm)
 # the cell warp (RigidCellsWarp.cpp) reproduces a Java plugin bit for bit:
 # no fused multiply-add contraction (also set by a pragma in the file)
+# the same for the Color Depth MIP port (ColorDepthMIP.cpp, Fiji macro + plugins)
 if(NOT MSVC)
   set_source_files_properties(${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/RigidCellsWarp.cpp
+    ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/ColorDepthMIP.cpp
     PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
@@ -1139,6 +1141,19 @@ add_custom_command(TARGET VVDViewer PRE_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
   "${VVDViewer_SOURCE_DIR}/Fonts"
   "${CMAKE_BINARY_DIR}/Fonts")
+
+#copy the Color Depth MIP masks and LUT (ColorDepthMIP.cpp) to the binary directory
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/ColorDepthMIP"
+    "$<TARGET_FILE_DIR:VVDViewer>/../Resources/ColorDepthMIP")
+else()
+  add_custom_command(TARGET VVDViewer PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${VVDViewer_SOURCE_DIR}/ColorDepthMIP"
+    "$<TARGET_FILE_DIR:VVDViewer>/ColorDepthMIP")
+endif()
 
 #copy script dir to the binary directory
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")

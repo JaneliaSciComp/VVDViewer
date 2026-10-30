@@ -22,6 +22,7 @@
 #include <QDialog>
 #include <QString>
 #include "RigidCellsWarp.h"
+#include "ColorDepthMIP.h"
 
 class QCheckBox;
 class QSlider;
@@ -75,6 +76,9 @@ public:
 	bool GetShadowDirEnabled() const { return m_shadow_dir; }
 	void GetShadowDir(double& x, double& y) const { x = m_shadow_dir_x; y = m_shadow_dir_y; }
 	bool GetMouseInt() const { return m_mouse_int; }
+	// sample rate while the mouse is down: 1/N of the normal rate (N = 2..5,
+	// default 2 = the engine's former fixed value) -- TextureRenderer::set_interactive_rate_div
+	int GetMouseIntDiv() const { return m_mouse_int_div; }
 	bool GetMouseLv() const { return m_mouse_lv; }        // view SetAdaptiveRes()
 	int GetWavelengthColor(int n) const;
 	QString GetTimeId() const { return m_time_id; }
@@ -131,6 +135,9 @@ public:
 	// Qt only, the stiffness is the dialog's shared slider and not stored)
 	const rigidcells::Params& GetCellWarpParams() const { return m_cell_warp; }
 	void SetCellWarpParams(const rigidcells::Params& p) { m_cell_warp = p; }
+	// "Save Color Depth MIP..." dialog values (/color depth mip; Qt only)
+	const cdm::Options& GetColorDepthMIPOptions() const { return m_cdm; }
+	void SetColorDepthMIPOptions(const cdm::Options& o) { m_cdm = o; }
 	// Measurement "Target:" (/warp target; Qt only): "auto" (default),
 	// "same" or "vol:<volume name>"
 	QString GetWarpTarget() const { return m_warp_target; }
@@ -204,6 +211,7 @@ private:
 	double m_shadow_dir_x;
 	double m_shadow_dir_y;
 	bool m_mouse_int;
+	int m_mouse_int_div = 2;
 	bool m_mouse_lv;
 	int m_wav_color1;   // 1-red 2-green 3-blue 4-purple 5-white
 	int m_wav_color2;
@@ -231,6 +239,7 @@ private:
 	bool m_ruler_time_dep;
 	bool m_ruler_auto_select;
 	rigidcells::Params m_cell_warp;
+	cdm::Options m_cdm;
 	QString m_warp_target;
 	bool m_pvxml_flip_x;
 	bool m_pvxml_flip_y;
@@ -274,6 +283,7 @@ private:
 	QCheckBox* m_sphere_rot_chk = nullptr;
 	// performance
 	QCheckBox* m_mouse_int_chk = nullptr;
+	QComboBox* m_mouse_int_div_cmb = nullptr;
 	QCheckBox* m_mouse_lv_chk = nullptr;
 	QCheckBox* m_streaming_chk = nullptr;
 	QSlider* m_graphics_mem_sldr = nullptr;

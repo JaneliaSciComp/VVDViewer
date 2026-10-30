@@ -843,6 +843,7 @@ void MainWindow::BuildDocks()
 	connect(m_tree, &TreePanel::refreshRequested, this, [this]() {
 		for (const auto& v : m_views) { v->canvas->RefreshView(); v->view->ReloadLegend(); } });
 	connect(m_tree, &TreePanel::toolRequested, this, &MainWindow::OnTreeTool);
+	connect(m_tree, &TreePanel::colorDepthMipRequested, this, &MainWindow::SaveColorDepthMIP);
 	// wx DataTreeCtrl::OnCloseView -> DeleteVRenderView
 	connect(m_tree, &TreePanel::closeViewRequested, this, [this](RenderCanvas* c) {
 		const int i = ViewIndex(c);

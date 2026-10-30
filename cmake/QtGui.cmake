@@ -48,6 +48,7 @@ list(APPEND qtgui_hdr ${qtplugin_hdr})
 set(qt_engine_src
 	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/DataManager.cpp
 	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/RigidCellsWarp.cpp
+	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/ColorDepthMIP.cpp
 	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/VolumeSelector.cpp
 	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/VolumeCalculator.cpp
 	${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/KernelExecutor.cpp
@@ -165,6 +166,8 @@ if(APPLE)
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Settings" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources"
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/CL_code"
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Fonts" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/Fonts"
+		# masks and LUT of "Save Color Depth MIP..." (ColorDepthMIP.cpp)
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/ColorDepthMIP" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/ColorDepthMIP"
 		# plugin files (wx StartFiji copies these from Resources into Fiji;
 		# runNBLAST runs Resources/nblast_search.R)
 		COMMAND ${CMAKE_COMMAND} -E copy ${qtplugin_res} "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/"
@@ -214,6 +217,7 @@ else()
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/CL_code"
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Fonts" "$<TARGET_FILE_DIR:VVDViewerQt>/Fonts"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/ColorDepthMIP" "$<TARGET_FILE_DIR:VVDViewerQt>/ColorDepthMIP"
 		COMMAND ${CMAKE_COMMAND} -E copy ${qtplugin_res} "$<TARGET_FILE_DIR:VVDViewerQt>/"
 		COMMENT "Copying VVDViewerQt resources")
 endif()

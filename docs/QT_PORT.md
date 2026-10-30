@@ -120,6 +120,7 @@ detailed sections. Open items are listed under "Known issues / not done".
 | Paint brush / selection / masks | done | all strokes, undo / redo, erase / extract, calculations, components, index / NA volumes |
 | Measurement | done + extensions | rulers, transforms (TPS ... Cells), Start / End Volume, Auto-select, Target: grid ("Measurement and warps") |
 | Analyze dialogs | done | Noise Reduction, Counting and Volume, Colocalization, Convert, Information |
+| Color Depth MIP | done (new, both apps) | "Save Color Depth MIP..." in the volume menu: native port of the Fiji macro Color_Depth_MIP_batch_0308_2021, pixel-identical output ("Color Depth MIP") |
 | Components & Tracking | done | `TraceDialog`, all pages ("Components & Tracking") |
 | Settings | done | all SettingDlg pages, same `fluorender.set` file, test modes |
 | Plugins | done | Fiji Interface, NBLAST Search, Neuron Annotator, built in; shared-library plugins ("Plugins") |
@@ -195,6 +196,10 @@ engine changes that also change the wx app are under "Bug fixes".
   full-quality pass (~2x the slices) and the drag went stop-and-go. The Qt
   app returns to full quality only after 300 ms without input
   (`VVD_INT_SETTLE_MS`), also after the button is released.
+* **Reduced sampling rate is selectable** (Settings > Performance, "Reduce
+  volume sample rate for mouse interactions to 1/2 ... 1/5"; `/mouse
+  int/rate_div` in fluorender.set): wx always uses 1/2, which stays the
+  default.
 
 ### Measurement
 
@@ -274,6 +279,21 @@ engine changes that also change the wx app are under "Bug fixes".
   columns, a horizontal line above the bottom row (Max Value, Color, spacing,
   scale bar, mask, group) and a vertical line before the Inv / Index / MIP /
   Smoothing column, with narrower gaps than before so the pane is no wider.
+* **Save Color Depth MIP...** (new; Workspace tree, volume menu, right after
+  "Save 3D Painted Region"; the wx app has the entry too): makes the colour
+  depth MIP of the volume exactly as Hideo Otsuna's Fiji macro
+  `Color_Depth_MIP_batch_0308_2021.ijm` with its plugins does for a
+  single-channel stack (Brain 1024x512 / 1184x592 and VNC 512x1024 /
+  512x1100 with the tissue masks, any other size with the macro's
+  rectangle masks), natively and ~10-15x faster than Fiji, and saves it as a
+  PackBits RGB TIFF. Qt: an options dialog = the macro's dialog (the five
+  brightness modes, Add color scale, Reversed color, Apply Gamma 1.4,
+  Skeleton bolded MIP, DSLT version, Starting / Ending MIP slice, desired
+  mean), remembered in `fluorender.set` (`[color depth mip]`, Qt-only keys
+  that the wx app keeps), then a save dialog (the volume's folder, the
+  macro's file name), a progress dialog with Cancel, and the file, Max and
+  signal size in the status bar. wx: asks for the brightness mode only and
+  uses the other remembered (or default) options. See "Color Depth MIP".
 
 ### Settings files (both apps)
 
@@ -979,6 +999,135 @@ Cells (shape preserving)"), in the toolkit-neutral `RigidCellsWarp.h/.cpp`
   465630 nonzero voxels on the 2953 x 625 x 625 grid with every ruler end
   point on the warped object; the reverse puts every start point on it.
 
+## Color Depth MIP
+
+`ColorDepthMIP.cpp` / `.h` (engine, toolkit-neutral; `cdm::Compute`,
+`cdm::WriteTiff`, `cdm::GetVolume`, `cdm::DefaultFileName`,
+`cdm::Load/SaveOptions`), `QtGui/ColorDepthMIPDialog.*`,
+`QtGui/MainWindowCDM.cpp`, wx `DataTreeCtrl::OnSaveColorDepthMIP`
+(`TreePanel.cpp`). Data: the repository folder `ColorDepthMIP/`
+(`JFRC2010_Mask.tif`, `JFRC2013_20x_Mask.tif`, `Mask_VNC_Female.tif`,
+`Mask_VNC_Male.tif`, `JFRC2010_3D_Mask.nrrd`, `PsychedelicRainBow2.lut`,
+copied from Fiji's `plugins/Plugins_Color_MIP`; byte-identical to the copies
+in the author's GPL-3 repository Brain-aligner-CDM-cleater-pipeline except the
+LUT, whose lines end in CR LF in Fiji and LF there, same values), copied into
+`Contents/Resources/ColorDepthMIP` of both bundles (next to the executable
+elsewhere, also by `package.sh`, `package.ps1`, `insetup.iss`);
+`VVD_CDM_DATA` overrides the folder.
+
+* **What is ported**: the macro's `mipfunction` for one channel (the
+  `imageNum==1` case, saved as `<name without extension>.tif`, cut at `_QI`)
+  with every function it calls (basicoperation, autobradjustment, DSLTfun,
+  applyVcalculation, brightnessapply, BackgroundMask, ColorCoder, CreateScale,
+  leftPad), the 8-bit, 16-bit, "16-bit holding 8-bit data" and 32-bit
+  branches, the five brightness modes, Reversed, Gamma 1.4, Skeleton bolded
+  MIP, DSLT Line / Normal, the MIP slice range and the colour scale with its
+  texts; the plugins as installed in Fiji (`javap -c` of the loaded classes
+  against the sources: Mask_Brightness_Measure, Three_D_Ave and Gamma_ differ
+  from their sources, the installed classes are ported), Anisotropic
+  Diffusion 2D 2.0.1, and the ImageJ 1.54p built-ins on the way (Z Project,
+  Enhance Contrast 0.3 %, setMinAndMax + Apply LUT, 8-/16-bit conversions,
+  AutoThresholder Triangle / Moments / Mean, Convert to Mask, Create
+  Selection statistics, Canvas Size, rectangle / polygon Fill, ImageCalculator,
+  Remove Outliers, getHistogram with 65535 bins, the text LUT, RGB
+  conversion, paste, drawString).
+* **Exactness rules**: every expression keeps the Java evaluation order and
+  type (int / float / double, Java's `(int)` and `Math.round`), no fused
+  multiply-add (`-ffp-contract=off` + pragma, as RigidCellsWarp.cpp); the
+  values of `Math.sin` / `Math.cos` / `Math.exp` that the plugins take from
+  fixed arguments (DSLT directions, Gaussian filters) are Fiji JVM dumps
+  (`ColorDepthMIPTables.inc`; one Gaussian differs by one ulp from the C
+  library); the texts are drawn with the glyphs Java2D produces for
+  SansSerif 12 / Arial 20 (per-pixel LCD mix values solved from renderings on
+  all 256 gray backgrounds) and Java2D's LCD blend (gamma 1.4 tables,
+  `mul8`), `ColorDepthMIPText.inc`. Glyphs exist for the characters the
+  macro draws (digits, "Max: /", "Slices").
+* **Input**: the volume's in-memory full-resolution data of the current time
+  point (`VolumeData` → `Texture` → `Nrrd`, x fastest as in the file, which is
+  also how Fiji opens it), 8-bit, 16-bit or 32-bit float; pyramid /
+  brick-streamed volumes and single slices are refused with a message. The
+  data are copied, the volume is not changed.
+* **Threads**: Z projections, LUT / conversions, Anisotropic Diffusion, DSLT3D
+  and DSLT_ (every pixel independent), Remove Outliers and the colour coding
+  run on all cores (`Options::threads`); the noise filters of the DSLT
+  plugins and MIP_right_color stay sequential (the Java loops work in place /
+  carry state from pixel to pixel).
+* **Output**: RGB 8-bit contiguous, PackBits, `ImageDescription`
+  `ImageJ=1.54p`; Fiji opens it as an RGB image with the same pixels as the
+  macro's (uncompressed) file.
+* **Findings in the macro and plugins** (how the port handles them):
+  * Lines 1574-1592 ("Segmentation based automatic"): `run("Mask MIP
+    Zerovalue Measure", "mask="+MaskName2D+...)` and `zeronumberpxPre` are
+    never defined in this macro (the pipeline macro
+    `Color_Depth_MIP_batch_0404_2019_For_Pipeline.ijm` defines them); Fiji
+    stops with "Undefined variable" at the first 8- or 16-bit stack, so this
+    mode writes nothing in Fiji. Ported with a zero gap (no change of Inimin,
+    lowerweight or the mode); the reference harness defines
+    `MaskName2D="minchangedMIP.tif"` and `zeronumberpxPre=0`, which makes the
+    check measure 0 and do nothing.
+  * BackgroundMask opens `JFRCpath` (JFRC2010_Mask.tif) for both brain sizes,
+    so a 1184x592 stack stops with "Image not found" at
+    `imageCalculator("Min", ..., "JFRC2013_20x_Mask.tif")`. Ported as
+    evidently intended: the JFRC2013_20x mask (the harness opens it from the
+    same folder).
+  * DSLT3D_LINE2_Multi / DSLT_ compare their radio-button strings with `==`,
+    which never matches a value from macro options: "noise=5px" and
+    "close=None" are ignored and the IJ_Prefs values are used (on this
+    machine "Noise canceling method2" = 0, i.e. 1px, close gap 0); DSLT_'s
+    slider "less than this value is the noise" comes from `less=9`, or, in
+    the DSLT "Normal" path that does not pass it, from `measuresize.int`
+    (9 here). The port uses these effective values.
+  * ColorCoder's Gamma 1.4 of the 8-bit stack usually does nothing in Fiji.
+    `Gamma ` (3d, in=InMacro) writes a corrected copy
+    `DUP_Original_Stack.tif`; the macro closes `Original_Stack.tif` and
+    renames the copy. In batch mode every `ImagePlus.show()` appends the
+    image to the batch-mode image list again (`addBatchModeImage` has no
+    duplicate check) and `close()` removes one entry. Mask Median Subtraction
+    and Gamma samewindow noswing end with `imp.show()` of the stack, so a
+    stale entry of the uncorrected stack stays ahead of the renamed copy, and
+    `selectWindow("Original_Stack.tif")` / `Z Code Stack HO
+    data=Original_Stack.tif` pick it. The port counts the stack's list
+    entries and applies this gamma only when the stack is listed once (No
+    adjustment, 1.5 % saturation, Max1, 32-bit stacks). In the segmentation
+    modes the stack is listed 2-3 times, so only the 2D gamma (BackgroundMask
+    / rectangle mask) and the 16-bit 3D gamma of brightnessapply take effect.
+  * Gamma_ is a `JFrame` and fails in headless Fiji (HeadlessException). The
+    Gamma references therefore come from plain ImageJ 1.54p (`ij.jar -batch`,
+    no ImageJ window) loading Fiji's `plugins` folder. That setup is
+    pixel-identical to headless Fiji on the compared non-Gamma cases and to
+    one non-headless Fiji Gamma run.
+  * The 8-bit branch reads the Max value result from `getInfo("log")`, which
+    is empty in command-line runs; the harness reads
+    `call("Max_value.getResult")` instead (same value).
+  * Unreachable in this macro: the Unsharp Mask / Maximum filters (Skeleton
+    bolded MIP sets `unsharp="Max"` together with `AutoBRV=0`, and the filters
+    run only with `AutoBRV==1`), brightnessapply's 8-bit branch (every 8-bit
+    stack is 16-bit by then), the multi-DSLT block (`multiDSLT=0`).
+  * Mask_Brightness_Measure loops forever when the desired mean (x16 or
+    x256) is above what the clamped data can reach; the port stops when the
+    mean no longer rises, and the dialog accepts 1..255.
+* **Verification** (reference harness = the macro with the dialogs replaced
+  by fixed values, one file, no MIP_batch.txt; the RGB pixels compared): 63
+  cases on 22 volumes. 41 cases against headless Fiji, 22 Gamma cases
+  against plain ImageJ with Fiji's plugins (see above; one of them also
+  against non-headless Fiji). Volumes: Brain 1024x512 (JFRC2010 template, a
+  resampled SS00369 GAL4 stack 8-bit / 16-bit / 16-bit holding 8-bit data,
+  a dim stack), Brain 1184x592 (DPX template, SS00369 8 / 16 bit), VNC
+  512x1024 (female template, BJD_100A07 8 / 16 bit, a dim stack, an
+  EM-based 8-bit neuron), VNC 512x1100 (male template, BJD_100A07 16-bit,
+  32-bit float as TIFF and NRRD), JRC2018U 1210x566 (a segmented neuron,
+  SS00369, SS03144, SS53326, an 8-bit MAP) and a 1305x712x782 worm volume.
+  Options covered: all five modes, Reversed, Gamma (in every mode and bit
+  depth), Skeleton, DSLT Normal, slice range, no colour scale. Every CDM is
+  pixel-identical, texts included, from the standalone engine and from
+  VVDViewerQt (`VVD_QT_TEST=cdm`, VVDViewer's own NRRD / TIFF readers; the
+  32-bit float TIFF only as NRRD, because VVDViewer does not load that
+  TIFF). Intermediate images (MIP, masks, AD, DSLT, stacks before / after
+  each LUT, colour MIP) are identical where dumped (`VVD_CDM_DUMP`). Time
+  for a 1024x512x218 16-bit brain (M4 Max): Fiji 49 s including start-up
+  (DSLT3D alone 27 s), engine 2.7 s on 16 threads (19.8 s on one),
+  VVDViewerQt 3.5 s.
+
 ## Components & Tracking
 
 `TraceDialog.cpp`, port of TraceDlg / TraceListCtrl, every page and handler:
@@ -1202,6 +1351,7 @@ command line.
 | `b4b_ipc` | IPC server for an external client (`VVD_QT_IPC_WAIT`) |
 | `b4b_nblast`, `b4b_nbvol`, `b4b_nbdlg` | NBLAST with R (mesh query, volume query through Fiji, dialogs) (`VVD_QT_NBLAST_DBLIST`, `_DBLIST_SAVE`, `_OUTDIR`, `_RSCRIPT`, `_MEAN`) |
 | `b4b_na`, `b4b_nart`, `b4b_naimp` | Neuron Annotator: `-p "NAPlugin -l ... -v ... -s 1x1x2"`, project reopen, Import |
+| `cdm` | volume on the command line: waits for it, logs its tree menu, triggers "Save Color Depth MIP..." without dialogs and writes `VVD_QT_CDM_OUT` (`[cdm] PASS` / `FAIL` with Max, signal size, time); options `VVD_QT_CDM_MODE` (0..4, the dialog order), `_SCALE`, `_REVERSE`, `_GAMMA`, `_SKELETON` (0/1), `_DSLT` (Line / Normal), `_START`, `_END`, `_MEAN`, `_THREADS`; `VVD_QT_CDM_GRAB=<dir>`: `cdm_menu.png`, `cdm_dialog.png` |
 
 ### Other variables
 
@@ -1240,4 +1390,7 @@ command line.
 | `VVD_WARP_DEBUG=1` | warp tile counts and memory footprint |
 | `VVD_NO_OPENCL=1` | hide the OpenCL devices of the cell warp |
 | `VVD_SETTINGS_DIR=<dir>` | both apps and plugins: settings folder instead of the per-user one |
+| `VVD_CDM_DEBUG=1` | engine (both apps): the Color Depth MIP macro's `print()` lines (Inimax, applyV, sigsize, maxi, brightnessNeed, ...) on stderr |
+| `VVD_CDM_DUMP=<dir>` | engine: the intermediate images of the Color Depth MIP as raw files (`d01_MIPin` ... `d30_colortext`, the tags of the Fiji reference harness) |
+| `VVD_CDM_DATA=<dir>` | engine: folder with the Color Depth MIP masks and LUT instead of `Resources/ColorDepthMIP` |
 | `VVD_INT_SETTLE_MS=<ms>` | Qt: how long the input must rest before full quality returns (default 300) |

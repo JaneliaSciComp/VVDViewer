@@ -35,6 +35,7 @@ Source: "VVD_Viewer\Settings\*"; DestDir: "{app}"; Flags: ignoreversion touch; P
 Source: "VVD_Viewer\Fonts\*"; DestDir: "{app}\Fonts"; Flags: ignoreversion touch
 Source: "VVD_Viewer\Scripts\*"; DestDir: "{app}\Scripts"; Flags: ignoreversion touch
 Source: "VVD_Viewer\CL_code\*"; DestDir: "{app}\CL_code"; Flags: ignoreversion touch
+Source: "VVD_Viewer\ColorDepthMIP\*"; DestDir: "{app}\ColorDepthMIP"; Flags: ignoreversion touch
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

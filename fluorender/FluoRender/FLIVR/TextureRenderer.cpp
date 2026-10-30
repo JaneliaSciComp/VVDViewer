@@ -81,6 +81,7 @@ namespace FLIVR
 	unsigned long TextureRenderer::cor_up_time_ = 100;
 	unsigned long TextureRenderer::consumed_time_ = 0;
 	bool TextureRenderer::interactive_ = false;
+	double TextureRenderer::interactive_rate_div_ = 2.0;
 	int TextureRenderer::finished_bricks_ = 0;
 	int TextureRenderer::update_order_ = 0;
 	bool TextureRenderer::load_on_main_thread_ = false;

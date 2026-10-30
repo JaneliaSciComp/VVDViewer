@@ -196,7 +196,7 @@ Info ("Bundled DLLs ($($appDlls.Count)): " + (($appDlls | Sort-Object) -join ', 
 Info ("System DLLs used ($($systemDlls.Count)): " + ($systemDlls -join ', '))
 
 # 4) Resources, settings and plugin helper files ---------------------------------
-foreach ($d in 'CL_code', 'Fonts', 'Scripts') {
+foreach ($d in 'CL_code', 'Fonts', 'Scripts', 'ColorDepthMIP') {
     Copy-Item -Recurse (Join-Path $repo $d) (Join-Path $stage $d)
 }
 Copy-Item (Join-Path $repo 'Settings\*') $stage

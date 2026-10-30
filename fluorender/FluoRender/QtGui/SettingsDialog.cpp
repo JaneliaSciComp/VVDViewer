@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <algorithm>
 
 #include "DataManager.h"
 #include "Core/FileUtil.h"
@@ -365,9 +366,20 @@ QWidget* SettingsDialog::CreatePerformancePage()
 	// Variable Sample Rate
 	QGroupBox* group1 = new QGroupBox(tr("Variable Sample Rate"));
 	QVBoxLayout* g1 = new QVBoxLayout(group1);
-	m_mouse_int_chk = new QCheckBox(tr("Reduce volume sample rate for mouse interactions."));
+	m_mouse_int_chk = new QCheckBox(tr("Reduce volume sample rate for mouse interactions to"));
+	// the reduced rate as a fraction of the normal one (the engine used a
+	// fixed 1/2 before)
+	m_mouse_int_div_cmb = new QComboBox;
+	for (int d = 2; d <= 5; ++d)
+		m_mouse_int_div_cmb->addItem(QString("1/%1").arg(d), d);
+	m_mouse_int_div_cmb->setToolTip(tr("Sample rate while the mouse is down, as a fraction of the normal rate"));
+	m_mouse_int_div_cmb->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 	m_mouse_lv_chk = new QCheckBox(tr("Down volume resolution for mouse interactions."));
-	g1->addWidget(m_mouse_int_chk);
+	QHBoxLayout* g1_1 = new QHBoxLayout;
+	g1_1->addWidget(m_mouse_int_chk);
+	g1_1->addWidget(m_mouse_int_div_cmb);
+	g1_1->addStretch(1);
+	g1->addLayout(g1_1);
 	g1->addWidget(m_mouse_lv_chk);
 
 	// Large Data Streaming
@@ -445,6 +457,12 @@ QWidget* SettingsDialog::CreatePerformancePage()
 	// ---- events ----
 	connect(m_mouse_int_chk, &QCheckBox::toggled, this, [this](bool on) {
 		m_mouse_int = on;
+		m_mouse_int_div_cmb->setEnabled(on);
+		Q_EMIT settingsChanged();
+	});
+	connect(m_mouse_int_div_cmb, &QComboBox::currentIndexChanged, this, [this](int i) {
+		if (i < 0) return;
+		m_mouse_int_div = m_mouse_int_div_cmb->itemData(i).toInt();
 		Q_EMIT settingsChanged();
 	});
 	connect(m_mouse_lv_chk, &QCheckBox::toggled, this, [this](bool on) {
@@ -657,6 +675,7 @@ void SettingsDialog::SetDefaults()
 	m_shadow_dir_x = 0.0;
 	m_shadow_dir_y = 0.0;
 	m_mouse_int = true;
+	m_mouse_int_div = 2;
 	m_mouse_lv = false;
 	m_wav_color1 = 5;
 	m_wav_color2 = 5;
@@ -732,6 +751,7 @@ void SettingsDialog::LoadSettings()
 	if (HasGroup(cfg, L"/mouse int"))
 	{
 		m_mouse_int = cfg.ReadBool(L"/mouse int/mode", true);
+		m_mouse_int_div = (int)std::clamp(cfg.ReadLong(L"/mouse int/rate_div", 2), 2L, 5L);
 		m_mouse_lv = cfg.ReadBool(L"/mouse int/res_mode", true);
 	}
 	if (HasGroup(cfg, L"/dir shadow"))
@@ -791,6 +811,7 @@ void SettingsDialog::LoadSettings()
 	cfg.Read(L"/rigid cells/radius", m_cell_warp.radius);
 	cfg.Read(L"/rigid cells/device", m_cell_warp.device);
 	cfg.Read(L"/rigid cells/loo", m_cell_warp.loo);
+	cdm::LoadOptions(cfg, m_cdm);   // /color depth mip (Qt only)
 	cfg.Read(L"/pvxml flip/x", m_pvxml_flip_x);
 	cfg.Read(L"/pvxml flip/y", m_pvxml_flip_y);
 	cfg.Read(L"/pixel format/red_bit", m_red_bit);
@@ -815,7 +836,7 @@ void SettingsDialog::UpdateUI()
 		m_run_script_chk, m_script_file_text, m_paint_hist_depth_sldr, m_paint_hist_depth_text,
 		m_micro_blend_chk, m_use_fog_mesh_chk, m_peeling_layers_sldr, m_peeling_layers_text,
 		m_shadow_dir_chk, m_shadow_dir_sldr, m_shadow_dir_text, m_grad_bg_chk, m_rot_link_chk, m_sphere_rot_chk,
-		m_mouse_int_chk, m_mouse_lv_chk, m_streaming_chk,
+		m_mouse_int_chk, m_mouse_int_div_cmb, m_mouse_lv_chk, m_streaming_chk,
 		m_graphics_mem_sldr, m_graphics_mem_text, m_large_data_sldr, m_large_data_text,
 		m_block_size_sldr, m_block_size_text, m_response_time_sldr, m_response_time_text,
 		m_main_mem_buf_sldr, m_main_mem_buf_text,
@@ -827,6 +848,8 @@ void SettingsDialog::UpdateUI()
 	m_prj_save_chk->setChecked(m_prj_save);
 	m_realtime_cmp_chk->setChecked(m_realtime_compress);
 	m_mouse_int_chk->setChecked(m_mouse_int);
+	m_mouse_int_div_cmb->setCurrentIndex(std::max(0, m_mouse_int_div_cmb->findData(m_mouse_int_div)));
+	m_mouse_int_div_cmb->setEnabled(m_mouse_int);
 	m_mouse_lv_chk->setChecked(m_mouse_lv);
 	m_peeling_layers_sldr->setValue(m_peeling_layers);
 	m_peeling_layers_text->setText(QString::number(m_peeling_layers));
@@ -916,6 +939,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/realtime compress/mode", m_realtime_compress);
 	cfg.Write(L"/skip bricks/mode", m_skip_bricks);
 	cfg.Write(L"/mouse int/mode", m_mouse_int);
+	cfg.Write(L"/mouse int/rate_div", m_mouse_int_div);
 	cfg.Write(L"/mouse int/res_mode", m_mouse_lv);
 	cfg.Write(L"/dir shadow/mode", m_shadow_dir);
 	cfg.Write(L"/dir shadow/x", m_shadow_dir_x);
@@ -963,6 +987,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/rigid cells/radius", m_cell_warp.radius);
 	cfg.Write(L"/rigid cells/device", m_cell_warp.device);
 	cfg.Write(L"/rigid cells/loo", m_cell_warp.loo);
+	cdm::SaveOptions(cfg, m_cdm);   // /color depth mip (Qt only)
 	cfg.Write(L"/pvxml flip/x", m_pvxml_flip_x);
 	cfg.Write(L"/pvxml flip/y", m_pvxml_flip_y);
 	cfg.Write(L"/pixel format/red_bit", m_red_bit);

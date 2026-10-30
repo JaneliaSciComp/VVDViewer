@@ -216,6 +216,8 @@ Q_SIGNALS:
 	void brushExtractRequested();   // "Extract" (wx BrushCreate -> Calculate(5))
 	// the "Close" entry of a view other than the first (wx OnCloseView)
 	void closeViewRequested(RenderCanvas* canvas);
+	// "Save Color Depth MIP..." of a volume (Qt only)
+	void colorDepthMipRequested(VolumeData* vd);
 
 private Q_SLOTS:
 	void OnItemChanged(QTreeWidgetItem* item, int column);
@@ -268,6 +270,7 @@ private:
 	void OnDuplicate();
 	void OnSave();
 	void OnSaveSegmentedVolume();
+	void OnSaveColorDepthMIP();
 	void OnSetMaskHideMode(int mode);
 	void OnExportMask();
 	void OnImportMask();

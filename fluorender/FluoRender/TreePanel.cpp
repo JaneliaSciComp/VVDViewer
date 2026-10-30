@@ -31,6 +31,10 @@ DEALINGS IN THE SOFTWARE.
 #include "cross.xpm"
 #include "Formats/png_resource.h"
 #include "Formats/brkxml_writer.h"
+#include "ColorDepthMIP.h"
+#include <wx/choicdlg.h>
+#include <atomic>
+#include <thread>
 #include <boost/lexical_cast.hpp>
 
 #include <wx/valnum.h>
@@ -47,6 +51,7 @@ BEGIN_EVENT_TABLE(DataTreeCtrl, wxTreeCtrl)
 	EVT_MENU(ID_Duplicate, DataTreeCtrl::OnDuplicate)
 	EVT_MENU(ID_Save, DataTreeCtrl::OnSave)
     EVT_MENU(ID_SaveSegVol, DataTreeCtrl::OnSaveSegmentedVolume)
+    EVT_MENU(ID_SaveCDM, DataTreeCtrl::OnSaveColorDepthMIP)
     EVT_MENU(ID_ShowEntireVolume, DataTreeCtrl::OnShowEntireVolume)
     EVT_MENU(ID_HideOutsideMask, DataTreeCtrl::OnHideOutsideOfMask)
     EVT_MENU(ID_HideInsideMask, DataTreeCtrl::OnHideInsideOfMask)
@@ -479,6 +484,7 @@ void DataTreeCtrl::OnContextMenu(wxContextMenuEvent &event )
 					menu.Append(ID_Duplicate, "Duplicate");
 					menu.Append(ID_Save, "Save");
                     menu.Append(ID_SaveSegVol, "Save 3D Painted Region");
+                    menu.Append(ID_SaveCDM, "Save Color Depth MIP...");
                     menu.Append(ID_ShowEntireVolume, "Show Entire Volume");
                     menu.Append(ID_HideOutsideMask, "Show Only Inside of Mask");
                     menu.Append(ID_HideInsideMask, "Show Only Outside of Mask");
@@ -1057,6 +1063,102 @@ void DataTreeCtrl::OnSaveSegmentedVolume(wxCommandEvent& event)
     }
 }
 
+
+// "Save Color Depth MIP...": the engine port of the Fiji macro
+// Color_Depth_MIP_batch_0308_2021.ijm (ColorDepthMIP.cpp). The options are
+// the ones remembered by the Qt app's dialog in fluorender.set
+// ([color depth mip]) or the macro defaults; here only the brightness mode is
+// asked for.
+void DataTreeCtrl::OnSaveColorDepthMIP(wxCommandEvent& event)
+{
+	if (m_fixed)
+		return;
+	wxTreeItemId sel_item = GetSelection();
+	VRenderFrame* vr_frame = (VRenderFrame*)m_frame;
+	if (!sel_item.IsOk() || !vr_frame)
+		return;
+	LayerInfo* item_data = (LayerInfo*)GetItemData(sel_item);
+	if (!item_data || item_data->type != 2)
+		return;
+	wxString name = GetItemBaseText(sel_item);
+	VolumeData* vd = vr_frame->GetDataManager()->GetVolumeData(name);
+	if (!vd)
+		return;
+	cdm::Volume vol;
+	std::string err;
+	if (!cdm::GetVolume(vd, vol, err))
+	{
+		wxMessageBox(wxString::FromUTF8(err.c_str()), "Save Color Depth MIP", wxOK | wxICON_WARNING, m_frame);
+		return;
+	}
+	cdm::Options opt;
+	{
+		vvd::IniFile cfg;
+		VVDString set_path = vvd::SettingsReadPath(VVDString(L"fluorender.set"));
+		if (vvd::FileExists(set_path) && cfg.Load(set_path))
+			cdm::LoadOptions(cfg, opt);
+	}
+	wxArrayString modes;
+	for (int i = 0; i < 5; i++)
+		modes.Add(wxString::FromUTF8(cdm::ModeLabel(i)));
+	wxSingleChoiceDialog mdlg(m_frame, "Automatic Brightness adjustment", "Save Color Depth MIP", modes);
+	mdlg.SetSelection(opt.mode);
+	if (mdlg.ShowModal() != wxID_OK)
+		return;
+	opt.mode = mdlg.GetSelection();
+	wxString dir, file = wxString(cdm::DefaultFileName(vd->GetName()));
+	VVDString vpath = vd->GetPath();
+	if (!vpath.empty())
+		dir = wxString(vvd::GetParentDir(vpath));
+	wxFileDialog fdlg(m_frame, "Save Color Depth MIP", dir, file,
+		"TIFF file (*.tif)|*.tif;*.tiff", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+	if (fdlg.ShowModal() != wxID_OK)
+		return;
+	wxString path = fdlg.GetPath();
+	std::unique_ptr<vvd::Progress> prg = vvd::UI::CreateProgress(L"VVDViewer: Save Color Depth MIP",
+		L"Creating the Color Depth MIP. Please wait.", 1000,
+		vvd::PROGRESS_APP_MODAL | vvd::PROGRESS_CAN_ABORT | vvd::PROGRESS_SMOOTH | vvd::PROGRESS_ELAPSED);
+	std::atomic<bool> cancel(false), done(false);
+	std::atomic<int> permille(0);
+	cdm::Result res;
+	bool wrote = false;
+	std::string werr;
+	const std::wstring wpath = path.ToStdWstring();
+	const std::wstring data_dir = cdm::DataDir();
+	std::thread worker([&]() {
+		cdm::Compute(vol, opt, data_dir, res, [&](double f, const std::string&) {
+			permille = (int)(f * 1000);
+			return !cancel.load();
+		});
+		if (res.ok)
+			wrote = cdm::WriteTiff(wpath, res, &werr);
+		done = true;
+	});
+	while (!done)
+	{
+		if (prg && !prg->Update(std::min(999, permille.load())))
+			cancel = true;
+		wxMilliSleep(50);
+	}
+	worker.join();
+	prg.reset();
+	wxString msg;
+	if (res.canceled)
+		msg = "Color Depth MIP canceled";
+	else if (!res.ok || !wrote)
+	{
+		msg = wxString("Color Depth MIP failed: ") + wxString::FromUTF8((res.ok ? werr : res.error).c_str());
+		wxMessageBox(msg, "Save Color Depth MIP", wxOK | wxICON_WARNING, m_frame);
+	}
+	else if (opt.mode == cdm::Options::SegmentationAuto || opt.mode == cdm::Options::SegmentationNoLowerCut)
+		msg = wxString::Format("Color Depth MIP saved: %s (Max %g, signal size %.2f%%)", path, res.applyV, res.sigsize);
+	else
+		msg = wxString::Format("Color Depth MIP saved: %s", path);
+#if wxUSE_STATUSBAR
+	if (vr_frame->GetStatusBar())
+		vr_frame->GetStatusBar()->SetStatusText(msg);
+#endif
+}
 
 void DataTreeCtrl::OnShowEntireVolume(wxCommandEvent& event)
 {
