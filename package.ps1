@@ -42,8 +42,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$BuildDir = $(Join-Path $PSScriptRoot 'build'),
-    [string]$OutDir = $(Join-Path $PSScriptRoot 'dist'),
+    [string]$BuildDir,
+    [string]$OutDir,
     [string]$Stamp = $(Get-Date -Format 'MMddyy'),
     [switch]$Build,
     [switch]$EnableGPL,
@@ -62,6 +62,11 @@ param(
 # write progress to stderr).
 $ErrorActionPreference = 'Continue'
 $repo = $PSScriptRoot
+# The path defaults are set here because Windows PowerShell 5.1 leaves
+# $PSScriptRoot empty in param() defaults when a [CmdletBinding()] script is
+# started with "powershell -File".
+if (-not $BuildDir) { $BuildDir = Join-Path $repo 'build' }
+if (-not $OutDir) { $OutDir = Join-Path $repo 'dist' }
 $Config = 'Release'
 
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }

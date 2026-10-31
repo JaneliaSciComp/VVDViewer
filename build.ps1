@@ -58,8 +58,8 @@
 param(
     [ValidateSet('Release', 'Debug')]
     [string]$Config = 'Release',
-    [string]$VcpkgRoot = $(if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { Join-Path $PSScriptRoot 'vcpkg' }),
-    [string]$BuildDir = $(Join-Path $PSScriptRoot 'build'),
+    [string]$VcpkgRoot = $env:VCPKG_ROOT,
+    [string]$BuildDir,
     [string]$Triplet = 'x64-windows-vvd',
     [switch]$Clean,
     [switch]$EnableND2,
@@ -73,6 +73,11 @@ param(
 # explicitly after each native command instead.
 $ErrorActionPreference = 'Continue'
 $repo = $PSScriptRoot
+# The path defaults are set here because Windows PowerShell 5.1 leaves
+# $PSScriptRoot empty in param() defaults when a [CmdletBinding()] script is
+# started with "powershell -File".
+if (-not $VcpkgRoot) { $VcpkgRoot = Join-Path $repo 'vcpkg' }
+if (-not $BuildDir) { $BuildDir = Join-Path $repo 'build' }
 
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 function Info($msg) { Write-Host $msg -ForegroundColor Cyan }
