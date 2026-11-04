@@ -44,6 +44,8 @@ public:
 	std::shared_ptr<VL_Nrrd> GetVolume();
 	GLMmodel* GetMesh();
 	void SetVolumeSpacings(double x, double y, double z);
+	//physical position of the volume's first voxel corner (VolumeData::GetOrigin)
+	void SetVolumeOrigin(double x, double y, double z);
 	void SetVolumeUseTrans(bool use);
 	void SetVolumeTransfer(double gamma, double lo_thresh,
 		double hi_thresh, double offset, double gm_thresh);
@@ -82,6 +84,7 @@ private:
 	//grid info
 	int m_nx, m_ny, m_nz;
 	double m_spcx, m_spcy, m_spcz;
+	double m_orgx, m_orgy, m_orgz;
 	//volume info
 	bool m_use_transfer;
 	double m_gamma, m_lo_thresh, m_hi_thresh, m_offset, m_gm_thresh;

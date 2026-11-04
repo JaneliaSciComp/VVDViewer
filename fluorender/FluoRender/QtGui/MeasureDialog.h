@@ -71,14 +71,19 @@ public:
 	RigidCellsReportDialog* GetCellReportDialog() const { return m_cell_report; }
 	// 0=Nearest Neighbor, 1=Linear
 	int GetWarpInterpolation() const;
-	// "Target:" (BigWarp's output grid): the choice ("auto", "same" or
-	// "vol:<name>") and the volume it resolves to for the current volume
-	// (null = the source's own grid). Auto: the End Volume of the 2-point
+	// "Target:" (BigWarp's output grid): the choice ("auto", "same",
+	// "extend" or "vol:<name>") and what it resolves to for the current
+	// volume: a volume, or null = the source's own grid (*extend false) or
+	// that grid extended to the fixed landmarks (*extend true; see
+	// WarpExtendedGrid in DataManager.h). Auto: the End Volume of the 2-point
 	// rulers when every one starts on the current volume and they all end on
-	// the same other displayed volume, else Same as source.
+	// the same other displayed volume; else (e.g. rulers imported from a
+	// BigWarp csv name no volumes) Same as source when every fixed landmark
+	// lies in the current volume, else the first other displayed volume that
+	// holds them all, else the extended grid.
 	QString GetWarpTargetChoice() const;
-	VolumeData* GetWarpTarget() const;
-	VolumeData* AutoWarpTarget() const;
+	VolumeData* GetWarpTarget(bool* extend = nullptr) const;
+	VolumeData* AutoWarpTarget(bool* extend = nullptr) const;
 	// refills the Target list (displayed volumes of the view but the current one)
 	void UpdateTargetCombo();
 	// RulerListCtrl::GetCount: rows of the rulers (ann null) or of one

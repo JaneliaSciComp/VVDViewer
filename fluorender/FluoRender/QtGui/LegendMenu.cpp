@@ -8,6 +8,9 @@
 #include <QKeyEvent>
 #include <QScreen>
 #include <QGuiApplication>
+#include <QStyledItemDelegate>
+#include <QPainter>
+#include <QPainterPath>
 #include <algorithm>
 
 #include "DataManager.h"
@@ -17,6 +20,44 @@ namespace
 	enum { TypeVolume = 0, TypeMesh = 1 };
 	constexpr int PtrRole = Qt::UserRole;
 	constexpr int TypeRole = Qt::UserRole + 1;
+
+	// The macOS style (Qt 6.11) draws the check box of the first row of a
+	// list only, so with several volumes every other row looked unchecked.
+	// The rows keep their check state but no style indicator; a checked
+	// row's check mark is painted here, in the row's left padding.
+	class CheckMarkDelegate : public QStyledItemDelegate
+	{
+	public:
+		using QStyledItemDelegate::QStyledItemDelegate;
+		void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+		{
+			QStyledItemDelegate::paint(p, option, index);
+			if (index.data(Qt::CheckStateRole).toInt() != Qt::Checked)
+				return;
+			const QRect r = option.rect;
+			const double s = std::min(10.0, r.height() - 8.0);
+			const QRectF box(r.left() + 4.0, r.center().y() - s / 2.0 + 0.5, s, s);
+			QPen pen(option.palette.color((option.state & QStyle::State_MouseOver) ?
+				QPalette::HighlightedText : QPalette::Text), 1.6);
+			pen.setCapStyle(Qt::RoundCap);
+			pen.setJoinStyle(Qt::RoundJoin);
+			QPainterPath mark;
+			mark.moveTo(box.left(), box.top() + box.height() * 0.55);
+			mark.lineTo(box.left() + box.width() * 0.38, box.bottom());
+			mark.lineTo(box.right(), box.top());
+			p->save();
+			p->setRenderHint(QPainter::Antialiasing);
+			p->setPen(pen);
+			p->drawPath(mark);
+			p->restore();
+		}
+	protected:
+		void initStyleOption(QStyleOptionViewItem* opt, const QModelIndex& index) const override
+		{
+			QStyledItemDelegate::initStyleOption(opt, index);
+			opt->features &= ~QStyleOptionViewItem::HasCheckIndicator;
+		}
+	};
 }
 
 LegendMenu::LegendMenu(RenderCanvas* canvas, QWidget* parent)
@@ -38,11 +79,12 @@ LegendMenu::LegendMenu(RenderCanvas* canvas, QWidget* parent)
 	m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 	m_list->setMouseTracking(true);
 	// blend into the menu; hover row like a menu item
-	m_list->setStyleSheet(
-		// padding: check boxes under the text of the menu items above
+	m_list->setStyleSheet(QString(
+		// padding: check marks under the text of the menu items above
 		"QListWidget { background: transparent; border: none; padding-left: 6px; }"
-		"QListWidget::item { padding: 1px 6px 1px 2px; }"
-		"QListWidget::item:hover { background: palette(highlight); color: palette(highlighted-text); }");
+		"QListWidget::item { padding: 1px 6px 1px %1px; }"
+		"QListWidget::item:hover { background: palette(highlight); color: palette(highlighted-text); }").arg(CheckPad));
+	m_list->setItemDelegate(new CheckMarkDelegate(m_list));
 	m_list_action = new QWidgetAction(this);
 	m_list_action->setDefaultWidget(m_list);
 	addAction(m_list_action);

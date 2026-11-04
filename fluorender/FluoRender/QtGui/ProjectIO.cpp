@@ -315,6 +315,9 @@ namespace
 		p.W(L"b_res", Fmt3(b_resx, b_resy, b_resz));
 		p.W(L"s_res", Fmt3(s_resx, s_resy, s_resz));
 		p.W(L"scl", Fmt3(sclx, scly, sclz));
+		double orgx, orgy, orgz;
+		vd->GetOrigin(orgx, orgy, orgz);
+		p.W(L"origin", Fmt3(orgx, orgy, orgz));   // Qt only (wx: every volume at 0)
 
 		std::vector<FLIVR::Plane*>* planes = vd->GetVR() ? vd->GetVR()->get_planes() : nullptr;
 		if (planes && planes->size() == 6)
@@ -482,6 +485,11 @@ namespace
 			if (p.Read3(L"s_res", x, y, z)) vd->SetSpacingScales(x, y, z);
 		}
 		if (p.Read3(L"scl", x, y, z)) vd->SetScalings(x, y, z);
+		// the saved placement; a project without one (wx, or saved before the
+		// space origin was read) keeps every volume at the world origin, where
+		// its rulers and views were made
+		if (p.Read3(L"origin", x, y, z)) vd->SetOrigin(x, y, z);
+		else vd->SetOrigin(0.0, 0.0, 0.0);
 
 		int ix = 0, iy = 0, iz = 0;
 		vd->GetResolution(ix, iy, iz);

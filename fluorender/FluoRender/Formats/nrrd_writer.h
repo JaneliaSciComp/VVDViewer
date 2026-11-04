@@ -38,12 +38,14 @@ public:
 
 	void SetData(const std::shared_ptr<FLIVR::VL_Nrrd>& data);
 	void SetSpacings(double spcx, double spcy, double spcz);
+	void SetSpaceOrigin(double x, double y, double z);
 	void SetCompression(bool value);
 	void Save(wstring filename, int mode);
 
 private:
 	std::shared_ptr<FLIVR::VL_Nrrd> m_data;
 	double m_spcx, m_spcy, m_spcz;
+	double m_orgx, m_orgy, m_orgz;
 	bool m_use_spacings;
 	bool m_compression;
 };

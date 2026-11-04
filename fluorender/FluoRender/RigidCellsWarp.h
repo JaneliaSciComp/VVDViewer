@@ -176,10 +176,11 @@ namespace rigidcells
 // volume = the plugin's target grid tg is that volume's (size, spacing; its
 // origin in src's physical frame, so both boxes must be axis-aligned in world
 // space), the result overlaps it. Landmark roles swapped as WarpVolumeByRulers
-// (WarpRulersReversed).
+// (WarpRulersReversed). extend (target null or src): tg is src's grid
+// extended to the fixed landmarks (WarpExtendedGrid), as WarpVolumeByRulers.
 EXPORT_API VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
 	const rigidcells::Params& params, rigidcells::Report* report, VVDString* error = nullptr,
-	VolumeData* target = nullptr);
+	VolumeData* target = nullptr, bool extend = false);
 #endif
 
 #endif // VVD_RIGIDCELLSWARP_H

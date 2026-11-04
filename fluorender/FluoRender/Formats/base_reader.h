@@ -89,6 +89,9 @@ public:
 	virtual double GetXSpc() = 0;
 	virtual double GetYSpc() = 0;
 	virtual double GetZSpc() = 0;
+	//physical position of the first voxel's corner as stored in the file
+	//(NRRD "space origin"); false when the format or file has none
+	virtual bool GetSpaceOrigin(double& x, double& y, double& z) { x = y = z = 0.0; return false; }
 	virtual double GetMaxValue() = 0;
 	virtual double GetScalarScale() = 0;
 	virtual int GetBatchNum() = 0;

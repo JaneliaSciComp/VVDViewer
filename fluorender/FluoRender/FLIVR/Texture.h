@@ -151,6 +151,10 @@ namespace FLIVR
 		void get_base_spacings(double &x, double &y, double &z);
 		void set_spacing_scales(double x, double y, double z);
 		void get_spacing_scales(double &x, double &y, double &z);
+		//physical position of the corner of the first voxel (the NRRD "space
+		//origin"; 0 = the world origin): the box moves to (x, y, -z)
+		void set_origin(double x, double y, double z);
+		void get_origin(double &x, double &y, double &z) const;
 
 		void get_dimensions(size_t &w, size_t &h, size_t &d, int lv = -1);
 		
@@ -239,6 +243,8 @@ namespace FLIVR
 		void build_bricks(vector<TextureBrick*> &bricks,
 			int nx, int ny, int nz,
 			int nc, int* nb);
+		//transform_ from the spacings, additional_transform_ and the origin
+		void update_transform();
 
 		//! data carved up to texture memory sized chunks.
 		vector<TextureBrick*>						*bricks_;
@@ -286,6 +292,10 @@ namespace FLIVR
 		double										s_spcx_;
 		double										s_spcy_;
 		double										s_spcz_;
+		//! origin (physical, see set_origin)
+		double										orgx_;
+		double										orgy_;
+		double										orgz_;
 		//priority
 		bool use_priority_;
 		int n_p0_;

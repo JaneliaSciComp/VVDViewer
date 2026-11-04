@@ -25,6 +25,7 @@
 #include <QMenu>
 #include <QProcess>
 #include <QPixmap>
+#include <QImage>
 #include <QElapsedTimer>
 #include <QProgressDialog>
 #include <memory>
@@ -408,6 +409,32 @@ MainWindow::MainWindow(QWidget* parent)
 					QApplication::sendEvent(l->viewport(), &press);
 					QApplication::sendEvent(l->viewport(), &rel);
 				};
+				// every checked row shows its check mark and no other row does
+				// (the macOS style drew the first row's check box only): ink in
+				// each row's check column of the menu picture
+				auto check_marks = [menu, check](const char* step) {
+					QListWidget* l = menu->List();
+					const QImage img = menu->grab().toImage().convertToFormat(QImage::Format_RGB32);
+					const double dpr = img.devicePixelRatio();
+					const QPoint off = l->viewport()->mapTo(menu, QPoint(0, 0));
+					QString got, want;
+					for (int i = 0; i < l->count(); i++)
+					{
+						const QRect r = l->visualItemRect(l->item(i)).translated(off);
+						const int x0 = std::max(0, int(r.left() * dpr)), x1 = std::min(img.width(), int((r.left() + LegendMenu::CheckPad) * dpr));
+						const int y0 = std::max(0, int(r.top() * dpr)), y1 = std::min(img.height(), int((r.bottom() + 1) * dpr));
+						if (y0 >= y1 || x0 >= x1) continue;
+						const int bg = qGray(img.pixel(x0, y0));
+						int ink = 0;
+						for (int y = y0; y < y1; y++)
+							for (int x = x0; x < x1; x++)
+								ink += std::abs(qGray(img.pixel(x, y)) - bg) > 80;
+						got += ink > 4 ? '1' : '0';
+						want += l->item(i)->checkState() == Qt::Checked ? '1' : '0';
+					}
+					const QByteArray what = QString("%1: check marks %2, checked rows %3").arg(step, got, want).toLocal8Bit();
+					check(what.constData(), !want.isEmpty() && got == want);
+				};
 				auto click_action = [menu](QAction* a) {
 					const QPoint p = menu->actionGeometry(a).center();
 					QMouseEvent press(QEvent::MouseButtonPress, p, menu->mapToGlobal(p), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -424,12 +451,12 @@ MainWindow::MainWindow(QWidget* parent)
 					for (int i : { 0, 1 }) if (i < exp.size() && exp[i] != '|') exp[i] = exp[i] == '1' ? '0' : '1';
 					check("rows 0 and 1 toggled, menu still open", menu->isVisible() && legends() == exp);
 				});
-				QTimer::singleShot(1500, this, [=]() { grab("toggled"); });
+				QTimer::singleShot(1500, this, [=]() { grab("toggled"); check_marks("toggled"); });
 				QTimer::singleShot(1800, this, [=]() {
 					click_action(menu->HideAllAction());
 					check("Hide All, menu still open", menu->isVisible() && !legends().contains('1'));
 				});
-				QTimer::singleShot(2200, this, [=]() { grab("hideall"); });
+				QTimer::singleShot(2200, this, [=]() { grab("hideall"); check_marks("hideall"); });
 				QTimer::singleShot(2500, this, [=]() {
 					click_action(menu->ShowAllAction());
 					check("Show All, menu still open", menu->isVisible() && !legends().contains('0'));
@@ -444,6 +471,7 @@ MainWindow::MainWindow(QWidget* parent)
 				QTimer::singleShot(3300, this, [=]() {
 					menu->List()->scrollToTop();
 					grab("final");
+					check_marks("final");
 					menu->hide();
 					check("menu closed by hide()", !menu->isVisible());
 					connect(m_canvas, &RenderCanvas::frameCaptured, this, [](const QString&, bool) { QCoreApplication::quit(); });

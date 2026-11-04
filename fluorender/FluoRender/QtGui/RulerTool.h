@@ -172,14 +172,16 @@ public:
 	// nullptr with *error set (the wx message box text). ttype: 0 TPS,
 	// 1 affine, 2 similarity, 3 rigid, 4 translation; interp: 0 NN, 1 linear.
 	// target: the output grid (null = the current volume's own grid; see
-	// WarpVolumeByRulers in DataManager.h)
-	VolumeData* WarpCurrentVolume(int ttype, double lambda, int interp, QString* error, VolumeData* target = nullptr);
+	// WarpVolumeByRulers in DataManager.h); extend: that grid extended to
+	// the fixed landmarks (target null)
+	VolumeData* WarpCurrentVolume(int ttype, double lambda, int interp, QString* error, VolumeData* target = nullptr,
+		bool extend = false);
 	// The same with the "Cells: shape preserving" model (RigidCellsWarp.h,
 	// port of the ImageJ plugin Apply_BigWarp_RigidCells): returns the new
 	// volume or nullptr with *error set (empty when cancelled); *report gets
 	// the object / landmark tables and the log.
 	VolumeData* WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error,
-		VolumeData* target = nullptr);
+		VolumeData* target = nullptr, bool extend = false);
 	// the current volume (the warp source)
 	VolumeData* CurrentVolume() const { return CurVol(); }
 

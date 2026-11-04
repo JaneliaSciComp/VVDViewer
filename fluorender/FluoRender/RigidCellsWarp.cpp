@@ -1810,12 +1810,13 @@ namespace rigidcells
 #ifndef RIGIDCELLS_CORE_ONLY
 
 VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error, VolumeData* target)
+	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error, VolumeData* target, bool extend)
 {
 	using namespace FLIVR;
 	if (error) error->clear();
 	if (!src) return nullptr;
 	if (target == src) target = nullptr;
+	if (target) extend = false;
 	const bool reversed = WarpRulersReversed(src, target, rulers);
 	const int im = reversed ? 1 : 0, ifx = reversed ? 0 : 1;
 	Texture* tex = src->GetTexture();
@@ -1848,16 +1849,28 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 	g.size[0] = resx; g.size[1] = resy; g.size[2] = resz;
 	g.spacing[0] = spcx; g.spacing[1] = spcy; g.spacing[2] = spcz;
 	const double aspect[3] = { resx * spcx, resy * spcy, resz * spcz };
+	//the extended grid; src's own grid when no landmark reaches beyond it
+	int ext_res[3] = { resx, resy, resz }, ext_off[3] = { 0, 0, 0 };
+	if (extend)
+	{
+		if (!WarpExtendedGrid(src, rulers, ext_res, ext_off, error))
+			return nullptr;
+		extend = ext_res[0] != resx || ext_res[1] != resy || ext_res[2] != resz ||
+			ext_off[0] || ext_off[1] || ext_off[2];
+	}
 
 	// landmarks exactly as WarpVolumeByRulers (2-point ruler: point 0 moving,
 	// point 1 target; locator: zero-displacement anchor), in physical units:
 	// the grid-normalized point times the physical box size. The rulers hold
-	// (x, y, -z) of the BigWarp CSV; when that is the same point (no extra
-	// transform) it is used directly so the CSV values arrive unrounded.
+	// (x, y, -z) of the BigWarp CSV; when that is the same point less src's
+	// origin (no extra transform) it is used directly so the CSV values arrive
+	// unrounded.
+	double org[3];
+	src->GetOrigin(org[0], org[1], org[2]);
 	auto physical = [&](const Point& wp) {
 		Point n = tf->unproject(wp);
 		std::array<double, 3> p = { n.x() * aspect[0], n.y() * aspect[1], n.z() * aspect[2] };
-		std::array<double, 3> direct = { wp.x(), wp.y(), -wp.z() };
+		std::array<double, 3> direct = { wp.x() - org[0], wp.y() - org[1], -wp.z() - org[2] };
 		double tol = 1e-9 * std::max({ 1.0, std::fabs(aspect[0]), std::fabs(aspect[1]), std::fabs(aspect[2]) });
 		if (std::fabs(p[0] - direct[0]) <= tol && std::fabs(p[1] - direct[1]) <= tol && std::fabs(p[2] - direct[2]) <= tol)
 			return direct;
@@ -1898,18 +1911,19 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 	int mode = std::min(3, std::max(0, params.local_mode));
 	VolumeData* vd = nullptr;
 	rigidcells::Grid tg = g;
-	if (!target)
+	if (!target && !extend)
 	{
 		vd = new VolumeData();
 		vd->AddEmptyData(nb * 8, resx, resy, resz, spcx, spcy, spcz);
 		vd->SetSpcFromFile(true);
+		vd->SetOrigin(org[0], org[1], org[2]);
 	}
 	else
 	{
-		//the target's grid, its origin in src's physical frame (the plugin's
-		//index * spacing + origin)
+		//the target's (or the extended) grid, its origin in src's physical
+		//frame (the plugin's index * spacing + origin)
 		VVDString terr;
-		vd = NewWarpResultVolume(src, target, &terr);
+		vd = NewWarpResultVolume(src, target, &terr, extend ? ext_res : nullptr, ext_off);
 		if (!vd)
 		{
 			if (error) *error = terr.empty() ? VVDString(L"Not enough memory for the result volume.") : terr;

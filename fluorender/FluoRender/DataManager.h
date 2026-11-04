@@ -922,6 +922,11 @@ public:
 	void GetBaseSpacings(double& spcx, double& spcy, double& spcz);
 	void SetSpacingScales(double s_spcx, double s_spcy, double s_spcz);
 	void GetSpacingScales(double& s_spcx, double& s_spcy, double& s_spcz);
+	//world placement: the physical position of the corner of the first voxel
+	//(the NRRD "space origin", read when DataManager::GetUseSpaceOrigin; 0 =
+	//the volume starts at the world origin). World z is -z, as the volume's.
+	void SetOrigin(double x, double y, double z);
+	void GetOrigin(double& x, double& y, double& z);
 	void SetLevel(int lv);
 	int GetLevel();
 	int GetLevelNum();
@@ -2109,6 +2114,8 @@ struct VolumePrefetch
 		std::wstring data_name;
 		bool valid_spc = false;
 		double xspc = 1.0, yspc = 1.0, zspc = 1.0;
+		bool valid_org = false;   // BaseReader::GetSpaceOrigin
+		double xorg = 0.0, yorg = 0.0, zorg = 0.0;
 		double scalar_scale = 1.0;
 		double max_value = 0.0;
 		int cur_time = 0;
@@ -2140,20 +2147,42 @@ struct VolumePrefetch
 // view. When every 2-point ruler starts on the target volume and ends on src
 // (WarpRulersReversed), the landmark roles are swapped (point 1 = moving,
 // point 0 = fixed): src is the volume the end points were placed on.
+//
+// extend (target null or src; Qt "Target: Extended to landmarks"): the result
+// is on src's grid extended to hold every fixed landmark (WarpExtendedGrid),
+// for landmarks that move the data out of src's box when no volume of the
+// fixed space is loaded. Where the two grids overlap the result is src's.
 EXPORT_API VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	int ttype, double lambda, int interp, VVDString* error = nullptr, VolumeData* target = nullptr);
+	int ttype, double lambda, int interp, VVDString* error = nullptr, VolumeData* target = nullptr,
+	bool extend = false);
 // true when target is another volume and every 2-point ruler (at least one)
 // records point 0 on target and point 1 on src (Ruler::GetPointVolName)
 EXPORT_API bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<Ruler*>& rulers);
+// true when every fixed landmark of the rulers (point 1 of the 2-point
+// rulers, the locators) lies in vol's box, within half a voxel; also when
+// there is none
+EXPORT_API bool WarpFixedPointsInside(VolumeData* vol, const std::vector<Ruler*>& rulers);
+// the extended grid of WarpVolumeByRulers(extend): src's spacing, per axis
+// src's voxels or, when the fixed landmarks reach beyond them, from the
+// nearest to the farthest one plus 10% of the landmarks' extent on that axis.
+// res: its size; off (<= 0): the index of its first voxel in src's grid (the
+// result's origin moves by off voxels, VolumeData::SetOrigin). False (error
+// set) for a volume with a BigDataViewer transform.
+EXPORT_API bool WarpExtendedGrid(VolumeData* src, const std::vector<Ruler*>& rulers, int res[3], int off[3],
+	VVDString* error = nullptr);
 // grid's normalized box in src's normalized coords: src_f = grid_f * scale +
 // off per axis. False (error set) when the two boxes are not axis-aligned in
 // world space (rotated / flipped BigDataViewer transforms).
 EXPORT_API bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3],
 	VVDString* error = nullptr);
 // the empty result volume of a warp: src's bit depth on src's grid (target
-// null or src) or on target's (size, spacing, additional transform); null
-// with *error set when it would need more than half of the installed memory
-EXPORT_API VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error = nullptr);
+// null or src) or on target's (size, spacing, origin, additional transform);
+// res (target null or src): this size instead of src's, src's spacing, its
+// first voxel off voxels from src's (the extended grid, WarpExtendedGrid).
+// Null with *error set when another grid would need more than half of the
+// installed memory
+EXPORT_API VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error = nullptr,
+	const int* res = nullptr, const int* off = nullptr);
 // The display properties WarpVolumeByRulers copies from src to its result
 // (clipping planes, gamma, boundary, offset, thresholds, colour, alpha,
 // shading, material, shadow, sample rate, output adjustments, scalar scale).
@@ -2276,6 +2305,12 @@ public:
 	{ m_override_vox = val; }
 	bool GetOverrideVox()
 	{ return m_override_vox; }
+	//place volumes at the space origin of their files (VolumeData::SetOrigin;
+	//off: every volume starts at the world origin, as before)
+	void SetUseSpaceOrigin(bool val)
+	{ m_use_space_origin = val; }
+	bool GetUseSpaceOrigin()
+	{ return m_use_space_origin; }
 
 	//flags for pvxml flipping
 	void SetPvxmlFlipX(bool flip) {m_pvxml_flip_x = flip;}
@@ -2344,6 +2379,7 @@ private:
 	VVDString m_prj_path;
 	//override voxel size
 	bool m_override_vox;
+	bool m_use_space_origin;
 	//flgs for pvxml flipping
 	bool m_pvxml_flip_x;
 	bool m_pvxml_flip_y;

@@ -481,6 +481,11 @@ void VolumePropPanel::GetSettings()
 	double sx, sy, sz;
 	m_vd->GetSpacings(sx, sy, sz, 0);
 	m_spc_x->setValue(sx); m_spc_y->setValue(sy); m_spc_z->setValue(sz);
+	// where the volume is (Settings > Format > Volume Position)
+	double ox, oy, oz;
+	m_vd->GetOrigin(ox, oy, oz);
+	const QString spc_tip = tr("Voxel size\nOrigin (corner of the first voxel): %1, %2, %3").arg(ox).arg(oy).arg(oz);
+	m_spc_x->setToolTip(spc_tip); m_spc_y->setToolTip(spc_tip); m_spc_z->setToolTip(spc_tip);
 
 	Color c = m_vd->GetColor();
 	QColor qc = QColor::fromRgbF(std::clamp(c.r(), 0.0, 1.0), std::clamp(c.g(), 0.0, 1.0), std::clamp(c.b(), 0.0, 1.0));

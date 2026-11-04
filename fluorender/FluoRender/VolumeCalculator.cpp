@@ -163,6 +163,10 @@ void VolumeCalculator::CreateVolumeResult1()
          res_x, res_y, res_z,
          spc_x, spc_y, spc_z);
    m_vd_r->SetSpcFromFile(true);
+   //placed where volume A is
+   double org[3];
+   m_vd_a->GetOrigin(org[0], org[1], org[2]);
+   m_vd_r->SetOrigin(org[0], org[1], org[2]);
 
    VVDString name = m_vd_a->GetName();
    VVDString str_type;
@@ -233,6 +237,10 @@ void VolumeCalculator::CreateVolumeResult2()
          res_x, res_y, res_z,
          spc_x, spc_y, spc_z);
    m_vd_r->SetSpcFromFile(true);
+   //placed where volume A is
+   double org[3];
+   m_vd_a->GetOrigin(org[0], org[1], org[2]);
+   m_vd_r->SetOrigin(org[0], org[1], org[2]);
 
    VVDString name_a = m_vd_a->GetName();
    VVDString name_b = m_vd_b->GetName();
@@ -310,6 +318,10 @@ void VolumeCalculator::CreateVolumeResult3()
         res_x, res_y, res_z,
         spc_x, spc_y, spc_z);
     m_vd_r->SetSpcFromFile(true);
+    //placed where volume A is
+    double org[3];
+    m_vd_a->GetOrigin(org[0], org[1], org[2]);
+    m_vd_r->SetOrigin(org[0], org[1], org[2]);
 
     VVDString name = m_vd_a->GetName();
     VVDString str_type;

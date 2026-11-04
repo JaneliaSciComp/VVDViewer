@@ -68,6 +68,8 @@ public:
 	double GetXSpc() {return m_xspc;}
 	double GetYSpc() {return m_yspc;}
 	double GetZSpc() {return m_zspc;}
+	bool GetSpaceOrigin(double& x, double& y, double& z)
+	{x = m_xorg; y = m_yorg; z = m_zorg; return m_valid_org;}
 	double GetMaxValue() {return m_max_value;}
 	double GetScalarScale() {return m_scalar_scale;}
 	bool GetBatch() {return m_batch;}
@@ -99,6 +101,11 @@ private:
 	double m_xspc;
 	double m_yspc;
 	double m_zspc;
+	//"space origin" of the last converted file
+	bool m_valid_org;
+	double m_xorg;
+	double m_yorg;
+	double m_zorg;
 	double m_max_value;
 	double m_scalar_scale;
 

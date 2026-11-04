@@ -497,6 +497,11 @@ VolumeData* VolumeData::DeepCopy(VolumeData &copy, bool use_default_settings, Da
 		vd->SetMaskHideMode(copy.GetMaskHideMode());
 	}
 
+	//the copy stays where the original is
+	double org[3];
+	copy.GetOrigin(org[0], org[1], org[2]);
+	vd->SetOrigin(org[0], org[1], org[2]);
+
 	if (is_brxml) vd->SetLevel(copy.GetLevel());
 
 	auto maskindata = copy.GetMask(true);
@@ -969,6 +974,7 @@ int VolumeData::Replace(const std::shared_ptr<VL_Nrrd>& data, bool del_tex)
 		return 0;
 	
 	double spcx = 1.0, spcy = 1.0, spcz = 1.0;
+	double orgx = 0.0, orgy = 0.0, orgz = 0.0;
 	if (del_tex)
 	{
 		Nrrd *nv = data->getNrrd();
@@ -983,11 +989,13 @@ int VolumeData::Replace(const std::shared_ptr<VL_Nrrd>& data, bool del_tex)
 		}
 		if (m_tex) {
 			m_tex->get_spacings(spcx, spcy, spcz);
+			m_tex->get_origin(orgx, orgy, orgz);
 			delete m_tex;
 		}
 		m_tex = new Texture();
 		m_tex->set_use_priority(m_skip_brick);
 		m_tex->build(data, nullptr, 0, m_max_value, 0, 0);
+		m_tex->set_origin(orgx, orgy, orgz);
 		m_tex->set_spacings(spcx, spcy, spcz);
 	}
 	else
@@ -2071,7 +2079,12 @@ void VolumeData::Save(const VVDString &filename, int mode, bool bake, bool compr
 				if (nx > w) nx = w;
 				if (ny > h) ny = h;
 				if (nz > d) nz = d;
-                
+
+				//the saved box starts at the crop's first voxel
+				double org[3];
+				GetOrigin(org[0], org[1], org[2]);
+				writer->SetSpaceOrigin(org[0] + sx * spcx, org[1] + sy * spcy, org[2] + sz * spcz);
+
 				if (bake)
 				{
 					vvd::Progress *prg_diag = vvd::UI::CreateProgress("VVDViewer: Baking volume data...", "Baking volume data. Please wait.", 100, vvd::PROGRESS_APP_MODAL|vvd::PROGRESS_SMOOTH|vvd::PROGRESS_ELAPSED|vvd::PROGRESS_AUTO_HIDE).release();
@@ -2260,8 +2273,8 @@ void VolumeData::Save(const VVDString &filename, int mode, bool bake, bool compr
                                         int index = nx*ny*k + nx*j + i;
                                         bool clipped = false;
                                         Point p(double(i+sx) / double(w),
-                                                double(j+sx) / double(h),
-                                                double(k+sx) / double(d));
+                                                double(j+sy) / double(h),
+                                                double(k+sz) / double(d));
                                         for (int pi = 0; pi < 6; ++pi)
                                         {
                                             if ((*planes)[pi] &&
@@ -2797,6 +2810,10 @@ void VolumeData::ExportEachSegment(VVDString dir, const std::shared_ptr<VL_Nrrd>
 
 		double spcx, spcy, spcz;
 		GetSpacings(spcx, spcy, spcz);
+		double org[3];
+		GetOrigin(org[0], org[1], org[2]);
+		if (writer)
+			writer->SetSpaceOrigin(org[0], org[1], org[2]);
 
 		//save data
 		auto main = m_tex->get_nrrd(0);
@@ -3533,6 +3550,100 @@ bool WarpRulersReversed(VolumeData* src, VolumeData* target, const std::vector<R
 	return n > 0;
 }
 
+//the fixed landmarks of the rulers in world space (point 1 of the 2-point
+//rulers, the locators)
+static std::vector<Point> WarpFixedPoints(const std::vector<Ruler*>& rulers)
+{
+	std::vector<Point> pts;
+	for (Ruler* r : rulers)
+	{
+		if (!r) continue;
+		Point* p = nullptr;
+		if (r->GetRulerType() == 0 && r->GetNumPoint() >= 2)
+			p = r->GetPoint(1);
+		else if (r->GetRulerType() == 2 && r->GetNumPoint() >= 1)
+			p = r->GetPoint(0);
+		if (p)
+			pts.push_back(*p);
+	}
+	return pts;
+}
+
+bool WarpFixedPointsInside(VolumeData* vol, const std::vector<Ruler*>& rulers)
+{
+	Texture* tex = vol ? vol->GetTexture() : nullptr;
+	Transform* tf = tex ? tex->transform() : nullptr;
+	if (!tf)
+		return false;
+	int res[3] = { 0, 0, 0 };
+	vol->GetResolution(res[0], res[1], res[2]);
+	for (const Point& p : WarpFixedPoints(rulers))
+	{
+		const Point n = tf->unproject(p);
+		const double q[3] = { n.x(), n.y(), n.z() };
+		for (int d = 0; d < 3; ++d)
+		{
+			const double half = res[d] > 0 ? 0.5 / res[d] : 0.0;
+			if (!(q[d] >= -half && q[d] <= 1.0 + half))
+				return false;
+		}
+	}
+	return true;
+}
+
+bool WarpExtendedGrid(VolumeData* src, const std::vector<Ruler*>& rulers, int res[3], int off[3], VVDString* error)
+{
+	if (error)
+		error->clear();
+	Texture* tex = src ? src->GetTexture() : nullptr;
+	Transform* tf = tex ? tex->transform() : nullptr;
+	if (!tf)
+		return false;
+	Transform* at = tex->additional_transform();
+	if (at && !at->is_identity())
+	{
+		if (error) *error = L"The extended grid is not available for a volume with a BigDataViewer transform. "
+			L"Choose \"Same as source\" or a volume as the target.";
+		return false;
+	}
+	int sres[3] = { 0, 0, 0 };
+	src->GetResolution(sres[0], sres[1], sres[2]);
+	//the fixed landmarks in src's normalized box
+	double lo[3] = { 0, 0, 0 }, hi[3] = { 0, 0, 0 };
+	const std::vector<Point> pts = WarpFixedPoints(rulers);
+	for (size_t i = 0; i < pts.size(); ++i)
+	{
+		const Point n = tf->unproject(pts[i]);
+		const double q[3] = { n.x(), n.y(), n.z() };
+		for (int d = 0; d < 3; ++d)
+		{
+			lo[d] = i ? (std::min)(lo[d], q[d]) : q[d];
+			hi[d] = i ? (std::max)(hi[d], q[d]) : q[d];
+		}
+	}
+	for (int d = 0; d < 3; ++d)
+	{
+		res[d] = sres[d];
+		off[d] = 0;
+		if (pts.empty() || !std::isfinite(lo[d]) || !std::isfinite(hi[d]))
+			continue;
+		//the landmarks + 10% of their extent on each side, in src's voxels
+		//(src's box always included; below its first voxel the result gets
+		//an origin); each side capped at 2^20 voxels beyond src's box, the
+		//size left to NewWarpResultVolume's memory check
+		const double margin = 0.1 * (hi[d] - lo[d]);
+		const double first = std::floor((lo[d] - margin) * sres[d] + 1e-6);
+		const double last = std::ceil((hi[d] + margin) * sres[d] - 1e-6);
+		if (first < 0.0)
+			off[d] = (int)(std::max)(first, -1048576.0);
+		int top = sres[d];
+		if (last > sres[d])
+			top = (int)(std::min)(last, sres[d] + 1048576.0);
+		res[d] = top - off[d];
+	}
+	return true;
+}
+
 bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], double off[3], VVDString* error)
 {
 	if (error)
@@ -3577,7 +3688,7 @@ bool WarpTargetGridMap(VolumeData* src, VolumeData* grid, double scale[3], doubl
 	return true;
 }
 
-VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error)
+VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* error, const int* res, const int* off)
 {
 	if (error)
 		error->clear();
@@ -3590,7 +3701,12 @@ VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* 
 	double spcx, spcy, spcz;
 	grid->GetResolution(resx, resy, resz);
 	grid->GetSpacings(spcx, spcy, spcz);
-	if (grid != src)
+	const bool extended = grid == src && res;
+	if (extended)
+	{
+		resx = res[0]; resy = res[1]; resz = res[2];
+	}
+	if (grid != src || extended)
 	{
 		if (!grid->GetTexture() || resx <= 0 || resy <= 0 || resz <= 0)
 		{
@@ -3599,13 +3715,14 @@ VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* 
 		}
 		//the result lives in main memory (and is streamed to the GPU in bricks):
 		//refuse what cannot fit instead of letting the system swap or fail
-		const unsigned long long bytes = (unsigned long long)resx * resy * resz * (unsigned long long)(bits / 8);
+		const double bytes = (double)resx * resy * resz * (bits / 8);
 		const unsigned long long phys = WarpPhysicalMemory();
-		if (phys > 0 && bytes > phys / 2)
+		if (phys > 0 && bytes > phys / 2.0)
 		{
 			if (error) *error = VVDString::Format(
-				"The result on the target grid (%d x %d x %d, %d-bit) needs %.1f GB, more than half of the "
-				"installed memory (%.1f GB).", resx, resy, resz, bits, bytes / 1073741824.0, phys / 1073741824.0);
+				"The result on the %s grid (%d x %d x %d, %d-bit) needs %.1f GB, more than half of the "
+				"installed memory (%.1f GB).", extended ? "extended" : "target", resx, resy, resz, bits,
+				bytes / 1073741824.0, phys / 1073741824.0);
 			return nullptr;
 		}
 	}
@@ -3627,11 +3744,21 @@ VolumeData* NewWarpResultVolume(VolumeData* src, VolumeData* target, VVDString* 
 			vd->SetSpacings(spcx, spcy, spcz);
 		}
 	}
+	//and its origin; the extended grid starts off voxels from src's
+	double org[3];
+	grid->GetOrigin(org[0], org[1], org[2]);
+	if (extended && off)
+	{
+		org[0] += off[0] * spcx;
+		org[1] += off[1] * spcy;
+		org[2] += off[2] * spcz;
+	}
+	vd->SetOrigin(org[0], org[1], org[2]);
 	return vd;
 }
 
 VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	int ttype, double lambda, int interp, VVDString* error, VolumeData* target)
+	int ttype, double lambda, int interp, VVDString* error, VolumeData* target, bool extend)
 {
 	if (error)
 		error->clear();
@@ -3639,6 +3766,19 @@ VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& ruler
 		return nullptr;
 	if (target == src)
 		target = nullptr;
+	//the extended grid; src's own grid when no landmark reaches beyond it
+	int ext_res[3] = { 0, 0, 0 }, ext_off[3] = { 0, 0, 0 };
+	if (target)
+		extend = false;
+	if (extend)
+	{
+		if (!WarpExtendedGrid(src, rulers, ext_res, ext_off, error))
+			return nullptr;
+		int rx, ry, rz;
+		src->GetResolution(rx, ry, rz);
+		extend = ext_res[0] != rx || ext_res[1] != ry || ext_res[2] != rz ||
+			ext_off[0] || ext_off[1] || ext_off[2];
+	}
 	//landmark roles: point 0 moving, point 1 fixed; swapped when every ruler
 	//goes from the target to the source volume (WarpRulersReversed)
 	const bool reversed = WarpRulersReversed(src, target, rulers);
@@ -3729,15 +3869,15 @@ VolumeData* WarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& ruler
 		return nullptr;
 	}
 
-	//create the result volume: the source's bits on the source's grid, or on
-	//the target's grid (size, spacing, world placement)
-	VolumeData* vd = NewWarpResultVolume(src, target, error);
+	//create the result volume: the source's bits on the source's grid, on the
+	//target's grid (size, spacing, world placement) or on the extended grid
+	VolumeData* vd = NewWarpResultVolume(src, target, error, extend ? ext_res : nullptr, ext_off);
 	if (!vd)
 		return nullptr;
 	vd->SetName(src->GetName() + suffix);
 
 	//GPU warp
-	if (!target)
+	if (!target && !extend)
 		vd->Warp(src, tps, interp);
 	else
 	{
@@ -4198,6 +4338,23 @@ void VolumeData::GetSpacingScales(double &s_spcx, double &s_spcy, double &s_spcz
 		GetTexture()->get_spacing_scales(s_spcx, s_spcy, s_spcz);
 }
 
+void VolumeData::SetOrigin(double x, double y, double z)
+{
+	if (GetTexture())
+	{
+		GetTexture()->set_origin(x, y, z);
+		m_bounds.reset();
+		GetTexture()->get_bounds(m_bounds);
+	}
+}
+
+void VolumeData::GetOrigin(double &x, double &y, double &z)
+{
+	x = y = z = 0.0;
+	if (GetTexture())
+		GetTexture()->get_origin(x, y, z);
+}
+
 void VolumeData::SetLevel(int lv)
 {
 	if (GetTexture() && isBrxml())
@@ -4371,6 +4528,9 @@ VolumeData* VolumeData::CopyLevel(int lv)
 	double spc[3];
 	GetSpacings(spc[0], spc[1], spc[2], lv);
 	vd->SetSpacings(spc[0], spc[1], spc[2]);
+	double org[3];
+	GetOrigin(org[0], org[1], org[2]);
+	vd->SetOrigin(org[0], org[1], org[2]);
 	double scl[3];
 	GetScalings(scl[0], scl[1], scl[2]);
 	vd->SetScalings(scl[0], scl[1], scl[2]);
@@ -9372,7 +9532,8 @@ m_vol_exb(0.0),
 	m_vol_swi(0.0),
 	m_vol_test_wiref(false),
 	m_use_defaults(true),
-	m_override_vox(true)
+	m_override_vox(true),
+	m_use_space_origin(false)
 {
 	VVDString dft = vvd::SettingsReadPath(L"default_volume_settings.dft");
 	if (!vvd::FileExists(dft))
@@ -9685,6 +9846,7 @@ void DataManager::PrefetchVolume(VolumePrefetch &pre)
 		c.xspc = reader->GetXSpc();
 		c.yspc = reader->GetYSpc();
 		c.zspc = reader->GetZSpc();
+		c.valid_org = reader->GetSpaceOrigin(c.xorg, c.yorg, c.zorg);
 		c.scalar_scale = reader->GetScalarScale();
 		c.max_value = reader->GetMaxValue();
 		c.cur_time = reader->GetCurTime();
@@ -10083,6 +10245,14 @@ int DataManager::LoadVolumeData(const VVDString &filename_in, int type, int ch_n
 				else if (sspcx > 0.0 && sspcy > 0.0 && sspcz > 0.0) vd->SetBaseSpacings(sspcx, sspcy, sspcz);
                 else vd->SetBaseSpacings(rd_xspc, rd_yspc, rd_zspc);
 				vd->SetSpcFromFile(valid_spc);
+				if (m_use_space_origin)
+				{
+					double ox = 0.0, oy = 0.0, oz = 0.0;
+					const bool org = pc ? pc->valid_org : reader->GetSpaceOrigin(ox, oy, oz);
+					if (pc) { ox = pc->xorg; oy = pc->yorg; oz = pc->zorg; }
+					if (org)
+						vd->SetOrigin(ox, oy, oz);
+				}
 				vd->SetScalarScale(pc ? pc->scalar_scale : reader->GetScalarScale());
 				vd->SetMaxValue(pc ? pc->max_value : reader->GetMaxValue());
 				vd->SetCurTime(pc ? pc->cur_time : reader->GetCurTime());
@@ -12570,6 +12740,9 @@ vvd::Thread::ExitCode ProjectDataLoaderThread::Entry()
                     else if (sspcx > 0.0 && sspcy > 0.0 && sspcz > 0.0) vd->SetBaseSpacings(sspcx, sspcy, sspcz);
                     else vd->SetBaseSpacings(reader->GetXSpc(), reader->GetYSpc(), reader->GetZSpc());
                     vd->SetSpcFromFile(valid_spc);
+                    double ox, oy, oz;
+                    if (m_pdl->m_dm->GetUseSpaceOrigin() && reader->GetSpaceOrigin(ox, oy, oz))
+                        vd->SetOrigin(ox, oy, oz);
                     vd->SetScalarScale(reader->GetScalarScale());
                     vd->SetMaxValue(reader->GetMaxValue());
                     vd->SetCurTime(reader->GetCurTime());

@@ -35,6 +35,7 @@ VolumeMeshConv::VolumeMeshConv() :
 	m_vol_max(255.0),
 	m_nx(0), m_ny(0), m_nz(0),
 	m_spcx(1.0), m_spcy(1.0), m_spcz(1.0),
+	m_orgx(0.0), m_orgy(0.0), m_orgz(0.0),
 	m_use_transfer(false),
 	m_gamma(1.0),
 	m_lo_thresh(0.0),
@@ -92,6 +93,13 @@ void VolumeMeshConv::SetVolumeSpacings(double x, double y, double z)
 	m_spcx = x;
 	m_spcy = y;
 	m_spcz = z;
+}
+
+void VolumeMeshConv::SetVolumeOrigin(double x, double y, double z)
+{
+	m_orgx = x;
+	m_orgy = y;
+	m_orgz = z;
 }
 
 void VolumeMeshConv::SetVolumeUseTrans(bool use)
@@ -465,7 +473,7 @@ Vector VolumeMeshConv::Intersect(double verts[8], int v1, int v2,
 	else
 		p = p1;
 
-	p = Vector(x*m_spcx, y*m_spcy, z*m_spcz) +
+	p = Vector(m_orgx, m_orgy, m_orgz) + Vector(x*m_spcx, y*m_spcy, z*m_spcz) +
 		Vector(p.x()*m_spcx*m_downsample, p.y()*m_spcy*m_downsample, p.z()*m_spcz*m_downsample_z);
 
 	return p;

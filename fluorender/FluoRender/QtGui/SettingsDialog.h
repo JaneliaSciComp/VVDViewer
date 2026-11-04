@@ -90,6 +90,8 @@ public:
 	bool GetRotLink() const;                               // view OnRotLink()
 	bool GetOverrideVox() const { return m_override_vox; }
 	void SetOverrideVox(bool val) { m_override_vox = val; }
+	// Format > Volume Position (Qt only): NRRD volumes at their space origin
+	bool GetUseSpaceOrigin() const { return m_space_origin; }
 	double GetSoftThreshold() const { return m_soft_threshold; }
 	void SetSoftThreshold(double val) { m_soft_threshold = val; }
 	bool GetRunScript() const { return m_run_script; }
@@ -139,7 +141,7 @@ public:
 	const cdm::Options& GetColorDepthMIPOptions() const { return m_cdm; }
 	void SetColorDepthMIPOptions(const cdm::Options& o) { m_cdm = o; }
 	// Measurement "Target:" (/warp target; Qt only): "auto" (default),
-	// "same" or "vol:<volume name>"
+	// "same", "extend" or "vol:<volume name>"
 	QString GetWarpTarget() const { return m_warp_target; }
 	void SetWarpTarget(const QString& t) { m_warp_target = t; }
 	void SetRulerTimeDep(bool val) { m_ruler_time_dep = val; }
@@ -221,6 +223,7 @@ private:
 	bool m_grad_bg;
 	bool m_sphere_rot = true;
 	bool m_override_vox;
+	bool m_space_origin;
 	double m_soft_threshold;
 	bool m_run_script;
 	QString m_script_file;
@@ -298,6 +301,7 @@ private:
 	QLineEdit* m_main_mem_buf_text = nullptr;
 	// file format
 	QCheckBox* m_override_vox_chk = nullptr;
+	QCheckBox* m_space_origin_chk = nullptr;
 	QComboBox* m_wav_color1_cmb = nullptr;
 	QComboBox* m_wav_color2_cmb = nullptr;
 	QComboBox* m_wav_color3_cmb = nullptr;

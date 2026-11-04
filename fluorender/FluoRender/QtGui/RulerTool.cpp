@@ -2177,22 +2177,23 @@ void RulerTool::ScatterRulers(long density)
 	Refresh();
 }
 
-VolumeData* RulerTool::WarpCurrentVolume(int ttype, double lambda, int interp, QString* error, VolumeData* target)
+VolumeData* RulerTool::WarpCurrentVolume(int ttype, double lambda, int interp, QString* error, VolumeData* target,
+	bool extend)
 {
 	//shared with the wx GUI (DataManager.cpp WarpVolumeByRulers)
 	VVDString err;
-	VolumeData* vd = WarpVolumeByRulers(CurVol(), m_ruler_list, ttype, lambda, interp, &err, target);
+	VolumeData* vd = WarpVolumeByRulers(CurVol(), m_ruler_list, ttype, lambda, interp, &err, target, extend);
 	if (!vd && error)
 		*error = QString::fromStdWString(err);
 	return vd;
 }
 
 VolumeData* RulerTool::WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error,
-	VolumeData* target)
+	VolumeData* target, bool extend)
 {
 	//shared with the wx GUI (RigidCellsWarp.cpp)
 	VVDString err;
-	VolumeData* vd = RigidCellsWarpVolumeByRulers(CurVol(), m_ruler_list, params, report, &err, target);
+	VolumeData* vd = RigidCellsWarpVolumeByRulers(CurVol(), m_ruler_list, params, report, &err, target, extend);
 	if (!vd && error)
 		*error = QString::fromStdWString(err);
 	return vd;

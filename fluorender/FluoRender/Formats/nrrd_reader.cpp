@@ -43,6 +43,11 @@ NRRDReader::NRRDReader()
 	m_yspc = 0.0;
 	m_zspc = 0.0;
 
+	m_valid_org = false;
+	m_xorg = 0.0;
+	m_yorg = 0.0;
+	m_zorg = 0.0;
+
 	m_max_value = 0.0;
 	m_scalar_scale = 1.0;
 
@@ -307,6 +312,28 @@ Nrrd* NRRDReader::ConvertNrrd(int t, int c, bool get_max)
 		m_xspc = 1.0;
 		m_yspc = 1.0;
 		m_zspc = 1.0;
+	}
+	//"space origin" (in the units of the space directions: only with valid
+	//spacings; a 2D image may have no z)
+	m_valid_org = false;
+	m_xorg = m_yorg = m_zorg = 0.0;
+	if (m_valid_spc && output->spaceDim >= 2 && output->spaceDim <= NRRD_SPACE_DIM_MAX)
+	{
+		double org[3] = { 0.0, 0.0, 0.0 };
+		m_valid_org = true;
+		for (unsigned int i = 0; i < output->spaceDim && i < 3; i++)
+		{
+			if (AIR_EXISTS(output->spaceOrigin[i]))
+				org[i] = output->spaceOrigin[i];
+			else
+				m_valid_org = false;
+		}
+		if (m_valid_org)
+		{
+			m_xorg = org[0];
+			m_yorg = org[1];
+			m_zorg = org[2];
+		}
 	}
 	size_t voxelnum = (size_t)m_slice_num * (size_t)m_x_size * (size_t)m_y_size;
     size_t data_size = voxelnum;

@@ -534,6 +534,17 @@ QWidget* SettingsDialog::CreateFormatPage()
 	m_override_vox_chk = new QCheckBox(tr("Get voxel size info from the first opened dataset."));
 	g1->addWidget(m_override_vox_chk);
 
+	// Volume Position (Qt only; wx places every volume at the world origin)
+	QGroupBox* group_org = new QGroupBox(tr("Volume Position"));
+	QVBoxLayout* go = new QVBoxLayout(group_org);
+	m_space_origin_chk = new QCheckBox(tr("Place NRRD files at their space origin."));
+	m_space_origin_chk->setToolTip(tr(
+		"On: a volume starts at the \"space origin\" of its NRRD file (which can be negative), as in Fiji,\n"
+		"so the landmarks and rulers of that file's coordinates apply directly.\n"
+		"Off: every volume starts at 0, 0, 0 (the left top corner), as in VVDViewer before.\n"
+		"Takes effect for the files opened next; a project keeps the placement it was saved with."));
+	go->addWidget(m_space_origin_chk);
+
 	// Default Colors for Excitation Wavelengths
 	QGroupBox* group2 = new QGroupBox(
 		tr("Default Colors for Excitation Wavelengths (nm) (for OIB/OIF/LSM files)"));
@@ -568,6 +579,7 @@ QWidget* SettingsDialog::CreateFormatPage()
 
 	QVBoxLayout* v = new QVBoxLayout(page);
 	v->addWidget(group1);
+	v->addWidget(group_org);
 	v->addWidget(group2);
 	v->addStretch(1);
 
@@ -575,6 +587,10 @@ QWidget* SettingsDialog::CreateFormatPage()
 	connect(m_override_vox_chk, &QCheckBox::toggled, this, [this](bool on) {
 		m_override_vox = on;
 		if (m_data_mgr) m_data_mgr->SetOverrideVox(m_override_vox);
+	});
+	connect(m_space_origin_chk, &QCheckBox::toggled, this, [this](bool on) {
+		m_space_origin = on;
+		if (m_data_mgr) m_data_mgr->SetUseSpaceOrigin(m_space_origin);
 	});
 	int* members[4] = { &m_wav_color1, &m_wav_color2, &m_wav_color3, &m_wav_color4 };
 	for (int i = 0; i < 4; ++i)
@@ -632,6 +648,7 @@ void SettingsDialog::SetDataManager(DataManager* mgr)
 	if (!m_data_mgr)
 		return;
 	m_data_mgr->SetOverrideVox(m_override_vox);
+	m_data_mgr->SetUseSpaceOrigin(m_space_origin);
 	m_data_mgr->SetPvxmlFlipX(m_pvxml_flip_x);
 	m_data_mgr->SetPvxmlFlipY(m_pvxml_flip_y);
 	m_data_mgr->SetCompression(m_realtime_compress);
@@ -684,6 +701,7 @@ void SettingsDialog::SetDefaults()
 	m_time_id = "_T";
 	m_grad_bg = false;
 	m_override_vox = true;
+	m_space_origin = true;
 	m_soft_threshold = 0.0;
 	m_run_script = false;
 	m_script_file = "";
@@ -777,6 +795,7 @@ void SettingsDialog::LoadSettings()
 	cfg.Read(L"/grad bg/value", m_grad_bg);
 	cfg.Read(L"/save cmp/value", m_save_compress);
 	cfg.Read(L"/override vox/value", m_override_vox);
+	cfg.Read(L"/space origin/value", m_space_origin);
 	cfg.Read(L"/soft threshold/value", m_soft_threshold);
 	cfg.Read(L"/run script/value", m_run_script);
 	if (cfg.Read(L"/run script/file", s)) m_script_file = FromVVD(s);
@@ -840,7 +859,7 @@ void SettingsDialog::UpdateUI()
 		m_graphics_mem_sldr, m_graphics_mem_text, m_large_data_sldr, m_large_data_text,
 		m_block_size_sldr, m_block_size_text, m_response_time_sldr, m_response_time_text,
 		m_main_mem_buf_sldr, m_main_mem_buf_text,
-		m_override_vox_chk, m_wav_color1_cmb, m_wav_color2_cmb, m_wav_color3_cmb, m_wav_color4_cmb };
+		m_override_vox_chk, m_space_origin_chk, m_wav_color1_cmb, m_wav_color2_cmb, m_wav_color3_cmb, m_wav_color4_cmb };
 	std::vector<bool> old;
 	old.reserve(ctrls.size());
 	for (QObject* o : ctrls) old.push_back(o->blockSignals(true));
@@ -869,6 +888,7 @@ void SettingsDialog::UpdateUI()
 	m_grad_bg_chk->setChecked(m_grad_bg);
 	m_sphere_rot_chk->setChecked(m_sphere_rot);
 	m_override_vox_chk->setChecked(m_override_vox);
+	m_space_origin_chk->setChecked(m_space_origin);
 	// wavelength to color
 	m_wav_color1_cmb->setCurrentIndex(m_wav_color1 - 1);
 	m_wav_color2_cmb->setCurrentIndex(m_wav_color2 - 1);
@@ -954,6 +974,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/time id/value", ToVVD(m_time_id));
 	cfg.Write(L"/grad bg/value", m_grad_bg);
 	cfg.Write(L"/override vox/value", m_override_vox);
+	cfg.Write(L"/space origin/value", m_space_origin);
 	cfg.Write(L"/soft threshold/value", m_soft_threshold);
 	cfg.Write(L"/save cmp/value", m_save_compress);
 	cfg.Write(L"/run script/value", m_run_script);

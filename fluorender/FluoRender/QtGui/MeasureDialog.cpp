@@ -288,11 +288,17 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_warp_target_combo->setToolTip("Output grid of Apply Transform (BigWarp's target image).\n"
 		"Same as source: the result has the current volume's size, spacing and position "
 		"(the landmarks must lie inside it to show anything).\n"
+		"Extended to landmarks: the current volume's grid, enlarged (from the origin, at the same "
+		"spacing) to hold every fixed landmark (end point) plus 10% of their extent, for landmarks "
+		"that move the data out of the volume when no volume of the fixed space is loaded.\n"
 		"<volume>: the result has that volume's size, spacing and position (bit depth of the "
 		"current volume) and overlaps it in the view; the current volume is resampled with the "
 		"same transform.\n"
 		"Auto: the End Volume of the 2-point rulers when every one of them starts on the current "
-		"volume and they all end on the same other displayed volume; otherwise Same as source.\n"
+		"volume and they all end on the same other displayed volume. Otherwise (e.g. rulers "
+		"imported from a BigWarp csv) by where the fixed landmarks are: Same as source when they "
+		"all lie in the current volume, else the first other displayed volume that holds them all, "
+		"else Extended to landmarks.\n"
 		"When every 2-point ruler starts on the chosen target and ends on the current volume, the "
 		"end points are used as the moving landmarks (the reverse transform).");
 	if (m_settings)
@@ -452,16 +458,14 @@ static std::vector<VolumeData*> WarpTargetCandidates(RulerTool* tool)
 	return list;
 }
 
-VolumeData* MeasureDialog::AutoWarpTarget() const
+// the End Volume of the 2-point rulers when every one starts on cur and they
+// all end on the same other displayed volume
+static VolumeData* NamedWarpTarget(RulerTool* tool, VolumeData* cur, const std::vector<Ruler*>& rl)
 {
-	if (!m_tool) return nullptr;
-	VolumeData* cur = m_tool->CurrentVolume();
-	std::vector<Ruler*>* rl = m_tool->GetRulerList();
-	if (!cur || !rl) return nullptr;
 	const std::wstring cn = cur->GetName().ToStdWstring();
 	std::wstring end;
 	int n = 0;
-	for (Ruler* r : *rl)
+	for (Ruler* r : rl)
 	{
 		if (!r || r->GetRulerType() != 0 || r->GetNumPoint() < 2)
 			continue;
@@ -476,9 +480,30 @@ VolumeData* MeasureDialog::AutoWarpTarget() const
 	}
 	if (n == 0)
 		return nullptr;
-	for (VolumeData* v : WarpTargetCandidates(m_tool))
+	for (VolumeData* v : WarpTargetCandidates(tool))
 		if (v->GetName().ToStdWstring() == end)
 			return v;
+	return nullptr;
+}
+
+VolumeData* MeasureDialog::AutoWarpTarget(bool* extend) const
+{
+	if (extend) *extend = false;
+	if (!m_tool) return nullptr;
+	VolumeData* cur = m_tool->CurrentVolume();
+	std::vector<Ruler*>* rl = m_tool->GetRulerList();
+	if (!cur || !rl) return nullptr;
+	if (VolumeData* v = NamedWarpTarget(m_tool, cur, *rl))
+		return v;
+	//by where the fixed landmarks are (rulers imported from a csv name no
+	//volumes): the source's grid holds them, another volume holds them, or
+	//the source's grid is extended to them
+	if (WarpFixedPointsInside(cur, *rl))
+		return nullptr;
+	for (VolumeData* v : WarpTargetCandidates(m_tool))
+		if (WarpFixedPointsInside(v, *rl))
+			return v;
+	if (extend) *extend = true;
 	return nullptr;
 }
 
@@ -489,11 +514,17 @@ QString MeasureDialog::GetWarpTargetChoice() const
 	return m_warp_target_combo->currentData().toString();
 }
 
-VolumeData* MeasureDialog::GetWarpTarget() const
+VolumeData* MeasureDialog::GetWarpTarget(bool* extend) const
 {
+	if (extend) *extend = false;
 	const QString c = GetWarpTargetChoice();
 	if (c == "same")
 		return nullptr;
+	if (c == "extend")
+	{
+		if (extend) *extend = true;
+		return nullptr;
+	}
 	if (c.startsWith("vol:"))
 	{
 		const QString name = c.mid(4);
@@ -502,7 +533,7 @@ VolumeData* MeasureDialog::GetWarpTarget() const
 				return v;
 		return nullptr;
 	}
-	return AutoWarpTarget();
+	return AutoWarpTarget(extend);
 }
 
 void MeasureDialog::UpdateTargetCombo()
@@ -510,10 +541,12 @@ void MeasureDialog::UpdateTargetCombo()
 	if (!m_warp_target_combo) return;
 	QSignalBlocker block(m_warp_target_combo);
 	m_warp_target_combo->clear();
-	VolumeData* aut = AutoWarpTarget();
+	bool aut_ext = false;
+	VolumeData* aut = AutoWarpTarget(&aut_ext);
 	m_warp_target_combo->addItem(aut ? QString("Auto (%1)").arg(S2Q(aut->GetName().ToStdWstring())) :
-		QString("Auto (same as source)"), QString("auto"));
+		aut_ext ? QString("Auto (extended to landmarks)") : QString("Auto (same as source)"), QString("auto"));
 	m_warp_target_combo->addItem("Same as source", QString("same"));
+	m_warp_target_combo->addItem("Extended to landmarks", QString("extend"));
 	for (VolumeData* v : WarpTargetCandidates(m_tool))
 	{
 		const QString name = S2Q(v->GetName().ToStdWstring());
@@ -1193,11 +1226,12 @@ void MeasureDialog::OnWarp()
 	QString err;
 	const bool cells = GetWarpTransformType() == WarpCells;
 	UpdateTargetCombo();
-	VolumeData* target = GetWarpTarget();
+	bool extend = false;
+	VolumeData* target = GetWarpTarget(&extend);
 	rigidcells::Report report;
 	VolumeData* vd = cells ?
-		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err, target) :
-		m_tool->WarpCurrentVolume(GetWarpTransformType(), GetWarpLambda(), GetWarpInterpolation(), &err, target);
+		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err, target, extend) :
+		m_tool->WarpCurrentVolume(GetWarpTransformType(), GetWarpLambda(), GetWarpInterpolation(), &err, target, extend);
 	if (!vd)
 	{
 		if (!err.isEmpty())

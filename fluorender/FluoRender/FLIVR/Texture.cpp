@@ -79,6 +79,9 @@ namespace FLIVR
 		s_spcx_(1.0),
 		s_spcy_(1.0),
 		s_spcz_(1.0),
+		orgx_(0.0),
+		orgy_(0.0),
+		orgz_(0.0),
         mask_undo_pointer_(-1),
 		filename_(NULL),
 		masklv_(-1)
@@ -355,25 +358,14 @@ namespace FLIVR
 			b_spcx_ = x;
 			b_spcy_ = y;
 			b_spcz_ = z;
-			Transform tform;
-			tform.load_identity();
-			Point nmax(nx_*x, ny_*y, -nz_*z);
-			tform.pre_scale(Vector(nmax));
-            tform.post_trans(additional_transform_);
-			set_transform(tform);
 		}
 		else
 		{
 			s_spcx_ = x / b_spcx_;
 			s_spcy_ = y / b_spcy_;
 			s_spcz_ = z / b_spcz_;
-			Transform tform;
-			tform.load_identity();
-			Point nmax(nx_*spcx_*s_spcx_, ny_*spcy_*s_spcy_, -nz_*spcz_*s_spcz_);
-			tform.pre_scale(Vector(nmax));
-            tform.post_trans(additional_transform_);
-			set_transform(tform);
 		}
+		update_transform();
 	}
 
 	void Texture::set_base_spacings(double x, double y, double z)
@@ -387,13 +379,40 @@ namespace FLIVR
 			spcx_ = x;
 			spcy_ = y;
 			spcz_ = z;
-			Transform tform;
-			tform.load_identity();
-			Point nmax(nx_*x, ny_*y, -nz_*z);
-			tform.pre_scale(Vector(nmax));
-            tform.post_trans(additional_transform_);
-			set_transform(tform);
+			update_transform();
 		}
+	}
+
+	void Texture::set_origin(double x, double y, double z)
+	{
+		orgx_ = x;
+		orgy_ = y;
+		orgz_ = z;
+		update_transform();
+	}
+
+	void Texture::get_origin(double &x, double &y, double &z) const
+	{
+		x = orgx_;
+		y = orgy_;
+		z = orgz_;
+	}
+
+	//normalized box -> world: the BigDataViewer transform, the physical size
+	//(z flipped), then the origin (none at 0, so such volumes keep the
+	//transform they always had)
+	void Texture::update_transform()
+	{
+		Transform tform;
+		tform.load_identity();
+		Point nmax = brkxml_ ?
+			Point(nx_*spcx_*s_spcx_, ny_*spcy_*s_spcy_, -nz_*spcz_*s_spcz_) :
+			Point(nx_*spcx_, ny_*spcy_, -nz_*spcz_);
+		tform.pre_scale(Vector(nmax));
+		tform.post_trans(additional_transform_);
+		if (orgx_ != 0.0 || orgy_ != 0.0 || orgz_ != 0.0)
+			tform.pre_translate(Vector(orgx_, orgy_, -orgz_));
+		set_transform(tform);
 	}
 
 	void Texture::get_base_spacings(double &x, double &y, double &z)
@@ -976,12 +995,7 @@ namespace FLIVR
 		spcx_ = pyramid_[lv].data->getNrrd()->axis[offset + 0].spacing;
 		spcy_ = pyramid_[lv].data->getNrrd()->axis[offset + 1].spacing;
 		spcz_ = pyramid_[lv].data->getNrrd()->axis[offset + 2].spacing;
-		Transform tform;
-		tform.load_identity();
-		Point nmax(nx_*spcx_*s_spcx_, ny_*spcy_*s_spcy_, -nz_*spcz_*s_spcz_);
-		tform.pre_scale(Vector(nmax));
-        tform.post_trans(additional_transform_);
-		set_transform(tform);
+		update_transform();
 		set_sort_bricks();
 	}
 

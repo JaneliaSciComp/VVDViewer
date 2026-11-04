@@ -929,6 +929,9 @@ void VolumeSelector::CompExportMultiChann(bool select)
 			res_x, res_y, res_z,
 			spc_x, spc_y, spc_z);
 		vd->SetSpcFromFile(true);
+		double org[3];
+		m_vd->GetOrigin(org[0], org[1], org[2]);
+		vd->SetOrigin(org[0], org[1], org[2]);
 		vd->SetName(m_vd->GetName() +
 			VVDString::Format("_COMP%d_SIZE%llu", i++, comp_iter->second.counter));
 
@@ -1053,6 +1056,12 @@ void VolumeSelector::CompExportRandomColor(int hmode, VolumeData* vd_r,
 	vd_b->SetSpcFromFile(true);
 	vd_b->SetName(m_vd->GetName() +
 		VVDString::Format("_COMP3"));
+	//placed where the source is
+	double org[3];
+	m_vd->GetOrigin(org[0], org[1], org[2]);
+	vd_r->SetOrigin(org[0], org[1], org[2]);
+	vd_g->SetOrigin(org[0], org[1], org[2]);
+	vd_b->SetOrigin(org[0], org[1], org[2]);
 
 	//get new data
 	//red volume
@@ -1235,8 +1244,10 @@ int VolumeSelector::ProcessSel(double thresh)
 
     if (nw > 0.0)
     {
+        double org[3];
+        m_vd->GetOrigin(org[0], org[1], org[2]);
         m_ps_center = Point(sump.x()*spc_x, sump.y()*spc_y, -sump.z()*spc_z) / nw +
-            Vector(0.5*spc_x, 0.5*spc_y, -0.5*spc_z);
+            Vector(0.5*spc_x, 0.5*spc_y, -0.5*spc_z) + Vector(org[0], org[1], -org[2]);
         m_ps_size *= spc_x*spc_y*spc_z;
         m_ps = true;
         return 1;

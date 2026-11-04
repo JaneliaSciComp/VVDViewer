@@ -28,6 +28,10 @@ public:
 	// rebuild the rows from the canvas (keeps the scroll position)
 	void Reload();
 
+	// left padding of a row: its check mark, then the text where the style's
+	// check box used to put it
+	static constexpr int CheckPad = 31;
+
 	// testing (VVD_QT_GRAB_LEGEND)
 	QListWidget* List() const { return m_list; }
 	QAction* ShowAllAction() const { return m_show_all; }

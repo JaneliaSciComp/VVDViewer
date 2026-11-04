@@ -33,6 +33,9 @@ NRRDWriter::NRRDWriter()
    m_spcx = 0.0;
    m_spcy = 0.0;
    m_spcz = 0.0;
+   m_orgx = 0.0;
+   m_orgy = 0.0;
+   m_orgz = 0.0;
    m_use_spacings = false;
    m_compression = false;
 }
@@ -52,6 +55,13 @@ void NRRDWriter::SetSpacings(double spcx, double spcy, double spcz)
    m_spcy = spcy;
    m_spcz = spcz;
    m_use_spacings = true;
+}
+
+void NRRDWriter::SetSpaceOrigin(double x, double y, double z)
+{
+   m_orgx = x;
+   m_orgy = y;
+   m_orgz = z;
 }
 
 void NRRDWriter::SetCompression(bool value)
@@ -79,7 +89,7 @@ void NRRDWriter::Save(wstring filename, int mode)
 	if (m_use_spacings &&
 		data->dim == 3)
 	{
-		double spc_org[NRRD_SPACE_DIM_MAX] = {0.0, 0.0, 0.0};
+		double spc_org[NRRD_SPACE_DIM_MAX] = {m_orgx, m_orgy, m_orgz};
 		double spc_vec[3][NRRD_SPACE_DIM_MAX]= {
 			{m_spcx, 0.0, 0.0},
 			{0.0, m_spcy, 0.0},

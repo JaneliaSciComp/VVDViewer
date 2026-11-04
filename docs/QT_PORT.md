@@ -244,10 +244,13 @@ engine changes that also change the wx app are under "Bug fixes".
   image): wx always writes the warp result on the current volume's own grid,
   so warping a small moving volume toward a larger target volume put its data
   outside its own box and the result was empty. **Auto** (default) uses the
-  volume the rulers end on, **Same as source** is the wx behaviour
-  (byte-identical), or any shown volume. The result gets the target's size,
-  spacing and position with the source's bit depth, for every transform
-  including Cells (see "Warp output grid").
+  volume the rulers end on, or for rulers without volumes (imported from a
+  BigWarp csv) a shown volume that holds every fixed landmark, **Same as
+  source** is the wx behaviour (byte-identical), **Extended to landmarks**
+  enlarges the source's grid to the fixed landmarks (on both sides), or any
+  shown volume. The result gets the target's size, spacing and position with
+  the source's bit depth, for every transform including Cells (see "Warp
+  output grid").
 * **Delete removes the selected ruler** (wx deletes by display name, which can
   remove several rulers that share a name).
 * Ported wx behaviour that had been missing in Qt: annotation rows in the list
@@ -255,6 +258,19 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Panels, tools and projects
 
+* **Volumes at their NRRD space origin** (new; Settings > Format > Volume
+  Position, "Place NRRD files at their space origin", on by default): a NRRD
+  volume starts at the `space origin` of its file, negative values included,
+  as in Fiji, instead of at 0, 0, 0 (the left top corner) as in wx. Volumes
+  saved with an origin (crops, reformatted stacks) line up with each other,
+  and landmarks, rulers and meshes in the files' coordinates apply directly
+  (a BigWarp csv of the Fiji images needs no copy with the origin
+  subtracted). Copies and
+  derived volumes keep the origin, NRRD saves write it (a cropped save: the
+  crop's first voxel), and Qt projects store it (`origin=`); a project
+  without the key (wx, older Qt builds) keeps every volume at 0, 0, 0 as it
+  was saved. The voxel-size tooltip of the properties pane shows the origin.
+  See "Volume position".
 * Annotation "Number of Particles" is counted after the new Min Score is
   applied (wx showed the previous value's count).
 * Opening a project first closes the further render views (wx's code for that
@@ -307,6 +323,11 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Shared engine (affects the wx app too)
 
+* **Cropped 8-bit saves zeroed inside the crop**: Save with "crop to the
+  clipping planes" (and the hidden-mask save) of an 8-bit volume tested the
+  clipping planes at the x crop offset for y and z as well, so voxels of the
+  saved box near its y / z faces could come out empty when the offsets
+  differed (the 16-bit and float paths were right).
 * **Graphics-memory setting ignored**: the Settings value never reached the
   Vulkan device, so the texture cache could grow to the whole GPU heap; on
   large projects this exhausted RAM and the view never finished drawing.
@@ -532,7 +553,15 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   `LegendMenu::Reload` re-lays the menu out when the list changes size and
   before it is shown. Legend clicks call `RenderCanvas::RefreshOverlayChange`
   (no brick-loop restart; a full redraw only when no frame is on the
-  surface). Each view's menu acts on that view only.
+  surface). Each view's menu acts on that view only. The check marks are
+  painted by the menu (`CheckMarkDelegate`, in the rows' left padding
+  `LegendMenu::CheckPad`): the macOS style of Qt 6.11 draws the check box of
+  a list's first row only, so with several volumes every other row looked
+  unchecked although its legend was on.
+* **Switching data on and off keeps the view** (wx DataTreeCtrl::OnAct only
+  marks the shown lists dirty): Toggle Visibility, Isolate / Show All and the
+  visibility undo / redo never recompute the bounds; only adding, removing or
+  replacing data does (wx InitView(INIT_BOUNDS | INIT_CENTER)).
 * **Workspace tree** (`TreePanel`, full wx DataTreeCtrl port): view → volume
   groups / meshes / mesh groups / annotations / segment trees (volumes) and
   SWC segment trees (meshes, built on expansion as wx), wx bulb icons,
@@ -785,6 +814,70 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   `fluorender.set`. Scripted runs (`TestRun.h`) never write the settings file,
   the window state or the default_*.dft files.
 
+## Volume position
+
+* The origin of a volume = the physical position of the corner of its first
+  voxel (ImageJ / Fiji: pixel coordinate 0 at `-xOrigin * pixelWidth`), so a
+  voxel centre is at origin + (i + 0.5) * spacing, world (x, y, -z) as
+  everywhere in VVDViewer. With origin 0 nothing changes. The NRRD spec,
+  CMTK and BigWarp put the centre of the first voxel at the origin instead:
+  half a voxel apart, the offset VVDViewer already had to them at origin 0.
+  Volumes of one spacing line up exactly; between different spacings by half
+  the difference (0.048 against 0.041671: 0.003).
+* `NRRDReader` reads `space origin` (with `space` / `space dimension` and
+  valid spacings; a 2D file may have no z) and `BaseReader::GetSpaceOrigin`
+  returns it (other formats: none). `DataManager::LoadVolumeData` (also the
+  prefetched channels, `VolumePrefetch::Channel`) applies it when
+  `DataManager::SetUseSpaceOrigin` is on: default off in the engine, so the
+  wx app is unchanged; the Qt Settings switch it (`[space origin] value`,
+  default on).
+* `Texture::set_origin` / `update_transform`: the normalized box goes to world
+  space through the BigDataViewer transform, the physical size (z flipped)
+  and then the origin, `T(x, y, -z) * S * A`; at 0 no translation is added,
+  so those transforms stay what they were. Everything that maps through the
+  texture transform follows (rendering, bounds and camera centre, picking,
+  rulers, clipping, annotations, the warp's landmark and grid maps).
+  `VolumeData::SetOrigin` / `GetOrigin`; time-series frames
+  (`Replace(data, true)`) keep it.
+* Placed explicitly: copies (`DeepCopy`, `CopyLevel`), Calculations (volume
+  A's), component exports, warp results (their grid's; the extended grid
+  shifted by `off`), Cells results, the selection centre of paint rulers
+  (`VolumeSelector::ProcessSel`), volume-to-mesh conversion
+  (`VolumeMeshConv::SetVolumeOrigin`), NRRD saves (`BaseWriter::
+  SetSpaceOrigin`, `VolumeData::Save` with the crop's first voxel,
+  `ExportEachSegment`). TIFF saves have no origin.
+* Projects (Qt `ProjectIO`): `/data/volume/N/properties/origin`; a project
+  without it keeps the volumes at 0, 0, 0 (the wx app ignores the key).
+* NRRD headers written by VVDViewer (the bundled teem, `%g`) keep 6
+  significant digits of the space directions and origin, as the spacing
+  always had: a crop origin of 23.4000002 is saved as 23.4.
+* "Get voxel size info from the first opened dataset" (Settings > Format)
+  gives every later volume the first one's spacing, which breaks the
+  physical placement of volumes with different voxel sizes; keep it off for
+  aligned data (the factory setting).
+* With Fiji: Fiji's NRRD writer stores the calibration origin as `space
+  origin`, so volumes saved with one (crops, reformatted stacks) open where
+  Fiji shows them, and a BigWarp landmark csv made on those images (moving
+  points in the moving image's coordinates) applies to the NRRD as it is.
+* Checked (2026-11-02) with a 1019 x 487 x 740 float label volume (spacing
+  0.048, space origin (-1.176, -5.736, -0.168)) and 225 BigWarp landmarks:
+  the Fiji csv with the origin on gives the same TPS result as the csv with
+  the origin subtracted from the moving points with it off, byte for byte, on
+  a grid like the fixed volume's (739 x 157 x 157 at 0.166684, origin 0; full
+  and 4x subsampled source). Cells differs on 0.08% of the nonzero voxels,
+  98.7% of them on object boundaries (its physical frame starts at the
+  source's corner, so it moves with the origin). Labels only with the origin
+  on: Auto = the extended grid 1992 x 585 x 740 from the origin, all 225
+  landmarks inside. Fixed points moved 60 to -x: the extended grid starts 79
+  voxels before the source (origin x -16.344), all 225 inside (131 in the
+  source's box). Volumes at origin 0 and runs with the setting off: 8 warps
+  (TPS / Cells; same, auto, extended) byte-identical to the previous build.
+  Placement (`VVD_QT_TEST=origin`): the origin and world box on open, kept by
+  a copy, a NRRD save (read back: same origin) and a cropped save (origin +
+  128 / 61 / 93 voxels), restored from the project, 0, 0, 0 from a project
+  without the key and with the setting off (a saved project keeps its
+  origin either way).
+
 ## Settings files
 
 * `Core/FileUtil` (toolkit-neutral, used by both GUIs and all plugins):
@@ -969,11 +1062,41 @@ Cells (shape preserving)"), in the toolkit-neutral `RigidCellsWarp.h/.cpp`
 ### Warp output grid ("Target:")
 
 * Measurement "Target:" next to Transform / Interpolation, saved under
-  `/warp target` ("auto", "same", "vol:<name>"). Auto = the End Volume of the
-  2-point rulers when every one of them starts on the current volume and all
-  end on the same other shown volume, else Same as source (the item shows what
-  it resolves to). The list is refilled when it opens and before each Apply
-  Transform. Same as source is byte-identical to before (16 cases checked).
+  `/warp target` ("auto", "same", "extend", "vol:<name>"). Auto = the End
+  Volume of the 2-point rulers when every one of them starts on the current
+  volume and all end on the same other shown volume. Otherwise (rulers
+  imported from a BigWarp csv name no volumes) it goes by where the fixed
+  landmarks (2-point ruler end points, locators) are (`WarpFixedPointsInside`,
+  half a voxel of tolerance): Same as source when they all lie in the current
+  volume, else the first other shown volume whose box holds them all, else
+  Extended to landmarks. The item shows what it resolves to; the list is
+  refilled when it opens, when the rulers change and before each Apply
+  Transform. Same as source is byte-identical to before (16 cases checked;
+  after the Auto / extended change 6 more, TPS and Cells, csv landmarks
+  inside and outside the volume).
+* **Extended to landmarks** (`WarpExtendedGrid`, `WarpVolumeByRulers(...,
+  extend)`, also Cells): the source's grid (same spacing) enlarged per axis to
+  the fixed landmarks + 10% of their extent on that axis, on both sides:
+  below the source's first voxel the grid starts `off` voxels earlier and the
+  result gets that origin (`NewWarpResultVolume(..., res, off)`, see "Volume
+  position"). Nothing changes on axes the landmarks stay inside, and where the
+  two grids overlap the result is byte-identical to Same as source. For
+  landmarks that move the data out of the volume when no volume of the fixed
+  space is loaded. Refused for a volume with a BigDataViewer transform; same
+  memory check as a target volume (each side capped at 2^20 voxels beyond the
+  source first).
+* Example (2026-11-02): a 1019 x 487 x 740 float label volume (spacing 0.048 =
+  48.9 x 23.4 x 35.5) with 225 BigWarp landmarks (csv) whose fixed points lie
+  at x 47.9..90.2: on its own grid 2 fixed points are inside and the result
+  (3352 labels of 149849) is TPS extrapolation only. Auto now gives the
+  extended 1967 x 487 x 740 grid with all 225 inside (36853 labels, 3 s on the
+  M4 Max), or, with a 2953 x 625 x 625 volume of the fixed space shown, that
+  volume's grid (40630 labels; the 37% of its nonzero voxels beyond the
+  extended box lie past the farthest landmark, x 94..130). A CPU evaluation of
+  the same TPS (nearest neighbour) agrees on all but 0.07% / 0.15% of 2M random
+  voxels; inside the fixed landmarks' box every difference is within 0.05
+  voxel of a rounding edge (float32 on the GPU, as before the change), larger
+  ones occur only far out in the extrapolated region.
 * Why: the transform maps ruler start → end points in world space, and the
   result used the source's grid. With rulers from a small volume (1305 x 712 x
   782 at spacing 0.024 = 31.3 x 17.1 x 18.8) to a large one (2953 x 625 x 625
@@ -982,7 +1105,7 @@ Cells (shape preserving)"), in the toolkit-neutral `RigidCellsWarp.h/.cpp`
   so warping it gave an empty volume, and warping the large volume on its own
   grid moved its data away from the start points.
 * With a target, `NewWarpResultVolume` makes the result on the target's grid
-  (size, spacing, BigDataViewer additional transform; bit depth of the source;
+  (size, spacing, origin, BigDataViewer additional transform; bit depth of the source;
   refused above half of the installed memory). The map is still fit in the
   source's normalized box; `WarpTargetGridMap` gives the per-axis map from the
   result's normalized box into it (refused when the two boxes are rotated /
@@ -1337,9 +1460,11 @@ command line.
 | `rulervol` | 2-point ruler from volume 0 to volume 1, Start / End Volume, text export; project saved to `VVD_QT_SAVE` or `<dir>/rulervol.vrp` |
 | `rulerlist` | the opened project's Measurement list (`VVD_QT_EXPECT_START`, `VVD_QT_EXPECT_END`) |
 | `rulerauto` | Auto-select on two separated volumes: clicks, Edit drag, View Plane locator, empty space, paint-ruler press, off = unchanged; `a01_measure_list_auto.png` |
-| `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`), result voxels to `VVD_QT_WARP_OUT` (raw) |
+| `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`; optional `_SRC` = volume index, `_TARGET` = auto / same / extend / volume index), result voxels to `VVD_QT_WARP_OUT` (raw), the source's and result's origins |
+| `origin` | the opened volumes' origins and world boxes (`VVD_QT_ORIGIN_EXPECT=x,y,z`: the first one's); `VVD_QT_ORIGIN_SAVE=1`: a copy, whole.nrrd, origin.vrp (its `origin=` key) and crop.nrrd (upper halves of the clipping box) of the first volume, each checked for the origin |
+| `dispview` | three or more volumes (the first two in one group, the rest in groups of their own) or a project: tree Toggle Visibility on a volume and on a group, all but the last off one by one, Isolate / Show All, visibility undo / redo; the view's centre, pan, distance, zoom and radius stay those of the start (`v0*_*.png`) |
 | `cells` | Import `VVD_QT_CELLS_CSV`, one "Cells: shape preserving" run per entry of `VVD_QT_CELLS_RUNS="local,objects,stiffness,device,loo,outprefix;..."` (+ `VVD_QT_CELLS_PARAMS="beta,sigma_min,neurite,samples,min_voxels,radius"`); `<outprefix>.raw` (`VVD_QT_CELLS_RAW=0`: md5 only), both tables via Save CSV, `VVD_QT_CELLS_GRAB=<dir>` dialog pictures |
-| `warptarget` | project on the command line, `VVD_QT_WT_RUNS="src,target,ttype,interp,stiffness,tag;..."` (src / target = index or name, target also auto / same; ttype 5 = Cells, `VVD_QT_WT_CELLDEV`); `VVD_QT_WT_GRAB=1` (`<tag>_before.png`, `<tag>_after.png`, `measure_dialog_target.png`); `VVD_QT_WT_RAW=1` grids, boxes, ruler points, per result nonzero count / bbox / md5 and per ruler the distance from the end point to the nearest nonzero voxel |
+| `warptarget` | project on the command line, `VVD_QT_WT_RUNS="src,target,ttype,interp,stiffness,tag;..."` (src / target = index or name, target also auto / same / extend; ttype 5 = Cells, `VVD_QT_WT_CELLDEV`); `VVD_QT_WT_GRAB=1` (`<tag>_before.png`, `<tag>_after.png`, `measure_dialog_target.png`); `VVD_QT_WT_RAW=1` grids, boxes, ruler points, per result nonzero count / bbox / md5 and per ruler the distance from the end point to the nearest nonzero voxel |
 | `legend2` | Legend drop-down after volumes are added while running (volA.nrrd on the command line, volB / b1 / b2.nrrd beside it): row count, rows inside the menu, clicks / Show All / Hide All checked on the next presented frame (`RenderCanvas::CaptureNextFrame`) and by `screencapture`; second view's menu |
 | `b3_panels`, `b3_maxval`, `b3_paint`, `b3_nrna`, `b3_script4d`, `b3_modes` | panels and dialogs (`MainWindowBatch3Test.cpp`; `VVD_QT_B3_DATA` = folder with octa2.obj / octa3.obj, `VVD_QT_B3_DATA4D` = the ts_T1..3 series with .lbl / .msk, `VVD_QT_VOLUME_DFT`, `VVD_QT_TEST_MODE`) |
 | `b4_views` | volA.nrrd volB.nrrd mesh.obj: second view, drag onto it, linked rotations, active view, ruler in view 2, Record/Export view combo, captures v0 / v1.tif, 2-view project p2.vrp, "Close" |
@@ -1367,7 +1492,7 @@ command line.
 | `VVD_QT_FILEDLG_RUN="step,..."` | file dialogs / tree save actions in order, then quit: `openvolume`, `openmesh`, `openproject`, `saveproject`, `savevolume`, `savesegmented`, `bake`, `exportmeta`, `select:<i>`, `clip:x0:x1:y0:y1:z0:z1`, `wait:<ms>`; per dialog `VVD_QT_FILEDLG_FILE_<NAME>=a;b`, `VVD_QT_FILEDLG_OPTS_<NAME>=key=value,...` (option controls by object name, `filter=<i>`); `VVD_QT_GRAB_FILEDLG=<dir>` pictures; `VVD_QT_FILEDLG_DELAY` (see FileDialogs.h) |
 | `VVD_QT_DATASETS=all\|none\|cancel\|<i,j>` | answers the Zarr / N5 dataset dialog (picture `filedlg_datasets.png`) |
 | `VVD_QT_TIME_SEQ=1` | Open Volume option "Read a sequence as time series" for the session |
-| `VVD_QT_GRAB_LEGEND=<dir>` | Legend drop-down clicks, `legend_menu_<step>.png`, `legend_view.png` (`_DELAY`, default 5000 ms) |
+| `VVD_QT_GRAB_LEGEND=<dir>` | Legend drop-down clicks, `legend_menu_<step>.png` (each row's check mark against its check state), `legend_view.png` (`_DELAY`, default 5000 ms) |
 | `VVD_QT_GRAB_MIDPASS=<dir>` | presented frames of unfinished streaming passes as `midpass_<n>.png` (`_MAX`, default 60) |
 | `VVD_QT_STATE_HEX=<file>` | lines `geometry\|windowState2\|innerState2 <hex>` replace the saved window state (empty file = none) |
 | `VVD_QT_VOL_METHOD`, `VVD_QT_FOG`, `VVD_QT_OVERLAYS` | blend mode, fog, overlays at start-up |

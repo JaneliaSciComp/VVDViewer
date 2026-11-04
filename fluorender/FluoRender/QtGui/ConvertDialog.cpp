@@ -215,6 +215,9 @@ void ConvertDialog::OnCnvVolMeshConvert()
 	double spcx = 1.0, spcy = 1.0, spcz = 1.0;
 	sel_vol->GetSpacings(spcx, spcy, spcz);
 	converter.SetVolumeSpacings(spcx, spcy, spcz);
+	double orgx = 0.0, orgy = 0.0, orgz = 0.0;
+	sel_vol->GetOrigin(orgx, orgy, orgz);
+	converter.SetVolumeOrigin(orgx, orgy, orgz);
 	converter.SetMaxValue(sel_vol->GetMaxValue());
 	//iso value
 	converter.SetIsoValue(m_cnv_vol_mesh_thresh);

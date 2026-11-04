@@ -119,6 +119,22 @@ namespace
 		return m ? m->getNrrd() : nullptr;
 	}
 
+	// raw dump of a test result; written in pieces because one write of more
+	// than 2 GB fails on macOS (write(2) takes at most INT_MAX bytes)
+	bool WriteRaw(const QString& path, const void* data, qint64 bytes)
+	{
+		QFile f(path);
+		if (!data || !f.open(QIODevice::WriteOnly)) return false;
+		const char* p = (const char*)data;
+		for (qint64 done = 0; done < bytes;)
+		{
+			const qint64 n = f.write(p + done, std::min<qint64>(bytes - done, qint64(1) << 30));
+			if (n <= 0) return false;
+			done += n;
+		}
+		return true;
+	}
+
 	long long CountNonzero(const Nrrd* n, long long count)
 	{
 		if (!n || !n->data) return -1;
@@ -1792,16 +1808,44 @@ void MainWindow::RunPaintTest(const QString& kind)
 		// Measurement "Apply Transform" through the dialog's controls:
 		// VVD_QT_WARP_CSV (BigWarp landmarks, Import), VVD_QT_WARP_TTYPE
 		// (Transform index), VVD_QT_WARP_LAMBDA (stiffness), VVD_QT_WARP_INTERP
-		// (Interpolation index); the result's voxels -> VVD_QT_WARP_OUT (raw)
+		// (Interpolation index); the result's voxels -> VVD_QT_WARP_OUT (raw).
+		// Optional VVD_QT_WARP_SRC (source: index of the loaded volumes, default
+		// the current one) and VVD_QT_WARP_TARGET (auto | same | extend | index
+		// of the loaded volumes; default the saved choice)
 		add("warp", [=]() {
 			MeasureDialog* dlg = EnsureMeasureDialog();
 			dlg->show();
 			VolumeData* src = CurrentVolume();
-			if (!src && !m_canvas->Volumes().empty()) src = m_canvas->Volumes()[0];
+			const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+			if (qEnvironmentVariableIsSet("VVD_QT_WARP_SRC"))
+			{
+				const int i = qEnvironmentVariableIntValue("VVD_QT_WARP_SRC");
+				src = (i >= 0 && i < (int)vols.size()) ? vols[i] : nullptr;
+			}
+			if (!src && !vols.empty()) src = vols[0];
 			m_canvas->SetCurrentVolume(src);
 			m_tree->SelectVolume(src);
 			check(m_ruler_tool->ImportBigWarpCSV(qEnvironmentVariable("VVD_QT_WARP_CSV")), "landmarks imported");
 			log("source %ls, rulers %d", src->GetName().c_str(), (int)m_ruler_tool->GetRulerList()->size());
+			QComboBox* tc = dlg->findChild<QComboBox*>("warp_target");
+			if (tc)
+			{
+				dlg->UpdateTargetCombo();
+				QString want = qEnvironmentVariable("VVD_QT_WARP_TARGET");
+				bool num = false;
+				const int vi = want.toInt(&num);
+				if (num) want = (vi >= 0 && vi < (int)vols.size()) ? "vol:" + vols[vi]->GetName().ToQt() : "?";
+				if (!want.isEmpty())
+				{
+					const int ti = tc->findData(want);
+					check(ti >= 0, "target choice " + want);
+					if (ti >= 0) { tc->setCurrentIndex(ti); Q_EMIT tc->activated(ti); }
+				}
+				bool ext = false;
+				VolumeData* tv = dlg->GetWarpTarget(&ext);
+				log("Target '%s' -> %ls", tc->currentText().toLocal8Bit().constData(),
+					tv ? tv->GetName().c_str() : ext ? L"(extended grid)" : L"(source grid)");
+			}
 			QComboBox* type = nullptr; QComboBox* interp = nullptr; QSlider* stiff = nullptr; QPushButton* apply = nullptr;
 			for (QComboBox* c : dlg->findChildren<QComboBox*>())
 			{
@@ -1827,10 +1871,224 @@ void MainWindow::RunPaintTest(const QString& kind)
 			int rx, ry, rz; res->GetResolution(rx, ry, rz);
 			const size_t bytes = (size_t)rx * ry * rz * res->GetTexture()->get_nrrd(0)->getBytesPerSample();
 			const QString out = qEnvironmentVariable("VVD_QT_WARP_OUT");
-			QFile f(out);
-			if (d && f.open(QIODevice::WriteOnly)) { f.write((const char*)d->data, (qint64)bytes); f.close(); }
+			if (d && !out.isEmpty()) WriteRaw(out, d->data, (qint64)bytes);
+			double so[3], ro[3];
+			src->GetOrigin(so[0], so[1], so[2]);
+			res->GetOrigin(ro[0], ro[1], ro[2]);
+			log("origin: source (%.6f, %.6f, %.6f), result (%.6f, %.6f, %.6f)", so[0], so[1], so[2], ro[0], ro[1], ro[2]);
 			log("result %ls %dx%dx%d max %g -> %s", res->GetName().c_str(), rx, ry, rz, res->GetMaxValue(), out.toLocal8Bit().constData());
 		});
+	}
+
+	if (kind == "origin")
+	{
+		// Settings > Format > Volume Position with the opened volumes or
+		// project: each volume's origin and world box; VVD_QT_ORIGIN_EXPECT =
+		// "x,y,z" checks the first volume's origin. VVD_QT_ORIGIN_SAVE=1 then
+		// takes the first volume through a copy (same origin), a NRRD save
+		// (whole.nrrd: its origin), a project (origin.vrp: its "origin" key)
+		// and a cropped save (crop.nrrd, the upper halves of the clipping box:
+		// moved to the crop's first voxel), all in the test folder.
+		auto space_origin = [](const QString& path, double o[3]) {
+			QFile f(path);
+			if (!f.open(QIODevice::ReadOnly)) return false;
+			for (int i = 0; i < 40 && !f.atEnd(); i++)
+			{
+				const QString l = QString::fromLatin1(f.readLine()).trimmed();
+				if (!l.startsWith("space origin:")) continue;
+				const QStringList v = l.mid(l.indexOf('(') + 1).remove(')').split(',');
+				if (v.size() < 3) return false;
+				for (int k = 0; k < 3; k++) o[k] = v[k].toDouble();
+				return true;
+			}
+			return false;
+		};
+		add("origin", [=]() {
+			const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+			log("space origin setting: %d", (int)m_data_mgr->GetUseSpaceOrigin());
+			for (VolumeData* v : vols)
+			{
+				int rx, ry, rz; double sx, sy, sz, ox, oy, oz;
+				v->GetResolution(rx, ry, rz); v->GetSpacings(sx, sy, sz); v->GetOrigin(ox, oy, oz);
+				const FLIVR::BBox b = v->GetBounds();
+				log("volume %ls %dx%dx%d spacing %.6f %.6f %.6f origin (%.6f, %.6f, %.6f) bounds (%.6f, %.6f, %.6f) - (%.6f, %.6f, %.6f)",
+					v->GetName().c_str(), rx, ry, rz, sx, sy, sz, ox, oy, oz,
+					b.min().x(), b.min().y(), b.min().z(), b.max().x(), b.max().y(), b.max().z());
+			}
+			if (vols.empty()) { check(false, "a volume is open"); return; }
+			VolumeData* vd = vols[0];
+			double o[3];
+			vd->GetOrigin(o[0], o[1], o[2]);
+			const QStringList ex = qEnvironmentVariable("VVD_QT_ORIGIN_EXPECT").split(',', Qt::SkipEmptyParts);
+			if (ex.size() == 3)
+			{
+				bool ok = true;
+				for (int k = 0; k < 3; k++) ok = ok && std::fabs(o[k] - ex[k].toDouble()) < 1e-9;
+				check(ok, "origin of " + vd->GetName().ToQt() + " = " + ex.join(", "));
+				int rx, ry, rz; double sx, sy, sz;
+				vd->GetResolution(rx, ry, rz); vd->GetSpacings(sx, sy, sz);
+				const FLIVR::BBox b = vd->GetBounds();
+				const double lo[3] = { b.min().x(), b.min().y(), -b.max().z() };
+				const double hi[3] = { b.max().x(), b.max().y(), -b.min().z() };
+				const double size[3] = { rx * sx, ry * sy, rz * sz };
+				ok = true;
+				for (int k = 0; k < 3; k++) ok = ok && std::fabs(lo[k] - o[k]) < 1e-9 && std::fabs(hi[k] - o[k] - size[k]) < 1e-9;
+				check(ok, "world box = origin .. origin + size (z flipped)");
+			}
+			if (qEnvironmentVariableIntValue("VVD_QT_ORIGIN_SAVE") == 0)
+				return;
+			VolumeData* copy = VolumeData::DeepCopy(*vd);
+			double co[3] = { 0, 0, 0 };
+			if (copy) copy->GetOrigin(co[0], co[1], co[2]);
+			check(copy && co[0] == o[0] && co[1] == o[1] && co[2] == o[2], "a copy keeps the origin");
+			delete copy;
+			// teem writes header vectors with "%g" (6 significant digits)
+			auto same6 = [](const double* a, const double* b) {
+				for (int k = 0; k < 3; k++)
+					if (std::fabs(a[k] - b[k]) > 1e-5 * (std::max)(1.0, std::fabs(b[k]))) return false;
+				return true;
+			};
+			double so[3];
+			const QString whole = st->dir + "/whole.nrrd";
+			vd->Save(VVDString(whole.toStdWString()), 2, false, false, false, false);
+			check(space_origin(whole, so) && same6(so, o),
+				QString::asprintf("saved space origin (%.6f, %.6f, %.6f)", so[0], so[1], so[2]));
+			// the project refers to whole.nrrd (a save repoints the volume)
+			const QString prj = st->dir + "/origin.vrp";
+			check(SaveProject(prj), "project saved: " + prj);
+			QFile pf(prj);
+			const QString text = pf.open(QIODevice::ReadOnly) ? QString::fromUtf8(pf.readAll()) : QString();
+			const QString key = "origin=" + QString::asprintf("%.6f %.6f %.6f", o[0], o[1], o[2]);
+			check(text.contains(key), "project key " + key);
+			// crop: the x1 / y1 / z1 planes at the middle
+			std::vector<FLIVR::Plane*>* planes = vd->GetVR() ? vd->GetVR()->get_planes() : nullptr;
+			if (planes && planes->size() == 6)
+			{
+				(*planes)[0]->ChangePlane(FLIVR::Point(0.5, 0.0, 0.0), FLIVR::Vector(1.0, 0.0, 0.0));
+				(*planes)[2]->ChangePlane(FLIVR::Point(0.0, 0.5, 0.0), FLIVR::Vector(0.0, 1.0, 0.0));
+				(*planes)[4]->ChangePlane(FLIVR::Point(0.0, 0.0, 0.5), FLIVR::Vector(0.0, 0.0, 1.0));
+				const QString crop = st->dir + "/crop.nrrd";
+				vd->Save(VVDString(crop.toStdWString()), 2, false, false, false, false, nullptr, true);
+				(*planes)[0]->ChangePlane(FLIVR::Point(0.0, 0.0, 0.0), FLIVR::Vector(1.0, 0.0, 0.0));
+				(*planes)[2]->ChangePlane(FLIVR::Point(0.0, 0.0, 0.0), FLIVR::Vector(0.0, 1.0, 0.0));
+				(*planes)[4]->ChangePlane(FLIVR::Point(0.0, 0.0, 0.0), FLIVR::Vector(0.0, 0.0, 1.0));
+				int rx, ry, rz; double sx, sy, sz;
+				vd->GetResolution(rx, ry, rz); vd->GetSpacings(sx, sy, sz);
+				const double e[3] = { o[0] + int(0.5 * rx + 0.5) * sx, o[1] + int(0.5 * ry + 0.5) * sy, o[2] + int(0.5 * rz + 0.5) * sz };
+				check(space_origin(crop, so) && same6(so, e),
+					QString::asprintf("cropped save: space origin (%.6f, %.6f, %.6f), expected (%.6f, %.6f, %.6f)", so[0], so[1], so[2], e[0], e[1], e[2]));
+			}
+		});
+	}
+
+	if (kind == "dispview")
+	{
+		// The view keeps its centre and zoom while volumes and groups are
+		// switched off and on (wx DataTreeCtrl::OnAct only marks the displayed
+		// lists dirty, no InitView): Toggle Visibility in the tree on a volume
+		// and on a group, all but the last volume one by one, Isolate / Show
+		// All, visibility undo / redo. The first two volumes share a group and
+		// every other one gets a group of its own.
+		struct Cam { double c[3], t[3], z, scale, radius; };
+		auto cam = [this]() {
+			Cam k;
+			double tx, ty;
+			m_canvas->GetObjCenter(k.c[0], k.c[1], k.c[2]);
+			m_canvas->GetObjTrans(k.t[0], k.t[1], k.t[2]);
+			m_canvas->GetTranslations(tx, ty, k.z);
+			k.scale = m_canvas->GetScaleFactor();
+			k.radius = m_canvas->GetRadius();
+			return k;
+		};
+		auto ref = std::make_shared<Cam>();
+		auto shown = [this]() {
+			const std::vector<VolumeData*> pop = m_canvas->PopVolumeList();
+			QString s;
+			for (VolumeData* v : m_canvas->Volumes())
+				s += std::find(pop.begin(), pop.end(), v) != pop.end() ? '1' : '0';
+			return s;
+		};
+		auto same_view = [=](const char* what) {
+			const Cam k = cam();
+			bool same = std::abs(k.z - ref->z) < 1e-9 && k.scale == ref->scale && std::abs(k.radius - ref->radius) < 1e-9;
+			for (int i = 0; i < 3; i++)
+				same = same && std::abs(k.c[i] - ref->c[i]) < 1e-9 && std::abs(k.t[i] - ref->t[i]) < 1e-9;
+			check(same, QString::asprintf("%s (shown %s): centre (%.4f, %.4f, %.4f), pan (%.4f, %.4f, %.4f), distance %.4f, zoom %.3f, radius %.4f",
+				what, shown().toLocal8Bit().constData(), k.c[0], k.c[1], k.c[2], k.t[0], k.t[1], k.t[2], k.z, k.scale, k.radius));
+		};
+		// the tree's Toggle Visibility on vd (group: on its group)
+		auto toggle = [this](VolumeData* vd, bool group) {
+			if (group)
+			{
+				DataGroup* g = m_canvas->GetParentGroup(vd);
+				if (!g || !m_tree->SelectByName(g->GetName().ToQt(), TreePanel::TypeGroup))
+					return false;
+			}
+			else
+				m_tree->SelectVolume(vd);
+			m_tree->OnAct();
+			return true;
+		};
+		auto tree_menu = [this](VolumeData* vd, const QString& text) {
+			m_tree->SelectVolume(vd);
+			std::unique_ptr<QMenu> m(m_tree->BuildContextMenu(m_tree->Tree()->currentItem()));
+			if (m)
+				for (QAction* a : m->actions())
+					if (a->text() == text) { a->trigger(); return true; }
+			return false;
+		};
+		auto vol = [this](int i) -> VolumeData* {
+			const std::vector<VolumeData*>& v = m_canvas->Volumes();
+			return v.empty() ? nullptr : v[i < 0 ? v.size() - 1 : std::min<size_t>(i, v.size() - 1)];
+		};
+		add("groups", [=]() {
+			const std::vector<VolumeData*> vols = m_canvas->Volumes();
+			check(vols.size() >= 3, QString("three or more volumes open (%1)").arg(vols.size()));
+			for (size_t i = 2; i < vols.size(); i++)
+				if (DataGroup* src = m_canvas->GetParentGroup(vols[i]))
+					m_canvas->MoveLayerfromtoGroup(src->GetName(), m_canvas->AddGroup(), vols[i]->GetName(), VVDString());
+			RefreshTree();
+			for (VolumeData* v : vols)
+			{
+				double ox, oy, oz;
+				v->GetOrigin(ox, oy, oz);
+				DataGroup* g = m_canvas->GetParentGroup(v);
+				log("volume %ls in %ls, origin (%.3f, %.3f, %.3f)", v->GetName().c_str(), g ? g->GetName().c_str() : L"-", ox, oy, oz);
+			}
+			m_canvas->RefreshView();
+		});
+		add("reference", [=]() { *ref = cam(); same_view("start"); });
+		capture("v00_start");
+		add("first off", [=]() { check(toggle(vol(0), false), "Toggle Visibility on the first volume"); });
+		add("first off: view", [=]() { same_view("first volume off"); });
+		capture("v01_first_off");
+		add("first on", [=]() { toggle(vol(0), false); });
+		add("first on: view", [=]() { same_view("first volume on again"); });
+		add("group off", [=]() { check(toggle(vol(-1), true), "Toggle Visibility on the last volume's group"); });
+		add("group off: view", [=]() { same_view("a group off"); });
+		add("group on", [=]() { toggle(vol(-1), true); });
+		add("group on: view", [=]() { same_view("the group on again"); });
+		add("one by one off", [=]() {
+			const std::vector<VolumeData*> v = m_canvas->Volumes();
+			for (size_t i = 0; i + 1 < v.size(); i++) toggle(v[i], false);
+		});
+		add("one by one off: view", [=]() { same_view("all but the last volume off, one by one"); });
+		capture("v02_last_only");
+		add("one by one on", [=]() {
+			const std::vector<VolumeData*> v = m_canvas->Volumes();
+			for (size_t i = 0; i + 1 < v.size(); i++) toggle(v[i], false);
+		});
+		add("one by one on: view", [=]() { same_view("all on again, one by one"); });
+		add("isolate", [=]() { check(tree_menu(vol(1), "Isolate"), "tree menu Isolate on the second volume"); });
+		add("isolate: view", [=]() { same_view("Isolate"); });
+		capture("v03_isolate");
+		add("show all", [=]() { check(tree_menu(vol(1), "Show All"), "tree menu Show All"); });
+		add("show all: view", [=]() { same_view("Show All"); });
+		add("undo", [=]() { m_tree->UndoVisibility(); });
+		add("undo: view", [=]() { same_view("visibility undo"); });
+		add("redo", [=]() { m_tree->RedoVisibility(); });
+		add("redo: view", [=]() { same_view("visibility redo"); });
+		capture("v04_end");
 	}
 
 	if (kind == "cells")
@@ -1916,7 +2174,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 				QByteArray md5 = QCryptographicHash::hash(QByteArrayView((const char*)d->data, (qsizetype)bytes), QCryptographicHash::Md5).toHex();
 				size_t nonzero = 0;
 				for (size_t i = 0; i < bytes; ++i) if (((const unsigned char*)d->data)[i]) nonzero++;
-				if (raw) { QFile fo(out + ".raw"); if (fo.open(QIODevice::WriteOnly)) { fo.write((const char*)d->data, (qint64)bytes); fo.close(); } }
+				if (raw) WriteRaw(out + ".raw", d->data, (qint64)bytes);
 				RigidCellsReportDialog* rd = dlg->GetCellReportDialog();
 				check(rd && rd->isVisible(), "results dialog shown");
 				if (rd)
@@ -2494,7 +2752,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 	{
 		// Measurement "Target:" (output grid) with the rulers of the opened
 		// project. VVD_QT_WT_RUNS = "src,target,ttype,interp,stiffness,tag;..."
-		// (src: volume index or name; target: auto | same | index | name;
+		// (src: volume index or name; target: auto | same | extend | index | name;
 		// ttype 0..4 as the Transform list, 5 = Cells with the saved / default
 		// options, VVD_QT_WT_CELLDEV = device index); VVD_QT_WT_GRAB=1:
 		// <tag>_before.png (source + target) and <tag>_after.png (target +
@@ -2600,7 +2858,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 				log("run %s: source %ls, Target list: %s", tag.toLocal8Bit().constData(), wt->src->GetName().c_str(),
 					items.join(" | ").toLocal8Bit().constData());
 				QString data = f[1];
-				if (data != "auto" && data != "same")
+				if (data != "auto" && data != "same" && data != "extend")
 				{
 					VolumeData* t = vol_of(f[1]);
 					data = t ? "vol:" + t->GetName().ToQt() : "?";
@@ -2613,9 +2871,10 @@ void MainWindow::RunPaintTest(const QString& kind)
 					dlg->adjustSize();
 					dlg->grab().save(st->dir + "/measure_dialog_target.png");
 				}
-				wt->tgt = dlg->GetWarpTarget();
+				bool ext = false;
+				wt->tgt = dlg->GetWarpTarget(&ext);
 				log("run %s: Target '%s' -> %ls%s", tag.toLocal8Bit().constData(), tc->currentText().toLocal8Bit().constData(),
-					wt->tgt ? wt->tgt->GetName().c_str() : L"(source grid)",
+					wt->tgt ? wt->tgt->GetName().c_str() : ext ? L"(extended grid)" : L"(source grid)",
 					WarpRulersReversed(wt->src, wt->tgt, *m_ruler_tool->GetRulerList()) ? " (rulers reversed: end points = moving)" : "");
 				// before picture: source + target only
 				for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(v == wt->src || v == wt->tgt);
@@ -2685,7 +2944,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 					log("  nonzero bbox voxels x %d-%d y %d-%d z %d-%d, physical (%.3f, %.3f, %.3f) - (%.3f, %.3f, %.3f)", x0, x1, y0, y1, z0, z1,
 						a.x(), a.y(), -a.z(), b.x(), b.y(), -b.z());
 				}
-				if (raw) { QFile fo(st->dir + "/" + tag + ".raw"); if (fo.open(QIODevice::WriteOnly)) { fo.write((const char*)d->data, (qint64)bytes); fo.close(); } }
+				if (raw) WriteRaw(st->dir + "/" + tag + ".raw", d->data, (qint64)bytes);
 				// landmarks
 				const bool rev = WarpRulersReversed(wt->src, wt->tgt, *m_ruler_tool->GetRulerList());
 				int near_ok = 0, n_lm = 0;
