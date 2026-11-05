@@ -722,7 +722,10 @@ void SettingsDialog::SetDefaults()
 	m_sphere_rot = true;
 	m_cell_warp = rigidcells::Params();
 	m_cell_warp.device = -1;   // the plugin's default: the first GPU if there is one
+	m_cell_warp.overlap = rigidcells::OVERLAP_SMALLER;   // neurons and glia stay whole (the plugin: first object)
 	m_warp_target = "auto";
+	m_cell_files_labels.clear();
+	m_cell_files_dir.clear();
 	m_pvxml_flip_x = false;
 	m_pvxml_flip_y = false;
 	m_red_bit = 8;
@@ -820,6 +823,8 @@ void SettingsDialog::LoadSettings()
 	cfg.Read(L"/ruler auto select/value", m_ruler_auto_select);
 	cfg.Read(L"/sphere rotation/value", m_sphere_rot);
 	if (cfg.Read(L"/warp target/value", s)) m_warp_target = FromVVD(s);
+	if (cfg.Read(L"/rigid cells/files", s)) m_cell_files_labels = FromVVD(s);
+	if (cfg.Read(L"/rigid cells/files dir", s)) m_cell_files_dir = FromVVD(s);
 	cfg.Read(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Read(L"/rigid cells/per label", m_cell_warp.per_label);
 	cfg.Read(L"/rigid cells/beta", m_cell_warp.beta);
@@ -830,6 +835,7 @@ void SettingsDialog::LoadSettings()
 	cfg.Read(L"/rigid cells/radius", m_cell_warp.radius);
 	cfg.Read(L"/rigid cells/device", m_cell_warp.device);
 	cfg.Read(L"/rigid cells/loo", m_cell_warp.loo);
+	cfg.Read(L"/rigid cells/overlap", m_cell_warp.overlap);
 	cdm::LoadOptions(cfg, m_cdm);   // /color depth mip (Qt only)
 	cfg.Read(L"/pvxml flip/x", m_pvxml_flip_x);
 	cfg.Read(L"/pvxml flip/y", m_pvxml_flip_y);
@@ -998,6 +1004,8 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/ruler auto select/value", m_ruler_auto_select);   // Qt only
 	cfg.Write(L"/sphere rotation/value", m_sphere_rot);   // Qt only
 	cfg.Write(L"/warp target/value", ToVVD(m_warp_target));   // Qt only
+	cfg.Write(L"/rigid cells/files", ToVVD(m_cell_files_labels));
+	cfg.Write(L"/rigid cells/files dir", ToVVD(m_cell_files_dir));
 	cfg.Write(L"/rigid cells/local", m_cell_warp.local_mode);
 	cfg.Write(L"/rigid cells/per label", m_cell_warp.per_label);
 	cfg.Write(L"/rigid cells/beta", m_cell_warp.beta);
@@ -1008,6 +1016,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/rigid cells/radius", m_cell_warp.radius);
 	cfg.Write(L"/rigid cells/device", m_cell_warp.device);
 	cfg.Write(L"/rigid cells/loo", m_cell_warp.loo);
+	cfg.Write(L"/rigid cells/overlap", m_cell_warp.overlap);
 	cdm::SaveOptions(cfg, m_cdm);   // /color depth mip (Qt only)
 	cfg.Write(L"/pvxml flip/x", m_pvxml_flip_x);
 	cfg.Write(L"/pvxml flip/y", m_pvxml_flip_y);

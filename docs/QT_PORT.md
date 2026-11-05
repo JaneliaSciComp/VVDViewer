@@ -334,6 +334,13 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Shared engine (affects the wx app too)
 
+* **Cell warp could end the app** (`RigidCellsWarp.cpp` `ParallelFor`): every
+  parallel loop starts its own threads (millions of thread starts in one
+  run over a whole-embryo label volume); when one could not be started the
+  `std::system_error` unwound past the started, still joinable threads and
+  `std::terminate` aborted the app (seen once in the app, minutes into the
+  warp). The started threads and the calling thread now finish the loop;
+  with injected start failures the result and the tables are identical.
 * **Edit mode could not grab a ruler point outside the current volume**
   (both apps): Select & move only took points inside the current volume's
   clipping planes, but a ruler is drawn with all its points once one of
@@ -1057,8 +1064,29 @@ Cells (shape preserving)"), in the toolkit-neutral `RigidCellsWarp.h/.cpp`
 
 * Output grid = the Target: grid (see below; "Same as source" = the current
   volume's grid, the plugin with moving = target image). Label values and bit
-  depth kept, nearest neighbour, first object written wins; name +
-  `_CELLS_ADAPTIVE` / `_CELLS_TRANS` / `_CELLS_RIGID` / `_CELLS_SIM`.
+  depth kept, nearest neighbour; name + `_CELLS_ADAPTIVE` / `_CELLS_TRANS` /
+  `_CELLS_RIGID` / `_CELLS_SIM`.
+* **Overlaps** (Qt option, saved as `/rigid cells/overlap`): where several
+  objects land on the same target voxel only one label can keep it. That
+  happens wherever the TPS folds (negative Jacobian; the objects table reports
+  the folded fraction per object) and where a rigidly moved cell body meets a
+  neighbour that follows the TPS. *Smaller labels first* (default) writes the
+  objects of labels with fewer moving voxels first; *First object* is the
+  plugin's scan order. The transforms do not depend on the order, so every
+  object is placed identically either way (no voxel of a label lies outside
+  the footprint it has when warped alone). On a whole-embryo label volume
+  (165,379 objects, 230 landmarks, a third of the larger objects folded) the
+  median of 34 glia kept 53% of their footprint with *First object* (80
+  pieces each) and 83% with *Smaller labels first*; the rest goes to other
+  glia and fragments the folded TPS puts on the same voxels.
+* **Labels to files** (+ Folder; saved as `/rigid cells/files` and
+  `/rigid cells/files dir`): the listed labels are also saved, each as
+  `<folder>/<label>.nrrd` (uint8 0 / 255, gzip, the result's grid and space
+  origin) with its whole footprint (`rigidcells::Footprints`), whichever label
+  keeps a voxel in the result volume: the same voxels as warping a binary of
+  that label alone, in one run. IDs separated by commas / spaces, or a text /
+  CSV file (the first number of each line). The report's log lists the files
+  written and labels without voxels on the grid.
 * Voxel convention is the plugin's: physical = index * spacing (origin 0). The
   GPU resampler of the other transforms puts voxel centres at (index + 0.5) *
   spacing, half a voxel off; both read the same ruler coordinates.
@@ -1080,7 +1108,8 @@ Cells (shape preserving)"), in the toolkit-neutral `RigidCellsWarp.h/.cpp`
   landmarks tables (same column names, row label "Label"), Save CSV (full
   precision), the plugin's log lines and warnings.
 * Every expression follows the Java order and `-ffp-contract=off` is set for
-  the file, so results are bit-identical to the plugin's: 29 configurations
+  the file, so with Overlaps = *First object* results are bit-identical to the
+  plugin's: 29 configurations
   (all local modes, both object modes, CPU and GPU, 8- and 16-bit labels),
   object and landmark tables included. Deliberate difference: the plugin's
   `Procrustes.fit` tested `mode > 0` (TRANSLATION is 1), so "Translation"

@@ -67,6 +67,8 @@ public:
 	// the cell transform's options as set in the dialog (stiffness = the
 	// Stiffness slider, same dimensionless value)
 	rigidcells::Params GetCellParams() const;
+	// Labels to files: IDs separated by commas / spaces, or a text / CSV file (first number per line)
+	static bool ParseLabelList(const QString& text, std::vector<int>& labels, QString* err);
 	// results of the last cell transform (created on first use)
 	RigidCellsReportDialog* GetCellReportDialog() const { return m_cell_report; }
 	// 0=Nearest Neighbor, 1=Linear
@@ -171,6 +173,7 @@ private:
 	QWidget* m_cell_panel = nullptr;
 	QComboBox* m_cell_local_combo = nullptr;
 	QComboBox* m_cell_objects_combo = nullptr;
+	QComboBox* m_cell_overlap_combo = nullptr;
 	QDoubleSpinBox* m_cell_beta = nullptr;
 	QDoubleSpinBox* m_cell_sigma_min = nullptr;
 	QDoubleSpinBox* m_cell_neurite = nullptr;
@@ -179,6 +182,8 @@ private:
 	QDoubleSpinBox* m_cell_radius = nullptr;
 	QComboBox* m_cell_device_combo = nullptr;
 	QCheckBox* m_cell_loo_chk = nullptr;
+	QLineEdit* m_cell_files_edit = nullptr;       // labels saved as separate files: IDs or a list file
+	QLineEdit* m_cell_files_dir_edit = nullptr;   // ... and their folder
 	RigidCellsReportDialog* m_cell_report = nullptr;
 	void BuildCellPanel();
 	void UpdateCellEnables();

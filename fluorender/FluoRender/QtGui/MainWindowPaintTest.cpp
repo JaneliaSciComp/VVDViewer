@@ -2259,7 +2259,10 @@ void MainWindow::RunPaintTest(const QString& kind)
 		// Per run: the result's voxels -> <outprefix>.raw (VVD_QT_CELLS_RAW=0:
 		// md5 only), the tables -> <outprefix>_objects.csv / _landmarks.csv
 		// (the results dialog's Save CSV); VVD_QT_CELLS_GRAB=<dir>: pictures
-		// of the Measurement dialog and the results dialog.
+		// of the Measurement dialog and the results dialog. Optional 7th run
+		// field: Overlaps (0 first object / 1 smaller labels first);
+		// VVD_QT_CELLS_FILES / _FILES_DIR: "Labels to files" and its folder
+		// (each listed label's file must exist after the run).
 		add("cells", [=]() {
 			MeasureDialog* dlg = EnsureMeasureDialog();
 			dlg->show();
@@ -2277,7 +2280,14 @@ void MainWindow::RunPaintTest(const QString& kind)
 			auto* objects = dlg->findChild<QComboBox*>("cell_objects");
 			auto* device = dlg->findChild<QComboBox*>("cell_device");
 			auto* loo = dlg->findChild<QCheckBox*>("cell_loo");
-			if (!type || !stiff || !apply || !local || !objects || !device || !loo) { check(false, "cell warp controls found"); return; }
+			auto* overlap = dlg->findChild<QComboBox*>("cell_overlap");
+			auto* files_edit = dlg->findChild<QLineEdit*>("cell_files_labels");
+			auto* files_dir = dlg->findChild<QLineEdit*>("cell_files_dir");
+			if (!type || !stiff || !apply || !local || !objects || !device || !loo || !overlap || !files_edit || !files_dir)
+			{ check(false, "cell warp controls found"); return; }
+			files_edit->setText(qEnvironmentVariable("VVD_QT_CELLS_FILES"));
+			files_dir->setText(qEnvironmentVariable("VVD_QT_CELLS_FILES_DIR"));
+			log("overlap default: '%s'", overlap->currentText().toLocal8Bit().constData());
 			type->setCurrentIndex(MeasureDialog::WarpCells);
 			QWidget* panel = dlg->findChild<QWidget*>("cell_panel");
 			check(panel && !panel->isHidden(), "cell options shown for 'Cells: shape preserving'");
@@ -2304,6 +2314,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 				stiff->setValue(int(std::lround(f[2].toDouble() * 1000.0)));
 				device->setCurrentIndex(std::min(f[3].toInt(), device->count() - 1));
 				loo->setChecked(f[4].toInt() != 0);
+				if (f.size() >= 7) overlap->setCurrentIndex(f[6].toInt());
 				const QString out = f[5];
 				const rigidcells::Params p = dlg->GetCellParams();
 				log("run %d: local '%s', objects '%s', stiffness %.3f, device '%s', loo %d, beta %g, sigma_min %g, neurite %g, samples %d, min voxels %d, radius %g",
@@ -2339,11 +2350,22 @@ void MainWindow::RunPaintTest(const QString& kind)
 					check(rd->SaveObjectsCsv(out + "_objects.csv"), "objects table saved");
 					if (rd->GetReport().has_landmarks) check(rd->SaveLandmarksCsv(out + "_landmarks.csv"), "landmarks table saved");
 					for (const std::string& w : rd->GetReport().warnings) log("  %s", w.c_str());
+					for (const std::string& l : rd->GetReport().log)
+						if (l.rfind("label files:", 0) == 0 || l.find("overlaps:") != std::string::npos) log("  %s", l.c_str());
 					if (!grab.isEmpty() && idx == 0)
 					{
 						rd->grab().save(grab + "/cells_results_dialog.png");
 						log("saved %s/cells_results_dialog.png", grab.toLocal8Bit().constData());
 					}
+				}
+				if (!files_edit->text().trimmed().isEmpty())
+				{
+					std::vector<int> ids;
+					QString perr;
+					MeasureDialog::ParseLabelList(files_edit->text().trimmed(), ids, &perr);
+					int found = 0;
+					for (int id : ids) found += QFileInfo::exists(QDir(files_dir->text()).filePath(QString("%1.nrrd").arg(id))) ? 1 : 0;
+					check(!ids.empty() && found == (int)ids.size(), QString("label files: %1 of %2 written").arg(found).arg(ids.size()));
 				}
 				log("RESULT %ls %dx%dx%d bits %d max %g md5 %s nonzero_bytes %zu time %lld ms objects %d",
 					res->GetName().c_str(), rx, ry, rz, (int)res->GetTexture()->get_nrrd(0)->getBytesPerSample() * 8, res->GetMaxValue(),

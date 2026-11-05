@@ -59,6 +59,7 @@ class Ruler;
 class TextRenderer;
 namespace FLIVR { class ThinPlateSpline; }
 namespace rigidcells { struct Params; struct Report; }
+struct RigidCellsLabelFiles;
 
 class RulerTool : public QObject, public CanvasTool
 {
@@ -181,7 +182,7 @@ public:
 	// volume or nullptr with *error set (empty when cancelled); *report gets
 	// the object / landmark tables and the log.
 	VolumeData* WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error,
-		VolumeData* target = nullptr, bool extend = false);
+		VolumeData* target = nullptr, bool extend = false, RigidCellsLabelFiles* files = nullptr);
 	// the current volume (the warp source)
 	VolumeData* CurrentVolume() const { return CurVol(); }
 

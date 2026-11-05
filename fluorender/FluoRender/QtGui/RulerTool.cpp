@@ -2195,11 +2195,11 @@ VolumeData* RulerTool::WarpCurrentVolume(int ttype, double lambda, int interp, Q
 }
 
 VolumeData* RulerTool::WarpCurrentVolumeCells(const rigidcells::Params& params, rigidcells::Report* report, QString* error,
-	VolumeData* target, bool extend)
+	VolumeData* target, bool extend, RigidCellsLabelFiles* files)
 {
 	//shared with the wx GUI (RigidCellsWarp.cpp)
 	VVDString err;
-	VolumeData* vd = RigidCellsWarpVolumeByRulers(CurVol(), m_ruler_list, params, report, &err, target, extend);
+	VolumeData* vd = RigidCellsWarpVolumeByRulers(CurVol(), m_ruler_list, params, report, &err, target, extend, files);
 	if (!vd && error)
 		*error = QString::fromStdWString(err);
 	return vd;

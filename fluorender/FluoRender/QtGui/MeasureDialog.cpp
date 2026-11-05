@@ -31,6 +31,9 @@
 #include <QFile>
 #include <QTextStream>
 #include <QMessageBox>
+#include <QRegularExpression>
+#include <limits>
+#include <unordered_set>
 #include <QColorDialog>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -1218,6 +1221,63 @@ void MeasureDialog::OnScatterRulers()
 	m_tool->ScatterRulers(ival);
 }
 
+// label IDs for "Labels to files": numbers separated by commas or spaces, or
+// a text / CSV file (the first number of each line; header lines are skipped)
+static bool LabelId(QString t, int& v)
+{
+	t.remove('"');
+	bool ok = false;
+	const long long i = t.toLongLong(&ok);
+	if (ok && i > 0 && i <= std::numeric_limits<int>::max()) { v = (int)i; return true; }
+	const double d = t.toDouble(&ok);
+	if (ok && d > 0 && d <= std::numeric_limits<int>::max() && d == (double)(long long)d) { v = (int)d; return true; }
+	return false;
+}
+
+bool MeasureDialog::ParseLabelList(const QString& text, std::vector<int>& labels, QString* err)
+{
+	labels.clear();
+	std::vector<int> ids;
+	if (QFileInfo(text).isFile())
+	{
+		QFile f(text);
+		if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+		{
+			if (err) *err = QString("Cannot read the label list:\n%1").arg(text);
+			return false;
+		}
+		QTextStream in(&f);
+		while (!in.atEnd())
+		{
+			const QString first = in.readLine().split(QRegularExpression("[,;\\t ]+"), Qt::SkipEmptyParts).value(0);
+			int v = 0;
+			if (LabelId(first, v)) ids.push_back(v);
+		}
+	}
+	else
+	{
+		for (const QString& t : text.split(QRegularExpression("[,;\\s]+"), Qt::SkipEmptyParts))
+		{
+			int v = 0;
+			if (!LabelId(t, v))
+			{
+				if (err) *err = QString("\"%1\" is not a label ID. Labels to files: IDs separated by commas or spaces, or a list file.").arg(t);
+				return false;
+			}
+			ids.push_back(v);
+		}
+	}
+	std::unordered_set<int> seen;
+	for (int v : ids)
+		if (seen.insert(v).second) labels.push_back(v);
+	if (labels.empty())
+	{
+		if (err) *err = QString("No label IDs in \"%1\".").arg(text);
+		return false;
+	}
+	return true;
+}
+
 // VRenderVulkanView::WarpCurrentVolumeInternal (the result volume is added
 // with override-vox off, like the wx view)
 void MeasureDialog::OnWarp()
@@ -1229,8 +1289,26 @@ void MeasureDialog::OnWarp()
 	bool extend = false;
 	VolumeData* target = GetWarpTarget(&extend);
 	rigidcells::Report report;
+	RigidCellsLabelFiles files;
+	if (cells && m_cell_files_edit && !m_cell_files_edit->text().trimmed().isEmpty())
+	{
+		QString perr;
+		if (!ParseLabelList(m_cell_files_edit->text().trimmed(), files.labels, &perr))
+		{
+			QMessageBox::information(this, "Warp", perr);
+			return;
+		}
+		const QString dir = m_cell_files_dir_edit->text().trimmed();
+		if (dir.isEmpty() || !QFileInfo(dir).isDir())
+		{
+			QMessageBox::information(this, "Warp", dir.isEmpty() ? QString("Choose a folder for the label files.") :
+				QString("The folder for the label files does not exist:\n%1").arg(dir));
+			return;
+		}
+		files.dir = VVDString(dir.toStdWString());
+	}
 	VolumeData* vd = cells ?
-		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err, target, extend) :
+		m_tool->WarpCurrentVolumeCells(GetCellParams(), &report, &err, target, extend, files.labels.empty() ? nullptr : &files) :
 		m_tool->WarpCurrentVolume(GetWarpTransformType(), GetWarpLambda(), GetWarpInterpolation(), &err, target, extend);
 	if (!vd)
 	{
@@ -1250,6 +1328,19 @@ void MeasureDialog::OnWarp()
 	}
 	if (cells)
 	{
+		if (!files.labels.empty())
+		{
+			std::string line = "label files: " + std::to_string(files.written) + " of " + std::to_string(files.labels.size()) +
+				" saved to " + QString::fromStdWString(files.dir.ToStdWstring()).toStdString();
+			if (!files.missing.empty())
+			{
+				line += "; no voxel on the result's grid for";
+				for (int l : files.missing) line += " " + std::to_string(l);
+			}
+			if (!files.error.empty())
+				line += "; " + QString::fromStdWString(files.error.ToStdWstring()).toStdString();
+			report.log.push_back(line);
+		}
 		if (!m_cell_report)
 			m_cell_report = new RigidCellsReportDialog(this);
 		m_cell_report->SetReport(report, QString::fromStdWString(vd->GetName().ToStdWstring()));
@@ -1317,6 +1408,9 @@ void MeasureDialog::BuildCellPanel()
 	m_cell_objects_combo = new QComboBox(m_cell_panel);
 	m_cell_objects_combo->setObjectName("cell_objects");
 	for (int i = 0; i < 2; i++) m_cell_objects_combo->addItem(rigidcells::ObjectModeName(i));
+	m_cell_overlap_combo = new QComboBox(m_cell_panel);
+	m_cell_overlap_combo->setObjectName("cell_overlap");
+	for (int i = 0; i < 2; i++) m_cell_overlap_combo->addItem(rigidcells::OverlapName(i));
 	m_cell_beta = dspin("cell_beta", 0.01, 1000.0, 2, 0.5);
 	m_cell_sigma_min = dspin("cell_sigma_min", 0.001, 1000.0, 3, 0.05);
 	m_cell_neurite = dspin("cell_neurite", 0.0, 1000.0, 3, 0.1);
@@ -1343,6 +1437,15 @@ void MeasureDialog::BuildCellPanel()
 	label("Objects:", row, 0, "26-connected components per label value, or one object per label value");
 	g->addWidget(m_cell_objects_combo, row, 1, 1, 3);
 	row++;
+	const QString tipOverlap = "Which label keeps a voxel that several objects land on (where the TPS folds, or where a rigidly "
+		"moved cell body meets a fiber that follows the TPS). Smaller labels first: labels with fewer voxels are written "
+		"first, so neurons and glia keep their whole shape where large cells (hypodermis, muscle, gut) land on them. "
+		"First object: scan order, as the ImageJ plugin; a cell can then be cut into pieces. Every object is placed "
+		"with the same transform either way.";
+	label("Overlaps:", row, 0, tipOverlap);
+	g->addWidget(m_cell_overlap_combo, row, 1, 1, 3);
+	m_cell_overlap_combo->setToolTip(tipOverlap);
+	row++;
 	label("Rigidity factor:", row, 0, "Adaptive: smoothing = factor x local thickness (radius); larger = more rigid somata");
 	g->addWidget(m_cell_beta, row, 1);
 	label("Min. smoothing:", row, 2, "Adaptive: minimum kernel radius (physical units); smaller = fibers follow the TPS closer");
@@ -1362,6 +1465,52 @@ void MeasureDialog::BuildCellPanel()
 	g->addWidget(m_cell_device_combo, row, 1, 1, 3);
 	row++;
 	g->addWidget(m_cell_loo_chk, row, 1, 1, 3);
+	row++;
+	//labels saved as separate files (the whole shape of each, as warping a
+	//binary of that label alone)
+	const QString tipFiles = "Also save these labels, each as its own file <folder>/<label>.nrrd (0 / 255 on the result's grid) "
+		"with its whole shape: the same voxels as warping a binary of that label alone, also where another label keeps "
+		"the voxel in the result volume. Label IDs separated by commas or spaces, or a text / CSV file (the first number "
+		"of each line). Empty: no files.";
+	label("Labels to files:", row, 0, tipFiles);
+	m_cell_files_edit = new QLineEdit(m_cell_panel);
+	m_cell_files_edit->setObjectName("cell_files_labels");
+	m_cell_files_edit->setPlaceholderText("IDs (67957, 68239 ...) or a list file");
+	m_cell_files_edit->setToolTip(tipFiles);
+	g->addWidget(m_cell_files_edit, row, 1, 1, 2);
+	auto* list_btn = new QPushButton("List...", m_cell_panel);
+	list_btn->setObjectName("cell_files_list_btn");
+	list_btn->setToolTip("Choose a text / CSV file with one label ID per line");
+	g->addWidget(list_btn, row, 3);
+	row++;
+	label("Folder:", row, 0, "Folder for the label files");
+	m_cell_files_dir_edit = new QLineEdit(m_cell_panel);
+	m_cell_files_dir_edit->setObjectName("cell_files_dir");
+	g->addWidget(m_cell_files_dir_edit, row, 1, 1, 2);
+	auto* dir_btn = new QPushButton("Folder...", m_cell_panel);
+	dir_btn->setObjectName("cell_files_dir_btn");
+	g->addWidget(dir_btn, row, 3);
+	auto save_files_settings = [this]() {
+		if (!m_settings) return;
+		m_settings->SetCellFilesLabels(m_cell_files_edit->text().trimmed());
+		m_settings->SetCellFilesDir(m_cell_files_dir_edit->text().trimmed());
+	};
+	connect(m_cell_files_edit, &QLineEdit::editingFinished, this, save_files_settings);
+	connect(m_cell_files_dir_edit, &QLineEdit::editingFinished, this, save_files_settings);
+	connect(list_btn, &QPushButton::clicked, this, [this, save_files_settings]() {
+		QString start = m_cell_files_edit->text().trimmed();
+		if (!QFileInfo(start).isFile()) start = m_cell_files_dir_edit->text().trimmed();
+		QString f = QFileDialog::getOpenFileName(this, "Label list", start, "Label lists (*.txt *.csv);;All files (*)");
+		if (f.isEmpty()) return;
+		m_cell_files_edit->setText(f);
+		save_files_settings();
+	});
+	connect(dir_btn, &QPushButton::clicked, this, [this, save_files_settings]() {
+		QString d = QFileDialog::getExistingDirectory(this, "Folder for the label files", m_cell_files_dir_edit->text().trimmed());
+		if (d.isEmpty()) return;
+		m_cell_files_dir_edit->setText(d);
+		save_files_settings();
+	});
 	g->setColumnStretch(4, 1);
 
 	//settings (SettingsDialog /rigid cells)
@@ -1370,6 +1519,7 @@ void MeasureDialog::BuildCellPanel()
 		p = m_settings->GetCellWarpParams();
 	m_cell_local_combo->setCurrentIndex(std::min(3, std::max(0, p.local_mode)));
 	m_cell_objects_combo->setCurrentIndex(p.per_label ? 1 : 0);
+	m_cell_overlap_combo->setCurrentIndex(p.overlap == rigidcells::OVERLAP_FIRST ? 0 : 1);
 	m_cell_beta->setValue(p.beta);
 	m_cell_sigma_min->setValue(p.sigma_min);
 	m_cell_neurite->setValue(p.neurite);
@@ -1380,8 +1530,14 @@ void MeasureDialog::BuildCellPanel()
 	int dev = p.device < 0 ? (m_cell_device_combo->count() > 1 ? 1 : 0) : p.device;
 	m_cell_device_combo->setCurrentIndex(dev < m_cell_device_combo->count() ? dev : 0);
 	m_cell_loo_chk->setChecked(p.loo);
+	if (m_settings)
+	{
+		m_cell_files_edit->setText(m_settings->GetCellFilesLabels());
+		m_cell_files_dir_edit->setText(m_settings->GetCellFilesDir());
+	}
 	connect(m_cell_local_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnCellOptionChanged);
 	connect(m_cell_objects_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnCellOptionChanged);
+	connect(m_cell_overlap_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnCellOptionChanged);
 	connect(m_cell_device_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnCellOptionChanged);
 	connect(m_cell_loo_chk, &QCheckBox::toggled, this, &MeasureDialog::OnCellOptionChanged);
 	UpdateCellEnables();
@@ -1402,6 +1558,7 @@ rigidcells::Params MeasureDialog::GetCellParams() const
 	rigidcells::Params p;
 	p.local_mode = m_cell_local_combo->currentIndex();
 	p.per_label = m_cell_objects_combo->currentIndex() == 1;
+	p.overlap = m_cell_overlap_combo->currentIndex();
 	p.stiffness = m_warp_lambda;
 	p.beta = m_cell_beta->value();
 	p.sigma_min = m_cell_sigma_min->value();

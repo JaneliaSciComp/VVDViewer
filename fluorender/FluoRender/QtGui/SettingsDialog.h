@@ -137,6 +137,11 @@ public:
 	// Qt only, the stiffness is the dialog's shared slider and not stored)
 	const rigidcells::Params& GetCellWarpParams() const { return m_cell_warp; }
 	void SetCellWarpParams(const rigidcells::Params& p) { m_cell_warp = p; }
+	// Measurement cell transform: labels saved as separate files (IDs or a list file) and their folder
+	QString GetCellFilesLabels() const { return m_cell_files_labels; }
+	void SetCellFilesLabels(const QString& s) { m_cell_files_labels = s; }
+	QString GetCellFilesDir() const { return m_cell_files_dir; }
+	void SetCellFilesDir(const QString& s) { m_cell_files_dir = s; }
 	// "Save Color Depth MIP..." dialog values (/color depth mip; Qt only)
 	const cdm::Options& GetColorDepthMIPOptions() const { return m_cdm; }
 	void SetColorDepthMIPOptions(const cdm::Options& o) { m_cdm = o; }
@@ -244,6 +249,7 @@ private:
 	rigidcells::Params m_cell_warp;
 	cdm::Options m_cdm;
 	QString m_warp_target;
+	QString m_cell_files_labels, m_cell_files_dir;
 	bool m_pvxml_flip_x;
 	bool m_pvxml_flip_y;
 	int m_red_bit;

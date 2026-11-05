@@ -67,7 +67,18 @@ namespace rigidcells
 		int device = 0;              // 0 = CPU (all cores), k > 0 = GPU k-1 of GpuDeviceNames()
 		bool loo = true;             // leave-one-out landmark diagnostics
 		int threads = 0;             // CPU threads, 0 = all cores
+		// which object keeps a target voxel that several objects map to (where
+		// the TPS folds, or where a rigidly moved cell body and a neighbour that
+		// follows the TPS meet); every object keeps its own transform either way:
+		//   OVERLAP_FIRST:   the first object in scan order (the plugin)
+		//   OVERLAP_SMALLER: objects of smaller labels (fewer voxels in the moving
+		//                    volume) are written first, so neurons and glia keep
+		//                    their whole shape where large cells (hypodermis,
+		//                    muscle, gut) land on them
+		int overlap = 0;
 	};
+	enum Overlap { OVERLAP_FIRST = 0, OVERLAP_SMALLER = 1 };
+	EXPORT_API const char* OverlapName(int overlap);
 
 	struct Grid
 	{
@@ -147,9 +158,19 @@ namespace rigidcells
 	// the moving volume, zero-filled by the caller). Returns false with *error
 	// set (the plugin's exception text; "Cancelled." when progress returned
 	// false).
+	// Optional for Apply: the whole target footprint of the objects of chosen
+	// labels, i.e. every target voxel the object's own transform maps to,
+	// whichever label keeps the voxel in out. Used to save labels as separate
+	// files: the same voxels as warping a binary of that label alone.
+	struct Footprints
+	{
+		std::function<bool(int label)> want;
+		// linear target indices (x fastest), unsorted, may repeat
+		std::function<void(int label, const std::vector<long long>& voxels)> add;
+	};
 	EXPORT_API bool Apply(const Volume& moving, const Grid& mg, const Grid& tg, void* out,
 		const Landmarks& landmarks, const Params& params, Report& report,
-		std::string* error, const ProgressFn& progress = ProgressFn());
+		std::string* error, const ProgressFn& progress = ProgressFn(), const Footprints* footprints = nullptr);
 
 	// OpenCL GPUs (loaded at run time, no build dependency); empty when there
 	// is no OpenCL runtime. Index k here is Params::device k+1.
@@ -178,9 +199,21 @@ namespace rigidcells
 // space), the result overlaps it. Landmark roles swapped as WarpVolumeByRulers
 // (WarpRulersReversed). extend (target null or src): tg is src's grid
 // extended to the fixed landmarks (WarpExtendedGrid), as WarpVolumeByRulers.
+// files: also save chosen labels, each as its own file <dir>/<label>.nrrd
+// (uint8 0 / 255 on the result's grid, gzip) holding the label's whole
+// footprint (rigidcells::Footprints), whichever label keeps a voxel in the
+// result volume: the shape of warping a binary of that label alone.
+struct RigidCellsLabelFiles
+{
+	std::vector<int> labels;
+	VVDString dir;
+	int written = 0;             // out: files written
+	std::vector<int> missing;    // out: labels with no voxel on the result's grid
+	VVDString error;             // out: the first file that could not be written
+};
 EXPORT_API VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
 	const rigidcells::Params& params, rigidcells::Report* report, VVDString* error = nullptr,
-	VolumeData* target = nullptr, bool extend = false);
+	VolumeData* target = nullptr, bool extend = false, RigidCellsLabelFiles* files = nullptr);
 #endif
 
 #endif // VVD_RIGIDCELLSWARP_H

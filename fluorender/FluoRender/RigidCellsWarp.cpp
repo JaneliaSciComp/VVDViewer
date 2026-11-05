@@ -34,6 +34,7 @@
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 
@@ -60,6 +61,12 @@ namespace rigidcells
 	{
 		static const char* const names[2] = { "Connected components (26-connected, per label)", "Each label value is one object" };
 		return mode >= 0 && mode < 2 ? names[mode] : "";
+	}
+
+	const char* OverlapName(int overlap)
+	{
+		static const char* const names[2] = { "First object in scan order (as the ImageJ plugin)", "Smaller labels first (neurons and glia stay whole)" };
+		return overlap >= 0 && overlap < 2 ? names[overlap] : "";
 	}
 
 	namespace
@@ -163,22 +170,32 @@ namespace rigidcells
 			std::atomic<long long> next(0);
 			std::exception_ptr err;
 			std::mutex m;
+			auto work = [&]() {
+				try
+				{
+					for (long long i; (i = next.fetch_add(1)) < n; )
+						fn(i);
+				}
+				catch (...)
+				{
+					std::lock_guard<std::mutex> lk(m);
+					if (!err) err = std::current_exception();
+					next.store(n);
+				}
+			};
 			std::vector<std::thread> pool;
 			pool.reserve(threads);
+			// a thread that cannot be started (std::system_error) must not end the
+			// program: destroying the started, still joinable threads during the
+			// unwinding called std::terminate. The started threads and this one
+			// do the work instead.
+			bool all = true;
 			for (int t = 0; t < threads; ++t)
-				pool.emplace_back([&]() {
-					try
-					{
-						for (long long i; (i = next.fetch_add(1)) < n; )
-							fn(i);
-					}
-					catch (...)
-					{
-						std::lock_guard<std::mutex> lk(m);
-						if (!err) err = std::current_exception();
-						next.store(n);
-					}
-				});
+			{
+				try { pool.emplace_back(work); }
+				catch (const std::system_error&) { all = false; break; }
+			}
+			if (!all) work();
 			for (auto& th : pool) th.join();
 			if (err) std::rethrow_exception(err);
 		}
@@ -1249,14 +1266,37 @@ namespace rigidcells
 				: tps(moving, target, stiffness), lm(moving), lt(target), threads(threads_) {}
 
 			std::vector<ObjectResult> place(const Runs& runs, const Grid& mg, const Grid& tg, int localMode, double beta, double sigmaMin,
-				double neurite, int maxSamples, double radius, GpuField* gpu, Sink& sink, const ProgressFn& progress)
+				double neurite, int maxSamples, double radius, GpuField* gpu, Sink& sink, int overlap, const ProgressFn& progress,
+				const Footprints* footprints)
 			{
 				std::vector<ObjectResult> out;
 				std::vector<std::vector<int>> runsOf = runs.runsPerComponent();
-				for (int c = 0; c < runs.componentCount; c++)
+				// write order: scan order (the plugin; the first object written to a
+				// voxel keeps it), or the objects of smaller labels first so that a
+				// large cell landing on a neuron (folded TPS, a rigidly moved cell
+				// body next to a TPS-following fibre) does not cut it. The transforms
+				// do not depend on the order; the table stays in scan order.
+				std::vector<int> order(runs.componentCount), outComponent;
+				for (int c = 0; c < runs.componentCount; c++) order[c] = c;
+				if (overlap == OVERLAP_SMALLER)
 				{
-					if (progress && !progress(c, runs.componentCount, "Placing object " + std::to_string(c + 1) + " / " + std::to_string(runs.componentCount)))
+					std::unordered_map<int, long long> perLabel;
+					for (int c = 0; c < runs.componentCount; c++) perLabel[runs.componentLabel[c]] += runs.componentVoxels[c];
+					std::vector<long long> labelVoxels(runs.componentCount);
+					for (int c = 0; c < runs.componentCount; c++) labelVoxels[c] = perLabel[runs.componentLabel[c]];
+					std::stable_sort(order.begin(), order.end(), [&](int x, int y) {
+						if (labelVoxels[x] != labelVoxels[y]) return labelVoxels[x] < labelVoxels[y];
+						return runs.componentLabel[x] < runs.componentLabel[y];
+					});
+				}
+				for (int k = 0; k < runs.componentCount; k++)
+				{
+					const int c = order[k];
+					if (progress && !progress(k, runs.componentCount, "Placing object " + std::to_string(k + 1) + " / " + std::to_string(runs.componentCount)))
 						throw Cancelled();
+					outComponent.push_back(c);
+					std::vector<long long> fpv;
+					std::vector<long long>* fp = (footprints && footprints->want && footprints->want(runs.componentLabel[c])) ? &fpv : nullptr;
 					ObjectResult r;
 					r.label = runs.componentLabel[c]; r.voxels = runs.componentVoxels[c];
 					// sample the object's voxels in moving physical coordinates
@@ -1362,7 +1402,8 @@ namespace rigidcells
 						r.note = "adaptive: sigma = " + JavaDouble(sigmaMin) + " below neurite radius " + JavaDouble(neurite) + ", else max(" + JavaDouble(sigmaMin) + ", "
 							+ JavaDouble(beta) + " x thickness); " + std::to_string(fa.size()) + " field samples; grid " + jfmtg(h, 3);
 						auto tC = std::chrono::steady_clock::now();
-						splat(runs, runsOf[c], field, mg, tg, sink, r);
+						splat(runs, runsOf[c], field, mg, tg, sink, r, fp);
+						if (fp && footprints->add) footprints->add(r.label, fpv);
 						auto tD = std::chrono::steady_clock::now();
 						auto sec = [](std::chrono::steady_clock::duration d) { return std::chrono::duration<double>(d).count(); };
 						r.note += "; time thickness " + fmt1f(sec(tB - tA)) + "s, field+stats " + fmt1f(sec(tC - tB)) + "s, render " + fmt1f(sec(tD - tC)) + "s";
@@ -1389,15 +1430,28 @@ namespace rigidcells
 						lsum += e * e; lmax = jmax(lmax, e);
 					}
 					r.nearby_landmarks = nearCount; r.nearby_landmark_rms = nearCount > 0 ? std::sqrt(lsum / nearCount) : 0; r.nearby_landmark_max = lmax;
-					render(runs, c, fit, mg, tg, sink, r);
+					render(runs, c, fit, mg, tg, sink, r, fp);
+					if (fp && footprints->add) footprints->add(r.label, fpv);
 					out.push_back(r);
 				}
 				if (progress && !progress(runs.componentCount, runs.componentCount, "Done")) throw Cancelled();
+				if (overlap == OVERLAP_SMALLER)
+				{
+					// back to scan order for the objects table
+					std::vector<size_t> idx(out.size());
+					for (size_t i = 0; i < idx.size(); i++) idx[i] = i;
+					std::sort(idx.begin(), idx.end(), [&](size_t x, size_t y) { return outComponent[x] < outComponent[y]; });
+					std::vector<ObjectResult> sorted;
+					sorted.reserve(out.size());
+					for (size_t i : idx) sorted.push_back(std::move(out[i]));
+					out.swap(sorted);
+				}
 				return out;
 			}
 
 			// inverse-map every target voxel inside the transformed bounding box
-			void render(const Runs& runs, int c, const Fit& fit, const Grid& mg, const Grid& tg, Sink& sink, ObjectRow& r)
+			void render(const Runs& runs, int c, const Fit& fit, const Grid& mg, const Grid& tg, Sink& sink, ObjectRow& r,
+				std::vector<long long>* fp = nullptr)
 			{
 				double lo[3], hi[3];
 				for (int d = 0; d < 3; d++) { lo[d] = std::numeric_limits<double>::infinity(); hi[d] = -std::numeric_limits<double>::infinity(); }
@@ -1424,6 +1478,7 @@ namespace rigidcells
 				const int w = runs.width, h = runs.height, dep = runs.depth;
 				const int nzs = i1[2] - i0[2] + 1;
 				std::vector<long long> written(nzs, 0), collisions(nzs, 0);
+				std::vector<std::vector<long long>> fpz(fp ? nzs : 0);
 				// z slices in parallel: each target voxel is visited once per object, so the result is order independent
 				ParallelFor(nzs, threads, [&](long long zi) {
 					int z = i0[2] + (int)zi;
@@ -1440,17 +1495,20 @@ namespace rigidcells
 							int mx = jint(std::floor(mg.index(0, p[0]) + 0.5)), my = jint(std::floor(mg.index(1, p[1]) + 0.5)), mz = jint(std::floor(mg.index(2, p[2]) + 0.5));
 							if (mx < 0 || my < 0 || mz < 0 || mx >= w || my >= h || mz >= dep) continue;
 							if (runs.componentAt(mx, my, mz) != c) continue;
+							if (fp) fpz[(size_t)zi].push_back(((long long)z * tg.size[1] + y) * tg.size[0] + x);
 							if (sink.set(x, y, z, r.label)) wr++; else co++;
 						}
 					}
 					written[(size_t)zi] = wr; collisions[(size_t)zi] = co;
 				});
 				for (int i = 0; i < nzs; i++) { r.written += written[i]; r.collisions += collisions[i]; }
+				if (fp) for (auto& v : fpz) fp->insert(fp->end(), v.begin(), v.end());
 				if (total > inside) r.clipped = jround(r.voxels * (1.0 - inside / (double)total));
 			}
 
 			// forward-map every object voxel through the adaptive field, super-sampling where the field stretches
-			void splat(const Runs& runs, const std::vector<int>& runList, AdaptiveField& field, const Grid& mg, const Grid& tg, Sink& sink, ObjectRow& r)
+			void splat(const Runs& runs, const std::vector<int>& runList, AdaptiveField& field, const Grid& mg, const Grid& tg, Sink& sink, ObjectRow& r,
+				std::vector<long long>* fp = nullptr)
 			{
 				// target voxels are computed in parallel per chunk of runs and written in the
 				// plugin's order (voxel by voxel, sub-sample by sub-sample), so writes,
@@ -1504,6 +1562,7 @@ namespace rigidcells
 						{
 							if (v == MARK) { first = true; continue; }
 							if (v == CLIP) { if (first) r.clipped++; first = false; continue; }
+							if (fp) fp->push_back(v);
 							int tx = (int)(v % tg.size[0]), ty = (int)((v / tg.size[0]) % tg.size[1]), tz = (int)(v / ((long long)tg.size[0] * tg.size[1]));
 							if (sink.set(tx, ty, tz, r.label)) r.written++; else if (first) r.collisions++;
 							first = false;
@@ -1692,7 +1751,7 @@ namespace rigidcells
 	}
 
 	bool Apply(const Volume& moving, const Grid& mg, const Grid& tg, void* out, const Landmarks& landmarks,
-		const Params& P, Report& report, std::string* error, const ProgressFn& progress)
+		const Params& P, Report& report, std::string* error, const ProgressFn& progress, const Footprints* footprints)
 	{
 		report = Report();
 		auto t0 = std::chrono::steady_clock::now();
@@ -1740,7 +1799,8 @@ namespace rigidcells
 				if (P.device == 0) log("adaptive field on CPU, " + std::to_string(threads) + " threads");
 				report.device = "CPU, " + std::to_string(threads) + " threads";
 			}
-			std::vector<ObjectResult> results = core.place(runs, mg, tg, local, P.beta, P.sigma_min, P.neurite, P.samples, P.radius, gpu.get(), sink, progress);
+			if (P.overlap == OVERLAP_SMALLER) log("overlaps: objects of smaller labels written first");
+			std::vector<ObjectResult> results = core.place(runs, mg, tg, local, P.beta, P.sigma_min, P.neurite, P.samples, P.radius, gpu.get(), sink, P.overlap, progress, footprints);
 			gpu.reset();
 			for (const ObjectResult& r : results)
 			{
@@ -1809,8 +1869,39 @@ namespace rigidcells
 // ------------------------------------------------------------------ VolumeData glue
 #ifndef RIGIDCELLS_CORE_ONLY
 
+// one label as its own NRRD: uint8 0 / 255, gzip, the result volume's spacing
+// and space origin (as VolumeData::Save writes NRRD)
+static bool SaveLabelMaskNrrd(const std::wstring& path, uint8_t* buf, const int size[3], const double spc[3], const double org[3])
+{
+	Nrrd* n = nrrdNew();
+	if (!n)
+		return false;
+	if (nrrdWrap(n, buf, nrrdTypeUChar, 3, (size_t)size[0], (size_t)size[1], (size_t)size[2]))
+	{
+		nrrdNix(n);
+		return false;
+	}
+	double so[NRRD_SPACE_DIM_MAX] = { org[0], org[1], org[2] };
+	double dir[3][NRRD_SPACE_DIM_MAX] = { { spc[0], 0.0, 0.0 }, { 0.0, spc[1], 0.0 }, { 0.0, 0.0, spc[2] } };
+	nrrdSpaceSet(n, nrrdSpaceRightAnteriorSuperior);
+	nrrdSpaceOriginSet(n, so);
+	nrrdAxisInfoSet(n, nrrdAxisInfoSpaceDirection, dir[0], dir[1], dir[2]);
+	NrrdIoState* nio = nrrdIoStateNew();
+	bool ok = false;
+	if (nio)
+	{
+		nrrdIoStateEncodingSet(nio, nrrdEncodingGzip);
+		nio->format = nrrdFormatNRRD;
+		ok = BaseWriter::SaveNrrdFile(path, n, nio) == 0;
+		nrrdIoStateNix(nio);
+	}
+	nrrdNix(n);   // buf stays the caller's
+	return ok;
+}
+
 VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Ruler*>& rulers,
-	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error, VolumeData* target, bool extend)
+	const rigidcells::Params& params, rigidcells::Report* report_out, VVDString* error, VolumeData* target, bool extend,
+	RigidCellsLabelFiles* files)
 {
 	using namespace FLIVR;
 	if (error) error->clear();
@@ -1967,7 +2058,66 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 	rigidcells::Report local_report;
 	rigidcells::Report& rep = report_out ? *report_out : local_report;
 	std::string err;
-	bool ok = rigidcells::Apply(mv, g, tg, onrrd->data, lm, params, rep, &err, pf);
+	// labels to save as separate files: their whole footprints
+	std::unordered_map<int, std::vector<long long>> footprint;
+	rigidcells::Footprints fps;
+	const bool save_files = files && !files->labels.empty() && !files->dir.empty();
+	if (files)
+	{
+		files->written = 0;
+		files->missing.clear();
+		files->error.clear();
+	}
+	if (save_files)
+	{
+		for (int l : files->labels)
+			footprint.emplace(l, std::vector<long long>());
+		fps.want = [&footprint](int label) { return footprint.count(label) > 0; };
+		fps.add = [&footprint](int label, const std::vector<long long>& v) {
+			std::vector<long long>& acc = footprint[label];
+			acc.insert(acc.end(), v.begin(), v.end());
+		};
+	}
+	bool ok = rigidcells::Apply(mv, g, tg, onrrd->data, lm, params, rep, &err, pf, save_files ? &fps : nullptr);
+	if (ok && save_files)
+	{
+		double rsp[3] = { 1, 1, 1 }, rorg[3] = { 0, 0, 0 };
+		vd->GetSpacings(rsp[0], rsp[1], rsp[2]);
+		vd->GetOrigin(rorg[0], rorg[1], rorg[2]);
+		const size_t total = (size_t)tg.size[0] * tg.size[1] * tg.size[2];
+		std::vector<uint8_t> mask;
+		try { mask.assign(total, 0); }
+		catch (const std::bad_alloc&) { files->error = L"Not enough memory to save the label files."; }
+		std::wstring dir = files->dir.ToStdWstring();
+		if (!dir.empty() && dir.back() != L'/' && dir.back() != L'\\')
+			dir += L'/';
+		int k = 0;
+		for (int l : files->labels)
+		{
+			if (mask.empty())
+				break;
+			std::vector<long long>& v = footprint[l];
+			k++;
+			if (v.empty())
+			{
+				files->missing.push_back(l);
+				continue;
+			}
+			if (prog && !prog->Update(99, VVDString(L"Saving label files (" + std::to_wstring(k) + L" / " +
+				std::to_wstring(files->labels.size()) + L")...")))
+				break;
+			for (long long i : v)
+				mask[(size_t)i] = 255;
+			const std::wstring path = dir + std::to_wstring(l) + L".nrrd";
+			if (SaveLabelMaskNrrd(path, mask.data(), tg.size, rsp, rorg))
+				files->written++;
+			else if (files->error.empty())
+				files->error = VVDString(L"Could not write " + path);
+			for (long long i : v)
+				mask[(size_t)i] = 0;
+			std::vector<long long>().swap(v);
+		}
+	}
 	prog.reset();
 	for (const std::string& line : rep.log)
 		std::fprintf(stderr, "%s\n", line.c_str());
