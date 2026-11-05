@@ -125,6 +125,15 @@ add_definitions(-DVERSION_MAJOR_TAG="2")             #
 add_definitions(-DVERSION_MINOR_TAG="19")            #
 add_definitions(-DVERSION_COPYRIGHT="November 2015")   # Up to here!
 
+# Release version (titles, About boxes, macOS bundles, packages): the one line
+# to bump for a release is VVD_VERSION in fluorender/FluoRender/VVDVersion.h.
+# The VERSION_MAJOR / VERSION_MINOR above are the project file format version.
+set(VVD_VERSION_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/fluorender/FluoRender/VVDVersion.h")
+file(STRINGS "${VVD_VERSION_HEADER}" VVD_VERSION REGEX "^#define VVD_VERSION ")
+string(REGEX REPLACE "^#define VVD_VERSION \"([^\"]*)\".*" "\\1" VVD_VERSION "${VVD_VERSION}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VVD_VERSION_HEADER}")
+message(STATUS "VVDViewer release version ${VVD_VERSION}")
+
 #static compile
 add_definitions(-DSTATIC_COMPILE)
 
@@ -735,6 +744,9 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    add_executable(VVDViewer MACOSX_BUNDLE
 				  ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.h
 				  ${VVDViewer_SOURCE_DIR}/fluorender/FluoRender/Main.cpp)
+   set_target_properties(VVDViewer PROPERTIES
+      MACOSX_BUNDLE_BUNDLE_VERSION "${VVD_VERSION}"
+      MACOSX_BUNDLE_SHORT_VERSION_STRING "${VVD_VERSION}")
 
 elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
    #Windows

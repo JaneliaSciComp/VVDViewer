@@ -26,6 +26,7 @@
 #include <memory>
 #include "QtUIBackend.h"
 #include "Core/FileUtil.h"
+#include "VVDVersion.h"
 
 int main(int argc, char* argv[])
 {
@@ -46,7 +47,7 @@ int main(int argc, char* argv[])
 	QApplication app(argc, argv);
 	QCoreApplication::setOrganizationName("Janelia");
 	QCoreApplication::setApplicationName("VVDViewerQt");
-	QCoreApplication::setApplicationVersion(QString("%1.%2").arg(VERSION_MAJOR).arg(VERSION_MINOR));
+	QCoreApplication::setApplicationVersion(VVD_VERSION);
 
 	// Route engine messages and progress reports to Qt dialogs.
 	QtUIBackend::Install();

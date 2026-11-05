@@ -38,6 +38,7 @@ DEALINGS IN THE SOFTWARE.
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
 #include "VRenderFrame.h"
+#include "VVDVersion.h"
 #include "compatibility.h"
 // -- application --
 
@@ -106,7 +107,7 @@ bool VRenderApp::OnInit()
       std::string(VERSION_MAJOR_TAG) +  std::string(".") +
       std::string(VERSION_MINOR_TAG);
 */   
-   std::string title =  std::string(FLUORENDER_TITLE) + "1.8.0";
+   std::string title =  std::string(FLUORENDER_TITLE) + VVD_VERSION;
 
    m_frame = new VRenderFrame(
 	     this,

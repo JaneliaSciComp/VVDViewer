@@ -449,10 +449,11 @@ package_macos() {
   write_buildinfo "$C/Resources/BUILDINFO.txt"
   cp "$C/Resources/THIRD_PARTY_NOTICES.txt" "$C/Resources/LICENSE.txt" "$C/Resources/BUILDINFO.txt" "$STAGE/"
 
-  # Bundle identity and version (the CMake-generated Info.plist has neither;
-  # notarization and Gatekeeper key off CFBundleIdentifier).
+  # Bundle identity and version (the CMake-generated Info.plist has no
+  # identifier; notarization and Gatekeeper key off CFBundleIdentifier). The
+  # release version is VVD_VERSION in VVDVersion.h.
   local plist="$C/Info.plist" pb=/usr/libexec/PlistBuddy version
-  version="$(sed -n 's/.*FLUORENDER_TITLE) *+ *"\([0-9.]*\)".*/\1/p' "$REPO/fluorender/FluoRender/Main.cpp" | head -1)"
+  version="$(sed -n 's/^#define VVD_VERSION "\([^"]*\)".*/\1/p' "$REPO/fluorender/FluoRender/VVDVersion.h" | head -1)"
   [ -n "$version" ] || version="0.0"
   "$pb" -c "Delete :CFBundleIdentifier" "$plist" 2>/dev/null || true
   "$pb" -c "Add :CFBundleIdentifier string org.janelia.VVDViewer" "$plist"

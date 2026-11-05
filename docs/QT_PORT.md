@@ -44,8 +44,19 @@ or Vulkan SDK. The app sets `VK_DRIVER_FILES` to the bundled ICD unless the
 user set it. Distribution outside your own Macs needs a Developer ID and
 notarization (not set up).
 
+With the Homebrew Qt the bundle needs macOS 15: the app is linked for 14.0,
+but QtSvg, the Qt plugins and the Homebrew libraries Qt loads are built for
+15.0.
+
+The release version (both apps' titles and About boxes, the bundles'
+CFBundleShortVersionString, `package.sh`) is `VVD_VERSION` in
+`fluorender/FluoRender/VVDVersion.h`, the one line to bump for a release; the
+release tag uses the same number. `VERSION_MAJOR` / `VERSION_MINOR` (2.19,
+CMakeLists.txt) stay the project file format version.
+
 Only macOS arm64 has been built and tested; Windows and Linux are not built
-yet (see "Known issues").
+yet (see "Known issues"). The release workflow (`.github/workflows/release.yml`,
+`package.sh` / `package.ps1`) packages the wx app only.
 
 ## Architecture
 

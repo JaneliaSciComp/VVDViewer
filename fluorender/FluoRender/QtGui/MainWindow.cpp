@@ -26,6 +26,7 @@
 #include <QProcess>
 #include <QPixmap>
 #include <QImage>
+#include "VVDVersion.h"
 #include <QElapsedTimer>
 #include <QProgressDialog>
 #include <memory>
@@ -117,7 +118,7 @@ namespace
 MainWindow::MainWindow(QWidget* parent)
 	: QMainWindow(parent)
 {
-	setWindowTitle(QString("%1 %2.%3 (Qt)").arg(FLUORENDER_TITLE).arg(VERSION_MAJOR).arg(VERSION_MINOR));
+	setWindowTitle(QString(FLUORENDER_TITLE " " VVD_VERSION " (Qt)"));
 	setAcceptDrops(true);
 	resize(1400, 900);
 
@@ -2318,10 +2319,10 @@ void MainWindow::OnVolumeRemove(VolumeData* vd)
 void MainWindow::OnAbout()
 {
 	QMessageBox::about(this, tr("About VVDViewer"),
-		tr("<b>%1 %2.%3</b> (Qt front end, phase 1)<br>Voxel Volume Data Viewer<br>"
+		tr("<b>%1</b> (Qt front end, phase 1)<br>Voxel Volume Data Viewer<br>"
 		   "Janelia Research Campus / Scientific Computing<br><br>"
 		   "Rendering: Vulkan (FLIVR engine, shared with the wxWidgets build).")
-		.arg(FLUORENDER_TITLE).arg(VERSION_MAJOR).arg(VERSION_MINOR));
+		.arg(FLUORENDER_TITLE " " VVD_VERSION));
 }
 
 // ---------------------------------------------------------------------------

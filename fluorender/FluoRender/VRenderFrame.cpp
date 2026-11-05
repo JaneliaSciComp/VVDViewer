@@ -26,6 +26,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "VRenderFrame.h"
+#include "VVDVersion.h"
 #include "DragDrop.h"
 #include <wx/artprov.h>
 #include <wx/wfstream.h>
@@ -2412,8 +2413,7 @@ void VRenderFrame::OnInfo(wxCommandEvent& WXUNUSED(event))
 	wxFont font = wxFont(15,wxFONTFAMILY_ROMAN,wxFONTSTYLE_NORMAL,wxFONTWEIGHT_NORMAL );
 	txt->SetFont(font);
 	right->Add(txt,0,wxEXPAND);
-	txt = new wxStaticText(d,wxID_ANY,"Version: " +
-		wxString::Format("%d.%.1f", VERSION_MAJOR, float(VERSION_MINOR)),
+	txt = new wxStaticText(d,wxID_ANY,"Version: " VVD_VERSION,
 		wxDefaultPosition,wxSize(50,-1));
 	font = wxFont(12,wxFONTFAMILY_ROMAN,wxFONTSTYLE_NORMAL,wxFONTWEIGHT_NORMAL );
 	txt->SetFont(font);
