@@ -334,6 +334,15 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Shared engine (affects the wx app too)
 
+* **Edit mode could not grab a ruler point outside the current volume**
+  (both apps): Select & move only took points inside the current volume's
+  clipping planes, but a ruler is drawn with all its points once one of
+  them is inside. So on a ruler from volume A to volume B with B current
+  (the state after clicking the end point), the start point was drawn but
+  a press on it moved the camera, and with A current the end point did.
+  `GetEditingRulerPoint` still prefers points inside the current volume and
+  then takes any point of a drawn ruler (also for the double click that
+  centres a point).
 * **Cropped 8-bit saves zeroed inside the crop**: Save with "crop to the
   clipping planes" (and the hidden-mask save) of an 8-bit volume tested the
   clipping planes at the x crop offset for y and z as well, so voxels of the
@@ -1471,6 +1480,7 @@ command line.
 | `rulervol` | 2-point ruler from volume 0 to volume 1, Start / End Volume, text export; project saved to `VVD_QT_SAVE` or `<dir>/rulervol.vrp` |
 | `rulerlist` | the opened project's Measurement list (`VVD_QT_EXPECT_START`, `VVD_QT_EXPECT_END`) |
 | `rulerauto` | Auto-select on two separated volumes: clicks, Edit drag, View Plane locator, empty space, paint-ruler press, off = unchanged; `a01_measure_list_auto.png` |
+| `rulermove` | Edit mode on a 2-point ruler between two volumes that do not overlap: start and end point grabbed with either volume current, start point dragged with the end volume current; `rm01_view.png` |
 | `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`; optional `_SRC` = volume index, `_TARGET` = auto / same / extend / volume index), result voxels to `VVD_QT_WARP_OUT` (raw), the source's and result's origins |
 | `origin` | the opened volumes' origins and world boxes (`VVD_QT_ORIGIN_EXPECT=x,y,z`: the first one's); `VVD_QT_ORIGIN_SAVE=1`: a copy, whole.nrrd, origin.vrp (its `origin=` key) and crop.nrrd (upper halves of the clipping box) of the first volume, each checked for the origin |
 | `dispview` | three or more volumes (the first two in one group, the rest in groups of their own) or a project: tree Toggle Visibility on a volume and on a group, all but the last off one by one, Isolate / Show All, visibility undo / redo; the view's centre, pan, distance, zoom and radius stay those of the start (`v0*_*.png`) |

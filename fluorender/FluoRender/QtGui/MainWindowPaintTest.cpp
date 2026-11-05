@@ -1539,7 +1539,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 		return QString("<no column>");
 	};
 
-	if (kind == "rulervol" || kind == "rulerauto")
+	if (kind == "rulervol" || kind == "rulerauto" || kind == "rulermove")
 	{
 		// a 2-point ruler from a point on volume 0 (current volume) to a
 		// point on volume 1 (made current before the second click), pointing
@@ -1735,6 +1735,93 @@ void MainWindow::RunPaintTest(const QString& kind)
 					m_canvas->GetCurrentVolume() == a, "off: click on B with A current -> view plane, no volume, A stays current");
 				dump_rulers("a03_measure_list_auto_off.png");
 			});
+		}
+		else if (kind == "rulermove")
+		{
+			// Edit mode (select & move points) on a 2-point ruler from volume A
+			// (start, clicked with A current) to volume B (end, clicked with B
+			// current; the volumes should not overlap, so each point lies
+			// outside the other volume's box): both points can be grabbed
+			// whichever volume is current, as both are drawn; then the start
+			// point is dragged with B current (the state after the end click)
+			auto click = [=](const QPoint& q) {
+				cv->SimulateMouse(QEvent::MouseButtonPress, q, Qt::LeftButton, Qt::LeftButton);
+				cv->SimulateMouse(QEvent::MouseButtonRelease, q, Qt::LeftButton, Qt::NoButton);
+			};
+			auto log_points = [=](const char* what) {
+				std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+				const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+				for (Ruler* r : *rl)
+					for (int k = 0; k < r->GetNumPoint(); k++)
+					{
+						FLIVR::Point p = *r->GetPoint(k);
+						log("  %s: point %d (%.3f, %.3f, %.3f) volume '%ls', inside A %d, inside B %d", what, k, p.x(), p.y(), p.z(),
+							r->GetPointVolName(k).c_str(), (int)vols[0]->InsideClippingPlanes(p), (int)vols[1]->InsideClippingPlanes(p));
+					}
+			};
+			add("ruler A->B", [=]() {
+				const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+				if (vols.size() < 2 || pts->first.x() < 0 || pts->second.x() < 0) return;
+				VolumeData* a = vols[0];
+				VolumeData* b = vols[1];
+				m_ruler_tool->ClearRulers();
+				m_ruler_tool->RulersModified();
+				m_ruler_tool->SetPointVolumeMode(1);
+				m_ruler_tool->SetRulerType(0);
+				m_ruler_tool->SetIntMode(5);
+				m_canvas->SetCurrentVolume(a);
+				m_tree->SelectVolume(a);
+				click(pts->first);
+				m_canvas->SetCurrentVolume(b);
+				m_tree->SelectVolume(b);
+				click(pts->second);
+				m_ruler_tool->SetIntMode(1);
+				std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+				check(rl->size() == 1 && (*rl)[0]->GetNumPoint() == 2, "one 2-point ruler");
+				log_points("made");
+			});
+			add("grab points", [=]() {
+				const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+				std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+				if (vols.size() < 2 || rl->size() != 1 || (*rl)[0]->GetNumPoint() != 2) return;
+				Ruler* r = (*rl)[0];
+				m_ruler_tool->SetIntMode(6);
+				for (VolumeData* cur : { vols[0], vols[1] })
+				{
+					m_canvas->SetCurrentVolume(cur);
+					m_tree->SelectVolume(cur);
+					const QString n = cur->GetName().ToQt();
+					const QPoint q[2] = { pts->first, pts->second };
+					for (int k = 0; k < 2; k++)
+					{
+						const bool inside = cur->InsideClippingPlanes(*r->GetPoint(k));
+						FLIVR::Point* g = m_ruler_tool->GetEditingRulerPoint(q[k].x(), q[k].y());
+						check(g == r->GetPoint(k), QString("current %1: %2 point grabbed%3").arg(n, k ? "end" : "start",
+							inside ? "" : " (outside the current volume)"));
+					}
+				}
+				m_ruler_tool->SetIntMode(1);
+			});
+			add("drag start point", [=]() {
+				const std::vector<VolumeData*>& vols = m_canvas->Volumes();
+				std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+				if (vols.size() < 2 || rl->size() != 1 || (*rl)[0]->GetNumPoint() != 2) return;
+				Ruler* r = (*rl)[0];
+				m_canvas->SetCurrentVolume(vols[1]);
+				m_tree->SelectVolume(vols[1]);
+				m_ruler_tool->SetIntMode(6);
+				const FLIVR::Point p0 = *r->GetPoint(0), p1 = *r->GetPoint(1);
+				const QPoint to = pts->first + QPoint(8, 6);
+				cv->SimulateMouse(QEvent::MouseButtonPress, pts->first, Qt::LeftButton, Qt::LeftButton);
+				cv->SimulateMouse(QEvent::MouseMove, pts->first + QPoint(4, 3), Qt::LeftButton, Qt::LeftButton);
+				cv->SimulateMouse(QEvent::MouseMove, to, Qt::LeftButton, Qt::LeftButton);
+				cv->SimulateMouse(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+				m_ruler_tool->SetIntMode(1);
+				log_points("dragged");
+				check((*r->GetPoint(0) - p0).length() > 1e-6, "B current: the start point moved");
+				check((*r->GetPoint(1) - p1).length() < 1e-12, "the end point stayed");
+			});
+			capture("rm01_view");
 		}
 		else
 		add("ruler", [=]() {

@@ -1199,6 +1199,12 @@ Point* RulerTool::GetEditingRulerPoint(int mx, int my)
 	int i, j;
 	Point ptemp;
 	bool found = false;
+	// pass 0 (wx): points inside the current volume's clipping planes only.
+	// pass 1: any point of a ruler that is drawn. DrawRulers draws every point
+	// of a ruler with one point inside, so a point on another volume, e.g. the
+	// start point of a ruler from volume A to B while B is current, is drawn
+	// but was not grabbed (Edit mode moved the camera instead)
+	for (int pass = 0; pass < (cur_vol ? 2 : 1) && !found; pass++)
 	for (i = 0; i < (int)m_ruler_list.size() && !found; i++)
 	{
 		Ruler* ruler = m_ruler_list[i];
@@ -1227,7 +1233,7 @@ Point* RulerTool::GetEditingRulerPoint(int mx, int my)
 			point = ruler->GetPoint(j);
 			if (!point) continue;
 			// wx dereferences m_cur_vol unconditionally here
-			if (cur_vol && !cur_vol->InsideClippingPlanes(*point)) continue;
+			if (pass == 0 && cur_vol && !cur_vol->InsideClippingPlanes(*point)) continue;
 			ptemp = *point;
 			ptemp = mv.transform(ptemp);
 			ptemp = p.transform(ptemp);
