@@ -50,6 +50,60 @@ namespace
 		dlg.setOption(QFileDialog::DontUseNativeDialog, true);   // room for the extra controls
 		dlg.setAcceptMode(save ? QFileDialog::AcceptSave : QFileDialog::AcceptOpen);
 	}
+
+	// the extensions of a name filter, lower case: "Muti-page Tiff file
+	// (*.tif *.tiff)" -> tif, tiff; tif and tiff count as one format
+	QStringList FilterSuffixes(const QString& filter)
+	{
+		QStringList out;
+		const int a = filter.lastIndexOf('('), b = filter.lastIndexOf(')');
+		const QString pats = (a >= 0 && b > a) ? filter.mid(a + 1, b - a - 1) : filter;
+		for (const QString& p : pats.split(' ', Qt::SkipEmptyParts))
+			if (p.startsWith("*.") && p.size() > 2)
+				out << p.mid(2).toLower();
+		if (out.contains("tif") && !out.contains("tiff")) out << "tiff";
+		if (out.contains("tiff") && !out.contains("tif")) out << "tif";
+		return out;
+	}
+
+	// Save dialog with one name filter per file format (the non-native dialog
+	// has no automatic extension): a name without the chosen format's
+	// extension gets it, as the macOS / Windows save panels of the wx app do
+	// (it was saved exactly as typed, e.g. "brain" instead of "brain.nrrd").
+	// A name ending in the extension of another listed format selects that
+	// format (brain.nrrd typed with a TIFF format chosen saves NRRD). A name
+	// that contains a dot keeps it ("brain_0.5um" -> "brain_0.5um.nrrd"),
+	// unlike setDefaultSuffix, which skips any name with a dot.
+	class FormatSaveDialog : public QFileDialog
+	{
+	public:
+		using QFileDialog::QFileDialog;
+
+	protected:
+		void accept() override
+		{
+			QLineEdit* edit = findChild<QLineEdit*>("fileNameEdit");
+			const QString text = edit ? edit->text().trimmed() : QString();
+			const QFileInfo typed(QDir(directory().absolutePath()), text);
+			if (!text.isEmpty() && !typed.isDir())   // a folder name opens the folder
+			{
+				const QString suffix = typed.suffix().toLower();
+				const QStringList cur = FilterSuffixes(selectedNameFilter());
+				if (!cur.isEmpty() && !cur.contains(suffix))
+				{
+					QString other;
+					if (!suffix.isEmpty())
+						for (const QString& f : nameFilters())
+							if (FilterSuffixes(f).contains(suffix)) { other = f; break; }
+					if (!other.isEmpty())
+						selectNameFilter(other);
+					else
+						edit->setText(text + "." + cur.first());
+				}
+			}
+			QFileDialog::accept();   // overwrite prompt for the final name
+		}
+	};
 }
 
 namespace
@@ -251,7 +305,7 @@ int GetScaleLevel() { return s_save_scale_level; }
 QString SaveVolume(QWidget* parent, const char* name, const QString& title, const QStringList& filters,
 	int* filter_index, const QString& default_file)
 {
-	QFileDialog dlg(parent, title, QString(), filters.join(";;"));
+	FormatSaveDialog dlg(parent, title, QString(), filters.join(";;"));
 	PrepareDialog(dlg, true);
 	dlg.setFileMode(QFileDialog::AnyFile);   // wxFD_SAVE|wxFD_OVERWRITE_PROMPT
 	if (!default_file.isEmpty())
@@ -303,7 +357,7 @@ QString SaveVolume(QWidget* parent, const char* name, const QString& title, cons
 QString SaveProject(QWidget* parent, const QString& dir, bool& embed,
 	const std::function<bool()>& get_compress, const std::function<void(bool)>& set_compress)
 {
-	QFileDialog dlg(parent, QObject::tr("Save Project File"), dir, QObject::tr("VVDViewer project (*.vrp)"));
+	FormatSaveDialog dlg(parent, QObject::tr("Save Project File"), dir, QObject::tr("VVDViewer project (*.vrp)"));
 	PrepareDialog(dlg, true);
 	dlg.setFileMode(QFileDialog::AnyFile);
 	dlg.setDefaultSuffix("vrp");

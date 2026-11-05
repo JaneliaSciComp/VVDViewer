@@ -223,7 +223,7 @@ engine changes that also change the wx app are under "Bug fixes".
   (wx "Name", half width, in-place rename), Start Volume, End Volume, then the
   wx columns (Color, Length, Angle/Pitch, Start/End Points, Time,
   Volumes/Score).
-* **Auto-select** check box (new, off by default, saved as
+* **Auto-select** check box (new, on by default, saved as
   `/ruler auto select`): each ruler click, Edit-mode drag and Shift-paint
   ruler press first selects in the tree the displayed volume with the
   brightest voxel on the click ray (Maximum Intensity on the value after the
@@ -428,6 +428,15 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Qt port
 
+* **Saved volumes got no .nrrd / .tif extension**: Save Volume (also Save 3D
+  Painted Region, Bake and Export metadata) and Save Project use Qt's own
+  file dialog to make room for their option boxes, and it adds no extension,
+  so a name typed without one was saved exactly as typed (the macOS and
+  Windows save panels of the wx app add it). `FormatSaveDialog`
+  (`FileDialogs.cpp`) adds the extension of the chosen format, selects the
+  format whose extension was typed (brain.nrrd with a TIFF format chosen
+  saves NRRD) and keeps dots in names (brain_0.5um -> brain_0.5um.nrrd,
+  which `setDefaultSuffix` would leave without an extension).
 * **Transparent meshes in Depth mode hid the volumes behind them**:
   `DrawVolumesDP` draws the volume in slabs between the mesh's peeled depth
   layers and calls `StartLoopUpdate(false)` between slabs; the Qt
@@ -1481,6 +1490,7 @@ command line.
 | `rulerlist` | the opened project's Measurement list (`VVD_QT_EXPECT_START`, `VVD_QT_EXPECT_END`) |
 | `rulerauto` | Auto-select on two separated volumes: clicks, Edit drag, View Plane locator, empty space, paint-ruler press, off = unchanged; `a01_measure_list_auto.png` |
 | `rulermove` | Edit mode on a 2-point ruler between two volumes that do not overlap: start and end point grabbed with either volume current, start point dragged with the end volume current; `rm01_view.png` |
+| `savevol` | Defaults with fresh settings (Measurement Auto-select on, Clipping Planes Sync All Chan. off), then Save in the volume menu through the scripted dialog: names typed without an extension get .nrrd / .tif / the TIFF sequence pages, w.nrrd with Muti-page Tiff chosen saves NRRD, x_0.5um gets .nrrd, y.tif stays y.tif |
 | `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`; optional `_SRC` = volume index, `_TARGET` = auto / same / extend / volume index), result voxels to `VVD_QT_WARP_OUT` (raw), the source's and result's origins |
 | `origin` | the opened volumes' origins and world boxes (`VVD_QT_ORIGIN_EXPECT=x,y,z`: the first one's); `VVD_QT_ORIGIN_SAVE=1`: a copy, whole.nrrd, origin.vrp (its `origin=` key) and crop.nrrd (upper halves of the clipping box) of the first volume, each checked for the origin |
 | `dispview` | three or more volumes (the first two in one group, the rest in groups of their own) or a project: tree Toggle Visibility on a volume and on a group, all but the last off one by one, Isolate / Show All, visibility undo / redo; the view's centre, pan, distance, zoom and radius stay those of the start (`v0*_*.png`) |

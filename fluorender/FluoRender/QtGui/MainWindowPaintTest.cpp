@@ -1617,8 +1617,10 @@ void MainWindow::RunPaintTest(const QString& kind)
 				MeasureDialog* dlg = EnsureMeasureDialog();
 				dlg->show();
 				QCheckBox* chk = dlg->findChild<QCheckBox*>("ruler_auto_select");
-				check(chk && !chk->isChecked(), "Auto-select check box present, off by default");
+				check(chk && chk->isChecked(), "Auto-select check box present, on by default");
 				if (!chk) return;
+				chk->setChecked(false);
+				check(!m_ruler_tool->GetRulerAutoSelect() && !m_settings->GetRulerAutoSelect(), "check box off -> ruler tool + settings");
 				chk->setChecked(true);
 				check(m_ruler_tool->GetRulerAutoSelect() && m_settings->GetRulerAutoSelect(), "check box -> ruler tool + settings");
 				m_ruler_tool->ClearRulers();
@@ -1872,6 +1874,74 @@ void MainWindow::RunPaintTest(const QString& kind)
 			if (prj.isEmpty()) prj = st->dir + "/rulervol.vrp";
 			check(SaveProject(prj), "project saved: " + prj);
 		}, false);
+	}
+
+	if (kind == "savevol")
+	{
+		// defaults with a fresh VVD_SETTINGS_DIR: Measurement Auto-select on,
+		// Clipping Planes "Sync All Chan." off with two volumes open; then Save
+		// (volume menu) through the scripted dialog: the file gets the
+		// extension of the chosen format, a name ending in .nrrd with a TIFF
+		// format chosen saves NRRD, a name with a dot keeps it
+		add("defaults", [=]() {
+			check(m_settings->GetRulerAutoSelect() && m_ruler_tool->GetRulerAutoSelect(), "Auto-select on by default (settings, ruler tool)");
+			QCheckBox* chk = EnsureMeasureDialog()->findChild<QCheckBox*>("ruler_auto_select");
+			check(chk && chk->isChecked(), "Measurement: Auto-select checked");
+			check(m_canvas->Volumes().size() >= 2, "two volumes open");
+			check(!m_canvas->GetSyncClippingPlanes() && m_clip && !m_clip->GetChannLink(),
+				"Clipping Planes: Sync All Chan. off (view and check box)");
+		});
+		auto save_as = [=](const QString& typed, int filter) {
+			qputenv("VVD_QT_FILEDLG_FILE_SAVEVOLUME", QDir(st->dir).filePath(typed).toLocal8Bit());
+			qputenv("VVD_QT_FILEDLG_OPTS_SAVEVOLUME", QString("filter=%1").arg(filter).toLocal8Bit());
+			m_tree->SelectVolume(m_canvas->Volumes().front());
+			bool found = false;
+			std::unique_ptr<QMenu> m(m_tree->BuildContextMenu(m_tree->Tree()->currentItem()));
+			if (m)
+				for (QAction* a : m->actions())
+					if (a->text() == QStringLiteral("Save")) { found = true; a->trigger(); break; }
+			qunsetenv("VVD_QT_FILEDLG_FILE_SAVEVOLUME");
+			qunsetenv("VVD_QT_FILEDLG_OPTS_SAVEVOLUME");
+			check(found, "Save in the volume menu");
+		};
+		auto magic = [](const QString& path) {
+			QFile f(path);
+			return f.open(QIODevice::ReadOnly) ? f.read(4) : QByteArray();
+		};
+		auto is_tif = [=](const QString& path) {
+			const QByteArray m = magic(path);
+			return m.startsWith("II") || m.startsWith("MM");
+		};
+		const QString d = st->dir;
+		add("save nrrd", [=]() {
+			save_as("v_nrrd", 2);
+			check(magic(d + "/v_nrrd.nrrd").startsWith("NRRD"), "typed v_nrrd, Nrrd file -> v_nrrd.nrrd (NRRD)");
+			check(!QFileInfo::exists(d + "/v_nrrd"), "no v_nrrd without an extension");
+		});
+		add("save tif", [=]() {
+			save_as("v_tif", 0);
+			check(is_tif(d + "/v_tif.tif"), "typed v_tif, Muti-page Tiff -> v_tif.tif (TIFF)");
+			check(!QFileInfo::exists(d + "/v_tif"), "no v_tif without an extension");
+		});
+		add("save tif sequence", [=]() {
+			save_as("v_seq", 1);
+			const QStringList pages = QDir(d).entryList(QStringList() << "v_seq*.tif", QDir::Files, QDir::Name);
+			log("sequence: %d pages, first %s", (int)pages.size(), pages.isEmpty() ? "-" : pages.first().toLocal8Bit().constData());
+			check(!pages.isEmpty() && is_tif(d + "/" + pages.first()), "typed v_seq, Tiff sequence -> v_seq<n>.tif pages");
+		});
+		add("typed .nrrd, Tiff chosen", [=]() {
+			save_as("w.nrrd", 0);
+			check(magic(d + "/w.nrrd").startsWith("NRRD"), "typed w.nrrd with Muti-page Tiff chosen -> NRRD file w.nrrd");
+			check(!QFileInfo::exists(d + "/w.nrrd.tif"), "no w.nrrd.tif");
+		});
+		add("name with a dot", [=]() {
+			save_as("x_0.5um", 2);
+			check(magic(d + "/x_0.5um.nrrd").startsWith("NRRD"), "typed x_0.5um, Nrrd file -> x_0.5um.nrrd");
+		});
+		add("typed .tif", [=]() {
+			save_as("y.tif", 0);
+			check(is_tif(d + "/y.tif") && !QFileInfo::exists(d + "/y.tif.tif"), "typed y.tif, Muti-page Tiff -> y.tif (unchanged)");
+		});
 	}
 
 	if (kind == "rulerlist")
@@ -2706,6 +2776,7 @@ void MainWindow::RunPaintTest(const QString& kind)
 				}
 			m_ruler_tool->SetPointVolumeMode(1);
 			m_ruler_tool->SetRulerType(2);
+			m_ruler_tool->SetRulerAutoSelect(false);   // the locator goes on volume 0 (check written before Auto-select was on by default)
 			m_ruler_tool->SetIntMode(5);
 			m_canvas->SetCurrentVolume((*vols)[0]);
 			cv->SimulateMouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);

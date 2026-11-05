@@ -718,7 +718,7 @@ void SettingsDialog::SetDefaults()
 	m_point_volume_mode = 0;
 	m_ruler_use_transf = false;
 	m_ruler_time_dep = true;
-	m_ruler_auto_select = false;
+	m_ruler_auto_select = true;   // Measurement Auto-select on by default
 	m_sphere_rot = true;
 	m_cell_warp = rigidcells::Params();
 	m_cell_warp.device = -1;   // the plugin's default: the first GPU if there is one

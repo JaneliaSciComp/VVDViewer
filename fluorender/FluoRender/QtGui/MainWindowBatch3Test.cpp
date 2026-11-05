@@ -564,6 +564,7 @@ void MainWindow::RunBatch3Test(const QString& kind)
 		add("ruler mode", [=]() {
 			m_ruler_tool->ClearRulers();
 			m_ruler_tool->SetRulerType(0);
+			m_ruler_tool->SetRulerAutoSelect(false);   // paints the selected volume (check written before Auto-select was on by default)
 			m_ruler_tool->SetIntMode(5);
 			check(m_ruler_tool->GetIntMode() == 5 && m_brush_tool->GetIntMode() == 5, "2pt ruler mode: ruler and brush in int mode 5");
 			m_brush_tool->SetTestShift(1);

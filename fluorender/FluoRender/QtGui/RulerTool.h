@@ -222,7 +222,7 @@ private:
 	int m_point_volume_mode = 0;
 	bool m_ruler_use_transf = false;
 	bool m_ruler_time_dep = true;
-	bool m_ruler_auto_select = false;
+	bool m_ruler_auto_select = true;
 	// volume auto-selected at the press of a paint-ruler stroke (mode 7), the
 	// volume of the point AddPaintRulerPoint adds
 	VolumeData* m_paint_auto_vd = nullptr;
