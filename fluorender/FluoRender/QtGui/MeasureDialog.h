@@ -8,7 +8,8 @@
 //             Delete, Delete All, Export (.txt / BigWarp .csv), Import (.csv)
 //   options   Pointing Method, Auto-select (not in wx: each click picks the
 //             displayed volume with the brightest voxel on the ray, see
-//             RulerTool::SetRulerAutoSelect), Transient, Use Volume Properties,
+//             RulerTool::SetRulerAutoSelect), Show ID at start (not in wx:
+//             RulerTool::SetDrawStartIds), Transient, Use Volume Properties,
 //             Scatter Rulers + Density, Transform + Interpolation,
 //             Stiffness, Apply Transform
 //   list      ID (wx "Name"), Start Volume, End Volume (not in wx: the
@@ -17,6 +18,9 @@
 //             (X, Y, Z), Time, Volumes/Score (rulers of the current time
 //             point). Double-click: edit the name (or pick the colour in the
 //             Color column); drag a row to reorder; Delete/Backspace deletes.
+//             A ruler picked in the view (a point clicked or dragged, or the
+//             ruler a click adds a point to) is selected and scrolled into
+//             view (not in wx); the list keeps its scroll position.
 //             The text export keeps the wx column order (+ start / end
 //             volume appended), whatever the list order.
 
@@ -109,6 +113,13 @@ public Q_SLOTS:
 	RulerTool* GetTool() const { return m_tool; }
 	// wx UpdateList / RulerListCtrl::UpdateRulers
 	void UpdateList();
+	// selects the row of a ruler picked in the view and scrolls it into view
+	// (RulerTool::rulerPicked; not in wx)
+	void SelectRuler(Ruler* ruler);
+
+Q_SIGNALS:
+	// "Show ID at start" toggled: the main window applies it to every view
+	void startIdsToggled(bool on);
 
 protected:
 	void showEvent(QShowEvent* e) override;
@@ -126,6 +137,7 @@ private Q_SLOTS:
 	void OnUseTransferCheck(bool checked);
 	void OnTransientCheck(bool checked);
 	void OnAutoSelectCheck(bool checked);
+	void OnStartIdCheck(bool checked);
 	void OnScatterRulers();
 	void OnWarp();
 	void OnWarpStiffness(int value);
@@ -159,6 +171,7 @@ private:
 	QCheckBox* m_use_transfer_chk;
 	QCheckBox* m_transient_chk;
 	QCheckBox* m_auto_select_chk;
+	QCheckBox* m_start_id_chk = nullptr;   // Show ID at start (not in wx)
 	QPushButton* m_scatter_btn;
 	QLineEdit* m_density_txt;
 	QPushButton* m_warp_btn;
@@ -189,6 +202,8 @@ private:
 	void UpdateCellEnables();
 
 	RulerListWidget* m_rulerlist;
+	void RestoreScroll(int value);
+	int m_scroll_gen = 0;   // pending scroll restores older than this are dropped
 	// wx RulerListCtrl::m_counts: [0] rulers of the current time point, then
 	// one entry per shown annotations layer of the view (layer order)
 	std::vector<long> m_counts;

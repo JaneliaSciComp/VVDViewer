@@ -180,6 +180,13 @@ void RulerTool::SetCurTime(int t)
 }
 
 void RulerTool::SetDrawRulers(bool b) { m_draw_rulers = b; Refresh(); }
+void RulerTool::SetDrawStartIds(bool b)
+{
+	if (b == m_draw_start_ids)
+		return;
+	m_draw_start_ids = b;
+	Refresh();
+}
 void RulerTool::SetDrawLandmarks(bool b) { m_draw_landmarks = b; Refresh(); }
 
 void RulerTool::ClearRulers()
@@ -332,10 +339,12 @@ void RulerTool::AddRulerPoint(int mx, int my)
 	//Auto-select: the volume under the click becomes the current volume
 	VolumeData* auto_vd = AutoSelectVolume(mx, my);
 	VolumeData* cur_vol = auto_vd ? auto_vd : CurVol();
+	Ruler* picked = nullptr;   // the ruler the click added a point to
 	if (m_ruler_type == 3)
 	{
 		Point p1, p2;
 		Ruler* ruler = new Ruler();
+		picked = ruler;
 		ruler->SetRulerType(m_ruler_type);
 		double t = GetPointVolumeBox2(p1, p2, mx, my, cur_vol);
 		ruler->AddPoint(p1);
@@ -392,6 +401,7 @@ void RulerTool::AddRulerPoint(int mx, int my)
 				if (ruler->AddPoint(p))
 					ruler->SetPointVolName(ruler->GetNumPoint() - 1, pvol);
 				new_ruler = false;
+				picked = ruler;
 			}
 		}
 		if (new_ruler)
@@ -403,11 +413,14 @@ void RulerTool::AddRulerPoint(int mx, int my)
 			ruler->SetTimeDep(m_ruler_time_dep);
 			ruler->SetTime(m_tseq_cur_num);
 			m_ruler_list.push_back(ruler);
+			picked = ruler;
 		}
 	}
 
 	// wx: vr_frame->GetMeasureDlg()->GetSettings(m_vrv)
 	Q_EMIT rulersChanged();
+	if (picked)
+		Q_EMIT rulerPicked(picked);
 }
 
 void RulerTool::AddPaintRulerPoint(VolumeSelector* sel)
@@ -429,11 +442,13 @@ void RulerTool::AddPaintRulerPoint(VolumeSelector* sel)
 	m_paint_auto_vd = nullptr;
 
 	bool new_ruler = true;
+	Ruler* picked = nullptr;   // the ruler the stroke added a point to
 	if (m_ruler_list.size())
 	{
 		Ruler* ruler = m_ruler_list[m_ruler_list.size() - 1];
 		if (ruler && !ruler->GetFinished())
 		{
+			picked = ruler;
 			if (ruler->AddPoint(center) && !pvol.empty())
 				ruler->SetPointVolName(ruler->GetNumPoint() - 1, pvol);
 			ruler->AddInfoNames(VVDString(QString::asprintf("\tv%d", ruler->GetNumPoint() - 1).toStdWString()));
@@ -453,9 +468,12 @@ void RulerTool::AddPaintRulerPoint(VolumeSelector* sel)
 		ruler->AddInfoNames(VVDString(L"v0"));
 		ruler->AddInfoValues(VVDString(QString::asprintf("%.0f", size).toStdWString()));
 		m_ruler_list.push_back(ruler);
+		picked = ruler;
 	}
 	// wx: vr_frame->GetMeasureDlg()->GetSettings(m_vrv)
 	Q_EMIT rulersChanged();
+	if (picked)
+		Q_EMIT rulerPicked(picked);
 	Refresh();
 }
 
@@ -1284,6 +1302,30 @@ Point* RulerTool::GetEditingRulerPoint(int mx, int my)
 		return 0;
 }
 
+Ruler* RulerTool::RulerOfPoint(const Point* p) const
+{
+	if (!p)
+		return nullptr;
+	for (Ruler* r : m_ruler_list)
+	{
+		if (!r) continue;
+		for (int k = 0; k < r->GetNumPoint(); ++k)
+			if (r->GetPoint(k) == p)
+				return r;
+	}
+	return nullptr;
+}
+
+Ruler* RulerTool::PickRulerAt(int mx, int my)
+{
+	if (!m_draw_rulers)
+		return nullptr;
+	Ruler* r = RulerOfPoint(GetEditingRulerPoint(mx, my));
+	if (r)
+		Q_EMIT rulerPicked(r);
+	return r;
+}
+
 bool RulerTool::SwitchRulerBalloonVisibility_Point(int mx, int my)
 {
 	Point* point = 0;
@@ -1377,7 +1419,11 @@ bool RulerTool::MousePress(QMouseEvent* e)
 	if (e->button() == Qt::LeftButton)
 	{
 		if (m_int_mode == 6)
+		{
 			m_editing_ruler_point = GetEditingRulerPoint(pos.x(), pos.y());
+			if (Ruler* r = RulerOfPoint(m_editing_ruler_point))
+				Q_EMIT rulerPicked(r);
+		}
 
 		if ((m_int_mode == 5 && alt) ||
 			(m_int_mode == 6 && m_editing_ruler_point == 0))
@@ -1743,6 +1789,23 @@ void RulerTool::DrawRulers()
 						ruler->GetNameDisp(),
 						color,
 						(p2x + w) * sx, (p2y - w) * sy);
+				}
+				//Show ID at start (not in wx): the name at the first point too,
+				//on the side away from the ruler's first segment (y down: the
+				//text baseline above or below the point mark)
+				if (j == 0 && m_draw_start_ids && ruler->GetNumPoint() > 1)
+				{
+					Point q = *(ruler->GetPoint(1));
+					q = mv.transform(q);
+					q = p.transform(q);
+					std::wstring name = ruler->GetNameDisp();   // RenderTextDims takes a non-const reference
+					const float tw = m_text_renderer->RenderTextDims(name).width;
+					const float th = m_text_renderer->GetSize();
+					const float cx = p2.x() * nx / 2.0;
+					const float cy = p2.y() * ny / 2.0;
+					const float tx = (q.x() > p2.x()) ? cx - w - tw : cx + w;
+					const float ty = (q.y() > p2.y()) ? cy - w : cy + w + th;
+					m_text_renderer->RenderText(cur_framebuf, name, color, tx * sx, ty * sy);
 				}
 				if (j > 0)
 				{

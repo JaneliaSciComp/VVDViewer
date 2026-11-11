@@ -35,6 +35,7 @@
 #include "RenderCanvas.h"
 #include "TreePanel.h"
 #include "MeasureDialog.h"
+#include "RulerTool.h"
 #include "SettingsDialog.h"
 #include "DataManager.h"
 #include "Formats/brkxml_reader.h"
@@ -61,6 +62,11 @@ MeasureDialog* MainWindow::EnsureMeasureDialog()
 	{
 		m_measure_dlg = new MeasureDialog(m_ruler_tool, this, m_settings, this);
 		MakeFloatingTool(m_measure_dlg);   // stays above the view while picking points
+		// Show ID at start: every view at once (the dialog drives the active one)
+		connect(m_measure_dlg, &MeasureDialog::startIdsToggled, this, [this](bool on) {
+			for (const auto& v : m_views)
+				if (v->ruler) v->ruler->SetDrawStartIds(on);
+		});
 		m_measure_dlg->installEventFilter(this);   // check marks follow show / hide
 	}
 	return m_measure_dlg;

@@ -130,9 +130,12 @@ public:
 	bool GetRulerUseTransf() const { return m_ruler_use_transf; }
 	void SetRulerUseTransf(bool val) { m_ruler_use_transf = val; }
 	bool GetRulerTimeDep() const { return m_ruler_time_dep; }
-	// Measurement "Auto-select" (Qt only, /ruler auto select; default off)
+	// Measurement "Auto-select" (Qt only, /ruler auto select; default on)
 	bool GetRulerAutoSelect() const { return m_ruler_auto_select; }
 	void SetRulerAutoSelect(bool val) { m_ruler_auto_select = val; }
+	// Measurement "Show ID at start" (Qt only, /ruler start id; default off)
+	bool GetRulerStartIds() const { return m_ruler_start_ids; }
+	void SetRulerStartIds(bool val) { m_ruler_start_ids = val; }
 	// Measurement "Cells: shape preserving" transform options (/rigid cells;
 	// Qt only, the stiffness is the dialog's shared slider and not stored)
 	const rigidcells::Params& GetCellWarpParams() const { return m_cell_warp; }
@@ -246,6 +249,7 @@ private:
 	bool m_ruler_use_transf;
 	bool m_ruler_time_dep;
 	bool m_ruler_auto_select;
+	bool m_ruler_start_ids;
 	rigidcells::Params m_cell_warp;
 	cdm::Options m_cdm;
 	QString m_warp_target;

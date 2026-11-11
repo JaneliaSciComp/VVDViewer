@@ -73,7 +73,11 @@
 #include "RigidCellsReportDialog.h"
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QAbstractItemView>
+#include <QScrollBar>
 #include <QCryptographicHash>
+#include <QSettings>
+#include "FileDialogs.h"
 #include "DataManager.h"
 #include "FLIVR/Texture.h"
 #include "FLIVR/VolumeRenderer.h"
@@ -1876,14 +1880,559 @@ void MainWindow::RunPaintTest(const QString& kind)
 		}, false);
 	}
 
+	if (kind == "rulerid")
+	{
+		// Measurement "Show ID at start": off by default; on draws a 2-point
+		// ruler's ID at its first point too, on the side away from the ruler,
+		// and nothing new for a locator; off again gives the image of before;
+		// the Settings value follows the check box
+		auto chk = [this]() { return EnsureMeasureDialog()->findChild<QCheckBox*>("ruler_start_id"); };
+		auto click = [cv](const QPoint& p) {
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+		};
+		auto pts = std::make_shared<std::vector<QPoint>>();   // start, end, locator (widget px)
+		add("rulers", [=]() {
+			EnsureMeasureDialog()->show();
+			VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
+			check(vd != nullptr, "a volume loaded");
+			if (!vd) return;
+			m_canvas->SetCurrentVolume(vd);
+			m_tree->SelectVolume(vd);
+			// where the view-plane point lies in the volume (rulers are drawn there)
+			QRect in;
+			for (int y = 0; y < cv->height(); y += 8)
+				for (int x = 0; x < cv->width(); x += 8)
+				{
+					FLIVR::Point p;
+					if (m_ruler_tool->GetPointPlane(p, x, y) > 0.0 && vd->InsideClippingPlanes(p))
+						in |= QRect(x, y, 1, 1);
+				}
+			check(in.width() > 150 && in.height() > 150, "the volume covers enough of the view");
+			if (in.width() <= 150 || in.height() <= 150) return;
+			const QPoint c0 = in.center();
+			const int dx = in.width() / 4, dy = in.height() / 4;
+			// as the worm landmarks: start lower right, end upper left; a locator upper right
+			*pts = { c0 + QPoint(dx, dy), c0 - QPoint(dx, dy), c0 + QPoint(dx, -dy) };
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetRulerAutoSelect(false);
+			m_ruler_tool->SetPointVolumeMode(0);   // View Plane
+			m_ruler_tool->SetRulerType(0);         // 2-point ruler
+			m_ruler_tool->SetIntMode(5);
+			click((*pts)[0]);
+			click((*pts)[1]);
+			m_ruler_tool->SetRulerType(2);         // locator
+			click((*pts)[2]);
+			m_ruler_tool->SetIntMode(1);
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			check(rl->size() == 2 && (*rl)[0]->GetNumPoint() == 2 && (*rl)[1]->GetNumPoint() == 1,
+				QString("a 2-point ruler and a locator (%1 rulers)").arg(rl->size()));
+			for (Ruler* r : *rl)
+				log("ruler '%ls': %d point(s)", r->GetNameDisp().c_str(), r->GetNumPoint());
+			check(chk() && !chk()->isChecked() && !m_ruler_tool->GetDrawStartIds() && !m_settings->GetRulerStartIds(),
+				"Show ID at start: in the Measurement window, off by default");
+			m_canvas->RefreshView();
+		});
+		capture("id_off");
+		add("on", [=]() {
+			if (!chk()) return;
+			chk()->setChecked(true);
+			check(m_ruler_tool->GetDrawStartIds() && m_settings->GetRulerStartIds(), "checked: ruler tool and Settings on");
+			m_canvas->RefreshView();
+		});
+		capture("id_on");
+		add("off", [=]() {
+			if (!chk()) return;
+			chk()->setChecked(false);
+			check(!m_ruler_tool->GetDrawStartIds() && !m_settings->GetRulerStartIds(), "unchecked: ruler tool and Settings off");
+			m_canvas->RefreshView();
+		});
+		capture("id_off2");
+		add("compare", [=]() {
+			if (pts->size() < 3) return;
+			QImage a(st->dir + "/id_off.png"), b(st->dir + "/id_on.png"), c(st->dir + "/id_off2.png");
+			const bool ok = !a.isNull() && !b.isNull() && !c.isNull() && a.size() == b.size() && a.size() == c.size();
+			check(ok, "three captures of the same size");
+			if (!ok) return;
+			a = a.convertToFormat(QImage::Format_RGB32);
+			b = b.convertToFormat(QImage::Format_RGB32);
+			c = c.convertToFormat(QImage::Format_RGB32);
+			const double s = double(a.width()) / cv->width();
+			auto box = [s](const QPoint& p) { return QRect(int((p.x() - 70) * s), int((p.y() - 45) * s), int(140 * s), int(90 * s)); };
+			const QRect bs = box((*pts)[0]), be = box((*pts)[1]), bl = box((*pts)[2]);
+			long long in_start = 0, elsewhere = 0, at_end = 0, at_loc = 0, off_diff = 0;
+			double sumx = 0.0, sumy = 0.0;
+			for (int y = 0; y < a.height(); y++)
+			{
+				const QRgb* la = (const QRgb*)a.constScanLine(y);
+				const QRgb* lb = (const QRgb*)b.constScanLine(y);
+				const QRgb* lc = (const QRgb*)c.constScanLine(y);
+				for (int x = 0; x < a.width(); x++)
+				{
+					off_diff += la[x] != lc[x];
+					if (la[x] == lb[x]) continue;
+					if (bs.contains(x, y)) { in_start++; sumx += x; sumy += y; }
+					else elsewhere++;
+					if (be.contains(x, y)) at_end++;
+					if (bl.contains(x, y)) at_loc++;
+				}
+			}
+			log("on vs off: %lld pixels changed at the start point, %lld elsewhere (at the end point %lld, at the locator %lld); off again vs off: %lld",
+				in_start, elsewhere, at_end, at_loc, off_diff);
+			check(in_start > 20, "on: the ID is drawn at the start point");
+			check(elsewhere == 0, "on: nothing else changes (the ID at the end point and the locator's stay as they are)");
+			if (in_start > 0)
+			{
+				const double cx = sumx / in_start / s, cy = sumy / in_start / s;
+				log("ID centre %.0f,%.0f; start point %d,%d, end point %d,%d", cx, cy, (*pts)[0].x(), (*pts)[0].y(), (*pts)[1].x(), (*pts)[1].y());
+				check(cx > (*pts)[0].x() && cy > (*pts)[0].y(), "the ID sits on the side away from the ruler (lower right of the start; the ruler goes up left)");
+			}
+			check(off_diff == 0, "off again: the same image as before");
+		});
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetIntMode(1);
+			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+		});
+	}
+
+	if (kind == "rulersel")
+	{
+		// Measurement list follows the view: the ruler picked in the view (a
+		// point pressed / dragged in Edit mode, a point clicked in the camera
+		// mode, a click that adds a ruler) is the selected row and shown; a
+		// drag keeps the list's scroll position; the selected row keeps the
+		// strong highlight while the view has the focus
+		auto list = [this]() { return EnsureMeasureDialog()->findChild<QTreeWidget*>(); };
+		auto cur_row = [list]() {
+			QTreeWidget* l = list();
+			return l && l->currentItem() ? l->indexOfTopLevelItem(l->currentItem()) : -1;
+		};
+		auto row_shown = [list](int row) {
+			QTreeWidget* l = list();
+			QTreeWidgetItem* it = l ? l->topLevelItem(row) : nullptr;
+			return it && l->viewport()->rect().contains(l->visualItemRect(it));
+		};
+		auto scroll = [list]() { QTreeWidget* l = list(); return l ? l->verticalScrollBar()->value() : -1; };
+		auto click = [cv](const QPoint& p) {
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+		};
+		auto grid = std::make_shared<std::vector<QPoint>>();
+		const int N = 36;
+
+		add("locators", [=]() {
+			MeasureDialog* dlg = EnsureMeasureDialog();
+			dlg->show();
+			VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
+			check(vd != nullptr, "a volume loaded");
+			if (!vd) return;
+			m_canvas->SetCurrentVolume(vd);
+			m_tree->SelectVolume(vd);
+			// where the view-plane point lies in the volume: a locator is
+			// drawn and grabbed only there
+			QRect in;
+			for (int y = 0; y < cv->height(); y += 8)
+				for (int x = 0; x < cv->width(); x += 8)
+				{
+					FLIVR::Point p;
+					if (m_ruler_tool->GetPointPlane(p, x, y) > 0.0 && vd->InsideClippingPlanes(p))
+						in |= QRect(x, y, 1, 1);
+				}
+			log("view %dx%d; view-plane points in the volume: %d,%d %dx%d", cv->width(), cv->height(), in.x(), in.y(), in.width(), in.height());
+			check(in.width() > 150 && in.height() > 150, "the volume covers enough of the view");
+			if (in.width() <= 150 || in.height() <= 150) return;
+			const QRect g = in.adjusted(in.width() / 10, in.height() / 10, -in.width() / 10, -in.height() / 10);
+			grid->clear();
+			for (int r = 0; r < 6; r++)
+				for (int c2 = 0; c2 < 6; c2++)
+					grid->push_back(QPoint(g.left() + g.width() * c2 / 5, g.top() + g.height() * r / 5));
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetRulerAutoSelect(false);
+			m_ruler_tool->SetPointVolumeMode(0);   // View Plane
+			m_ruler_tool->SetRulerType(2);         // locator
+			m_ruler_tool->SetIntMode(5);
+			int selected = 0, shown = 0;
+			for (int i = 0; i < N; i++)
+			{
+				click((*grid)[i]);
+				selected += cur_row() == i;
+				shown += row_shown(i) ? 1 : 0;
+			}
+			m_ruler_tool->SetIntMode(1);
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			check((int)rl->size() == N, QString("%1 locators").arg(rl->size()));
+			QTreeWidget* l = list();
+			log("list: %d rows, viewport height %d, scroll range 0..%d", l ? l->topLevelItemCount() : -1, l ? l->viewport()->height() : -1,
+				l ? l->verticalScrollBar()->maximum() : -1);
+			check(l && l->verticalScrollBar()->maximum() > 0, "the list is longer than its window (it scrolls)");
+			check(selected == N, QString("each new locator is the selected row: %1 of %2").arg(selected).arg(N));
+			check(shown == N, QString("... and shown: %1 of %2").arg(shown).arg(N));
+			int grabbed = 0;
+			for (int i = 0; i < N; i++)
+				grabbed += m_ruler_tool->RulerOfPoint(m_ruler_tool->GetEditingRulerPoint((*grid)[i].x(), (*grid)[i].y())) == (*rl)[i];
+			check(grabbed == N, QString("each locator's point can be grabbed at its click: %1 of %2").arg(grabbed).arg(N));
+		});
+		add("edit: press", [=]() {
+			QTreeWidget* l = list();
+			if (!l || (int)grid->size() < N || (int)m_ruler_tool->GetRulerList()->size() < N) return;
+			l->setCurrentItem(l->topLevelItem(0));
+			l->verticalScrollBar()->setValue(0);
+			check(cur_row() == 0 && scroll() == 0, "list at the top, row 0 selected");
+			m_ruler_tool->SetIntMode(6);
+			const QPoint p = (*grid)[30];
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			check(cur_row() == 30 && row_shown(30), QString("Edit: press on locator 30: row 30 selected and shown (row %1, scroll %2)").arg(cur_row()).arg(scroll()));
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+			check(cur_row() == 30, "released: row 30 still selected");
+		});
+		add("edit: drag", [=]() {
+			QTreeWidget* l = list();
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			if (!l || (int)grid->size() < N || (int)rl->size() < N) return;
+			Ruler* r = (*rl)[20];
+			const FLIVR::Point p0 = *r->GetPoint(0);
+			const QString before = EnsureMeasureDialog()->RowText(20, MeasureDialog::ColPoints);
+			const QPoint p = (*grid)[20];
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			const int s0 = scroll();
+			check(cur_row() == 20 && row_shown(20), QString("press on locator 20: row 20 selected and shown (scroll %1)").arg(s0));
+			int kept = 0, still = 0;
+			for (int k = 1; k <= 4; k++)
+			{
+				cv->SimulateMouse(QEvent::MouseMove, p + QPoint(3 * k, 2 * k), Qt::LeftButton, Qt::LeftButton);
+				QCoreApplication::processEvents();   // the deferred scroll restore
+				kept += cur_row() == 20;
+				still += scroll() == s0;
+			}
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p + QPoint(12, 8), Qt::LeftButton, Qt::NoButton);
+			m_ruler_tool->SetIntMode(1);
+			check(kept == 4, QString("dragging: row 20 stays selected (%1 of 4 moves)").arg(kept));
+			check(still == 4, QString("dragging: the list does not scroll (%1 of 4 moves at %2, now %3)").arg(still).arg(s0).arg(scroll()));
+			check((*r->GetPoint(0) - p0).length() > 1e-6, "the point moved");
+			const QString after = EnsureMeasureDialog()->RowText(20, MeasureDialog::ColPoints);
+			check(after != before, "row 20 shows the new position: " + before + " -> " + after);
+		});
+		add("camera click", [=]() {
+			QTreeWidget* l = list();
+			if (!l || (int)grid->size() < N) return;
+			l->verticalScrollBar()->setValue(l->verticalScrollBar()->maximum());
+			m_ruler_tool->SetIntMode(1);
+			click((*grid)[3]);
+			check(cur_row() == 3 && row_shown(3), QString("camera mode, click on locator 3: row 3 selected and shown (row %1)").arg(cur_row()));
+			click((*grid)[3] + QPoint(25, 18));
+			check(cur_row() == 3, QString("a click beside the rulers keeps the selection (row %1)").arg(cur_row()));
+		});
+		add("new ruler", [=]() {
+			QTreeWidget* l = list();
+			if (!l || (int)grid->size() < N) return;
+			l->verticalScrollBar()->setValue(0);
+			m_ruler_tool->SetIntMode(5);
+			click(((*grid)[0] + (*grid)[1]) / 2);
+			m_ruler_tool->SetIntMode(1);
+			const int last = (int)m_ruler_tool->GetRulerList()->size() - 1;
+			check(last == N && cur_row() == last && row_shown(last), QString("a new locator (list at the top): row %1 selected and shown (row %2)").arg(last).arg(cur_row()));
+		});
+		add("highlight", [=]() {
+			QTreeWidget* l = list();
+			QTreeWidgetItem* it = l ? l->currentItem() : nullptr;
+			check(it != nullptr, "a row is selected");
+			if (!it) return;
+			const QPalette pal = l->palette();
+			const QColor hl = pal.color(QPalette::Active, QPalette::Highlight);
+			check(pal.color(QPalette::Inactive, QPalette::Highlight) == hl &&
+				pal.color(QPalette::Inactive, QPalette::HighlightedText) == pal.color(QPalette::Active, QPalette::HighlightedText),
+				"inactive selection colours = active ones (" + hl.name() + ")");
+			QImage img = l->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+			const qreal dpr = img.devicePixelRatio();
+			img.setDevicePixelRatio(1.0);
+			img.save(st->dir + "/rulersel_list.png");
+			const QRect vr = l->visualItemRect(it);
+			const QRect pr = QRect(int(vr.x() * dpr), int(vr.y() * dpr), int(vr.width() * dpr), int(vr.height() * dpr)).intersected(img.rect());
+			std::map<QRgb, int> hist;
+			for (int y = pr.top(); y <= pr.bottom(); y++)
+				for (int x = pr.left(); x <= pr.right(); x++)
+					hist[img.pixel(x, y) & 0xffffff]++;
+			QRgb bg = 0;
+			int n = -1;
+			for (const auto& h : hist)
+				if (h.second > n) { n = h.second; bg = h.first; }
+			const bool near = std::abs(qRed(bg) - hl.red()) <= 10 && std::abs(qGreen(bg) - hl.green()) <= 10 && std::abs(qBlue(bg) - hl.blue()) <= 10;
+			log("Measurement window active %d, main window active %d; selected row background #%06x", (int)EnsureMeasureDialog()->isActiveWindow(),
+				(int)isActiveWindow(), (unsigned)bg);
+			check(near, QString("the selected row is drawn in the highlight colour (#%1)").arg(QString::number(bg, 16)));
+		});
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetIntMode(1);
+			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+		});
+	}
+
+	if (kind == "clip")
+	{
+		// Clipping Planes: the YZ / XZ / XY slab width boxes keep a typed
+		// width (without and with "Sync All Chan.", across selections, when
+		// the sync is turned on); the item under the pointer in a combo box
+		// list is highlighted (Display Mode and every other combo box shown)
+		auto box = [this](int a) { return m_clip->findChild<QSpinBox*>(QString("clip_slab_dist_%1").arg(a)); };
+		auto btn = [this](int a) { return m_clip->findChild<QPushButton*>(QString("clip_slab_btn_%1").arg(a)); };
+		auto rng = [this](int a) { int lo, hi; m_clip->GetClipRange(a, lo, hi); return QString("%1..%2").arg(lo).arg(hi); };
+		auto vols = std::make_shared<std::vector<VolumeData*>>();
+		auto select = [this](VolumeData* v) { m_canvas->SetCurrentVolume(v); m_tree->SelectVolume(v); };
+		// typed as a user does: the text only (keyboard tracking is off, the
+		// box has not read it yet), or the text and Return
+		auto type = [](QSpinBox* b, int v, bool enter) {
+			QLineEdit* e = b ? b->findChild<QLineEdit*>() : nullptr;
+			if (!e) return;
+			b->setFocus();
+			e->setText(QString::number(v));
+			if (enter)
+			{
+				QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, "\r");
+				QCoreApplication::sendEvent(b, &press);
+				QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier, "\r");
+				QCoreApplication::sendEvent(b, &release);
+			}
+		};
+		auto shown = [](QSpinBox* b) { return b ? b->text() : QString("(no box)"); };
+		auto reset = [this]() {
+			for (QPushButton* b : m_clip->findChildren<QPushButton*>())
+				if (b->text() == QStringLiteral("Reset Clipping Planes")) b->click();
+		};
+
+		add("setup", [=]() {
+			vols->clear();
+			for (VolumeData* v : m_canvas->Volumes()) vols->push_back(v);
+			check(vols->size() >= 2, "two volumes loaded");
+			if (vols->size() < 2) return;
+			if (m_movie_dock) { m_movie_dock->show(); m_movie_dock->raise(); }
+			if (m_clip_dock) { m_clip_dock->show(); m_clip_dock->raise(); }
+			select((*vols)[0]);
+			m_clip->SetChannLink(false);
+			reset();
+			check(m_clip->GetVolume() == (*vols)[0], "clipping pane shows volume A");
+			check(box(0) && box(1) && box(2) && btn(0) && btn(1) && btn(2), "slab width boxes and YZ / XZ / XY buttons found");
+			{
+				// a saved Display Mode (e.g. plane_mode=2 put into VVD_SETTINGS_DIR) is not restored
+				QFile dft(QDir(qEnvironmentVariable("VVD_SETTINGS_DIR")).filePath("default_clip_settings.dft"));
+				const QByteArray saved = dft.open(QIODevice::ReadOnly) ? dft.readAll().simplified() : QByteArray("(none)");
+				log("saved clip settings: %s", saved.constData());
+				check(m_clip->GetPlaneMode() == 1, QString("Display Mode at start: Frame (index %1)").arg(m_clip->GetPlaneMode()));
+			}
+			int rx, ry, rz;
+			(*vols)[0]->GetResolution(rx, ry, rz);
+			log("volume A %ls %dx%dx%d, volume B %ls; y range %s; widths %s %s %s", (*vols)[0]->GetName().c_str(), rx, ry, rz,
+				(*vols)[1]->GetName().c_str(), rng(1).toLocal8Bit().constData(), shown(box(0)).toLocal8Bit().constData(),
+				shown(box(1)).toLocal8Bit().constData(), shown(box(2)).toLocal8Bit().constData());
+		});
+		add("no sync: XZ", [=]() {
+			if (vols->size() < 2) return;
+			type(box(1), 50, false);
+			btn(1)->click();
+			check(rng(1) == "0..50" && m_clip->GetLink(1), "50 typed (no Return), XZ: y = 0..50, linked -> " + rng(1));
+			check(box(1)->value() == 50, "the XZ box keeps 50 -> " + shown(box(1)));
+			select((*vols)[1]);
+			log("volume B selected: XZ box %s (B's own width)", shown(box(1)).toLocal8Bit().constData());
+			select((*vols)[0]);
+			check(box(1)->value() == 50, "volume A again: 50 -> " + shown(box(1)));
+		});
+		add("sync on", [=]() {
+			if (vols->size() < 2) return;
+			m_clip->SetChannLink(true);
+			check(m_canvas->GetSyncClippingPlanes(), "Sync All Chan. on");
+			check(box(1)->value() == 50, "Sync All Chan. turned on: the XZ box keeps 50 (the view takes volume A's widths) -> " + shown(box(1)));
+			check(rng(1) == "0..50", "and the slab -> " + rng(1));
+		});
+		add("sync: XZ", [=]() {
+			if (vols->size() < 2) return;
+			type(box(1), 30, false);
+			btn(1)->click();
+			check(rng(1) == "0..30" && m_clip->GetLink(1), "Sync All Chan., 30 typed (no Return), XZ: y = 0..30, linked -> " + rng(1));
+			check(box(1)->value() == 30, "the XZ box keeps 30 (was reset to 1) -> " + shown(box(1)));
+			int dx, dy, dz;
+			m_canvas->GetClipDistance(dx, dy, dz);
+			check(dy == 30, QString("the view's XZ width is 30 -> %1").arg(dy));
+			select((*vols)[1]);
+			check(box(1)->value() == 30, "volume B selected: 30 (one width for the view) -> " + shown(box(1)));
+			check(rng(1) == "0..30", "volume B: the same slab -> " + rng(1));
+			select((*vols)[0]);
+			check(box(1)->value() == 30, "volume A again: 30 -> " + shown(box(1)));
+			type(box(2), 7, false);
+			btn(2)->click();
+			int lo, hi;
+			m_clip->GetClipRange(2, lo, hi);
+			check(hi - lo == 7 && m_clip->GetLink(2) && rng(1) != "0..30", "7 typed, XY: a linked 7-slice z slab (y back to the full range) -> z " + rng(2) + ", y " + rng(1));
+			check(box(2)->value() == 7 && box(1)->value() == 30, "XY box 7, XZ box still 30 -> " + shown(box(2)) + ", " + shown(box(1)));
+			type(box(1), 40, false);
+			btn(2)->click();
+			check(box(1)->value() == 40 && box(2)->value() == 7, "40 typed in the XZ box (no Return), then XY: XZ keeps 40, XY 7 -> " +
+				shown(box(1)) + ", " + shown(box(2)));
+			type(box(1), 30, true);
+		});
+		add("sync: Return", [=]() {
+			if (vols->size() < 2) return;
+			type(box(0), 20, true);
+			check(box(0)->value() == 20, "20 typed with Return in the YZ box -> " + shown(box(0)));
+			select((*vols)[1]);
+			check(box(0)->value() == 20, "volume B selected: YZ box 20 (kept without pressing YZ) -> " + shown(box(0)));
+			select((*vols)[0]);
+			check(box(0)->value() == 20 && box(1)->value() == 30 && box(2)->value() == 7, "volume A again: 20, 30, 7 -> " +
+				shown(box(0)) + ", " + shown(box(1)) + ", " + shown(box(2)));
+		});
+		add("sync off", [=]() {
+			if (vols->size() < 2) return;
+			m_clip->SetChannLink(false);
+			check(!m_canvas->GetSyncClippingPlanes(), "Sync All Chan. off");
+			check(box(0)->value() == 20 && box(1)->value() == 30 && box(2)->value() == 7,
+				"turned off: volume A keeps 20, 30, 7 -> " + shown(box(0)) + ", " + shown(box(1)) + ", " + shown(box(2)));
+			select((*vols)[1]);
+			log("volume B: widths %s %s %s (B's own)", shown(box(0)).toLocal8Bit().constData(), shown(box(1)).toLocal8Bit().constData(),
+				shown(box(2)).toLocal8Bit().constData());
+			select((*vols)[0]);
+			reset();
+			log("reset: x %s, y %s, z %s", rng(0).toLocal8Bit().constData(), rng(1).toLocal8Bit().constData(), rng(2).toLocal8Bit().constData());
+		});
+
+		// the list of combo box c open, a row highlighted as under the pointer:
+		// its background differs from that of another row, and its text
+		// stands out from it
+		auto popup_ok = [=](QComboBox* c, const QString& what, const QString& save) -> bool {
+			const int cur = c->currentIndex();
+			int r = -1, plain = -1;
+			for (int i = 0; i < c->count() && r < 0; i++)
+				if (i != cur) r = i;
+			for (int i = 0; i < c->count(); i++)
+				if (i != r && (plain < 0 || plain == cur)) plain = i;
+			if (r < 0 || plain < 0)
+			{
+				log("%s: %d item(s), skipped", what.toLocal8Bit().constData(), c->count());
+				return true;
+			}
+			c->showPopup();
+			QAbstractItemView* view = c->view();
+			for (int k = 0; k < 5; k++) QCoreApplication::processEvents();
+			if (!view->isVisible())
+			{
+				log("%s: no Qt list shown (native popup?), skipped", what.toLocal8Bit().constData());
+				c->hidePopup();
+				return true;
+			}
+			view->setCurrentIndex(view->model()->index(r, c->modelColumn(), c->rootModelIndex()));
+			for (int k = 0; k < 3; k++) QCoreApplication::processEvents();
+			QWidget* pop = view->window();
+			QImage img = pop->grab().toImage().convertToFormat(QImage::Format_RGB32);
+			const qreal dpr = img.devicePixelRatio();
+			img.setDevicePixelRatio(1.0);
+			if (!save.isEmpty())
+				img.save(st->dir + "/" + save + ".png");
+			auto row = [&](int i, QRgb& bg, int& contrast) {
+				const QRect vr = view->visualRect(view->model()->index(i, c->modelColumn(), c->rootModelIndex()));
+				const QPoint o = view->viewport()->mapTo(pop, vr.topLeft());
+				const QRect pr = QRect(int(o.x() * dpr), int(o.y() * dpr), int(vr.width() * dpr), int(vr.height() * dpr)).intersected(img.rect());
+				std::map<QRgb, int> hist;
+				for (int y = pr.top(); y <= pr.bottom(); y++)
+					for (int x = pr.left(); x <= pr.right(); x++)
+						hist[img.pixel(x, y) & 0xffffff]++;
+				bg = 0;
+				int n = -1;
+				for (const auto& h : hist)
+					if (h.second > n) { n = h.second; bg = h.first; }
+				contrast = 0;
+				for (const auto& h : hist)
+					contrast = std::max(contrast, std::abs(qGray(h.first) - qGray(bg)));
+			};
+			QRgb bg_r = 0, bg_p = 0;
+			int con_r = 0, con_p = 0;
+			row(r, bg_r, con_r);
+			row(plain, bg_p, con_p);
+			// macOS flashes the item before the list closes (~80 ms)
+			c->hidePopup();
+			QElapsedTimer wait;
+			wait.start();
+			while (wait.elapsed() < 200)
+				QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+			const bool ok = bg_r != bg_p && con_r >= 80;
+			log("%s: '%s' highlighted #%06x (text contrast %d), '%s' #%06x (contrast %d) -> %s", what.toLocal8Bit().constData(),
+				c->itemText(r).toLocal8Bit().constData(), (unsigned)bg_r, con_r, c->itemText(plain).toLocal8Bit().constData(),
+				(unsigned)bg_p, con_p, ok ? "visible" : "NOT visible");
+			return ok;
+		};
+		add("Display Mode list", [=]() {
+			QComboBox* mode = m_clip->findChild<QComboBox*>("clip_mode");
+			check(mode && mode->isVisible(), "Display Mode combo box shown");
+			if (!mode || !mode->isVisible()) return;
+			const int was = mode->currentIndex();
+			{ QSignalBlocker b(mode); mode->setCurrentIndex(1); }   // "Frame", as in the report: LowTransBack highlighted
+			const bool ok = popup_ok(mode, "Display Mode", "clip_mode_list");
+			{ QSignalBlocker b(mode); mode->setCurrentIndex(was); }
+			check(ok, "Display Mode list: the item under the pointer is highlighted and readable");
+		}, false);
+		add("every combo box list", [=]() {
+			int n = 0, bad = 0;
+			QStringList bad_names;
+			for (QComboBox* c : findChildren<QComboBox*>())
+			{
+				if (!c->isVisible() || !c->isEnabled() || c->count() < 2) continue;
+				QString owner;
+				for (QWidget* w = c->parentWidget(); w && owner.isEmpty(); w = w->parentWidget())
+					if (w->inherits("ClipPanel") || w->inherits("MoviePanel") || w->inherits("VolumePropPanel") || w->inherits("ViewPanel") ||
+						w->inherits("MeshPropPanel") || w->inherits("AnnotationPropPanel") || w->inherits("TreePanel") || w->inherits("AdjustPanel"))
+						owner = w->metaObject()->className();
+				const QString what = QString("%1 combo '%2' (%3)").arg(owner.isEmpty() ? QString("window") : owner, c->objectName(), c->currentText());
+				n++;
+				const QString save = owner == "MoviePanel" && !c->objectName().isEmpty() ? "movie_" + c->objectName() + "_list" :
+					owner == "MoviePanel" && n < 50 ? QString("movie_combo%1_list").arg(n) : QString();
+				if (!popup_ok(c, what, save)) { bad++; bad_names << what; }
+			}
+			log("combo boxes shown: %d, list highlight not visible: %d", n, bad);
+			check(n > 1 && bad == 0, QString("every combo box shown (%1): the item under the pointer is highlighted%2").arg(n)
+				.arg(bad ? " - not in " + bad_names.join("; ") : QString()));
+		}, false);
+		// last (the project replaces the volumes): a project saved in LowTrans
+		// keeps plane_mode=2 in the file (wx reads it) but opens without
+		// changing the Display Mode
+		add("project keeps the Display Mode", [=]() {
+			m_clip->SetPlaneMode(2);
+			const QString prj = st->dir + "/clip_lowtrans.vrp";
+			check(SaveProject(prj), "project saved with the Display Mode LowTrans");
+			QFile f(prj);
+			check(f.open(QIODevice::ReadOnly) && f.readAll().contains("plane_mode=2"), "the project file has plane_mode=2 (for the wx app)");
+			m_clip->SetPlaneMode(1);
+			check(OpenProject(prj), "project opened");
+			check(m_clip->GetPlaneMode() == 1, QString("after opening it the Display Mode is still Frame (index %1)").arg(m_clip->GetPlaneMode()));
+		});
+	}
+
 	if (kind == "savevol")
 	{
+		// the user's Qt file dialog settings before the first dialog (checked
+		// at the end)
+		auto qt_dialog_settings = []() {
+			QVariantMap m;
+			QSettings qs(QSettings::UserScope, QStringLiteral("QtProject"));
+			qs.beginGroup(QStringLiteral("FileDialog"));
+			for (const QString& k : qs.allKeys())
+				m.insert(k, qs.value(k));
+			return m;
+		};
+		auto qt_before = std::make_shared<QVariantMap>();
 		// defaults with a fresh VVD_SETTINGS_DIR: Measurement Auto-select on,
 		// Clipping Planes "Sync All Chan." off with two volumes open; then Save
 		// (volume menu) through the scripted dialog: the file gets the
 		// extension of the chosen format, a name ending in .nrrd with a TIFF
 		// format chosen saves NRRD, a name with a dot keeps it
 		add("defaults", [=]() {
+			*qt_before = qt_dialog_settings();
+			log("Qt file dialog settings: %d keys", (int)qt_before->size());
 			check(m_settings->GetRulerAutoSelect() && m_ruler_tool->GetRulerAutoSelect(), "Auto-select on by default (settings, ruler tool)");
 			QCheckBox* chk = EnsureMeasureDialog()->findChild<QCheckBox*>("ruler_auto_select");
 			check(chk && chk->isChecked(), "Measurement: Auto-select checked");
@@ -1941,6 +2490,219 @@ void MainWindow::RunPaintTest(const QString& kind)
 		add("typed .tif", [=]() {
 			save_as("y.tif", 0);
 			check(is_tif(d + "/y.tif") && !QFileInfo::exists(d + "/y.tif.tif"), "typed y.tif, Muti-page Tiff -> y.tif (unchanged)");
+		});
+
+		// The volume Save dialogs start with the volume's name and its format
+		// (FileDialogs::DefaultSaveName), the name without the extension
+		// selected; scripted dialogs leave the user's Qt file dialog settings
+		// (QtProject / FileDialog) as they were
+		add("names the dialogs start with", [=]() {
+			const QStringList f3 = { "Muti-page Tiff file (*.tif *.tiff)", "Single-page Tiff sequence (*.tif)", "Nrrd file (*.nrrd)" };
+			const QStringList f2 = f3.mid(0, 2);   // Save of a .vvd volume: no NRRD
+			const QStringList f1 = f3.mid(1, 1);   // its Save 3D Painted Region
+			struct Case { QString data; QStringList filters; QString file; int index; };
+			const std::vector<Case> cases = {
+				{ "C1.nrrd", f3, "C1.nrrd", 2 },
+				{ "a.tif_Ch2", f3, "a_Ch2.tif", 0 },          // channel of a TIFF
+				{ "a.TIFF", f3, "a.TIFF", 0 },
+				{ "a.nrrd_1", f3, "a_1.nrrd", 2 },            // copy
+				{ "a.nrrd_AFFINE", f3, "a_AFFINE.nrrd", 2 },  // transform result
+				{ "pre_a.czi_Ch1", f3, "pre_a_Ch1.tif", 0 },  // a format not saved
+				{ "brain_0.5um", f3, "brain_0.5um.tif", 0 },
+				{ "v1.2.nrrd", f3, "v1.2.nrrd", 2 },
+				{ "g/s0:1", f3, "g_s0_1.tif", 0 },
+				{ "a.nrrd", f2, "a.tif", 0 },
+				{ "x_GFP", f1, "x_GFP.tif", 0 },
+			};
+			for (const Case& c : cases)
+			{
+				int index = -1;
+				const QString file = FileDialogs::DefaultSaveName(c.data, c.filters, &index);
+				check(file == c.file && index == c.index, QString("name '%1' -> '%2', format %3 (expected '%4', %5)")
+					.arg(c.data, file).arg(index).arg(c.file).arg(c.index));
+			}
+		});
+		const QString pf = d + "/prefill";
+		// Save As on the Workspace toolbar for the first volume; files:
+		// "<dir>/" = Save with the name in the box, in <dir>
+		auto toolbar_save = [=](const QString& files, const QString& opts) {
+			qputenv("VVD_QT_FILEDLG_FILE_SAVEVOLUME", files.toLocal8Bit());
+			if (!opts.isEmpty())
+				qputenv("VVD_QT_FILEDLG_OPTS_SAVEVOLUME", opts.toLocal8Bit());
+			m_tree->SelectVolume(m_canvas->Volumes().front());
+			QAction* act = nullptr;
+			for (QAction* a : m_tree->findChildren<QAction*>())
+				if (a->text() == QStringLiteral("Save As")) { act = a; break; }
+			check(act && act->isEnabled(), "Workspace toolbar: Save As enabled for the selected volume");
+			if (act && act->isEnabled())
+				act->trigger();
+			qunsetenv("VVD_QT_FILEDLG_FILE_SAVEVOLUME");
+			qunsetenv("VVD_QT_FILEDLG_OPTS_SAVEVOLUME");
+		};
+		auto opened = [=](const char* what, const QString& name, const QString& selected, const QString& type) {
+			const FileDialogs::OpenedState o = FileDialogs::LastOpened();
+			log("%s: opened with '%s' (selected '%s'), type '%s'", what, o.name.toLocal8Bit().constData(),
+				o.selected.toLocal8Bit().constData(), o.type.toLocal8Bit().constData());
+			check(o.name == name && o.selected == selected && o.type == type,
+				QString("%1 starts with '%2', '%3' selected, type %4").arg(what, name, selected, type));
+		};
+		add("toolbar Save: name filled in", [=]() {
+			const QString vname = QString::fromStdWString(m_canvas->Volumes().front()->GetName());
+			log("first volume: '%s'", vname.toLocal8Bit().constData());
+			QDir().mkpath(pf);
+			qputenv("VVD_QT_GRAB_FILEDLG", st->dir.toLocal8Bit());   // filedlg_savevolume.png
+			toolbar_save(pf + "/", QString());
+			qunsetenv("VVD_QT_GRAB_FILEDLG");
+			opened("Save Volume Data", "C1.nrrd", "C1", "Nrrd file (*.nrrd)");
+			check(magic(pf + "/C1.nrrd").startsWith("NRRD"), "Save with the name as filled in -> prefill/C1.nrrd (NRRD)");
+			QStringList all = QDir(pf).entryList(QDir::Files);
+			log("prefill/: %s", all.join(", ").toLocal8Bit().constData());
+			check(all == QStringList{ "C1.nrrd" }, "no other file");
+		});
+		add("toolbar Save: TIFF chosen", [=]() {
+			const QString td = pf + "/tif";
+			QDir().mkpath(td);
+			toolbar_save(td + "/", "filter=0");
+			check(is_tif(td + "/C1.tif"), "Muti-page Tiff chosen: the name became C1.tif (TIFF)");
+			const QStringList all = QDir(td).entryList(QDir::Files);
+			log("prefill/tif/: %s", all.join(", ").toLocal8Bit().constData());
+			check(all == QStringList{ "C1.tif" }, "no C1.nrrd, C1.nrrd.tif or C1.tif.nrrd");
+		});
+		add("Save 3D Painted Region, Bake", [=]() {
+			struct Act { const char* action; const char* env; const char* what; const char* sub; };
+			for (const Act& a : { Act{ "savesegmented", "VVD_QT_FILEDLG_FILE_SAVESEGMENTED", "Save 3D Painted Region", "seg" },
+				Act{ "bake", "VVD_QT_FILEDLG_FILE_BAKEVOLUME", "Bake Volume Data", "bake" } })
+			{
+				const QString sd = pf + "/" + a.sub;
+				QDir().mkpath(sd);
+				qputenv(a.env, (sd + "/").toLocal8Bit());
+				m_tree->SelectVolume(m_canvas->Volumes().front());
+				check(m_tree->RunFileAction(a.action), QString("%1 run").arg(a.what));
+				qunsetenv(a.env);
+				opened(a.what, "C1.nrrd", "C1", "Nrrd file (*.nrrd)");
+				check(magic(sd + "/C1.nrrd").startsWith("NRRD"), QString("%1 with the name as filled in -> %2/C1.nrrd (NRRD)").arg(a.what, a.sub));
+			}
+		});
+
+		// Save in the menu of a mesh / annotations: the platform save panel
+		// with the name in the Workspace (Qt's own dialog under the testing
+		// aids; VVD_QT_FILEDLG_NATIVE_SAVEMESH keeps the panel and reads it)
+		add("mesh and annotation names", [=]() {
+			const QStringList fo = { "OBJ file (*.obj)" }, ft = { "Text file (*.txt)" };
+			struct Case { QString data; QStringList filters; QString file; };
+			const std::vector<Case> cases = {
+				{ "brain.obj", fo, "brain.obj" },
+				{ "neuron.swc", fo, "neuron.obj" },     // saved as OBJ
+				{ "cells.ply", fo, "cells.obj" },
+				{ "brain.obj_1", fo, "brain_1.obj" },   // second mesh of that name
+				{ "New Mesh", fo, "New Mesh.obj" },
+				{ "Antn_1", ft, "Antn_1.txt" },
+				{ "spots.txt", ft, "spots.txt" },
+			};
+			for (const Case& c : cases)
+			{
+				int index = -1;
+				const QString file = FileDialogs::DefaultSaveName(c.data, c.filters, &index);
+				check(file == c.file && index == 0, QString("name '%1' -> '%2' (expected '%3')").arg(c.data, file, c.file));
+			}
+		});
+		// Save in the Workspace menu of the selected item
+		auto menu_save = [=](const char* what) {
+			bool found = false;
+			std::unique_ptr<QMenu> m(m_tree->BuildContextMenu(m_tree->Tree()->currentItem()));
+			if (m)
+				for (QAction* a : m->actions())
+					if (a->text() == QStringLiteral("Save")) { found = true; a->trigger(); break; }
+			check(found, QString("Save in the %1 menu").arg(what));
+		};
+		auto mesh = std::make_shared<MeshData*>(nullptr);
+		add("mesh Save: name filled in", [=]() {
+			// a tetrahedron opened from brain.obj: Workspace name brain.obj
+			const QString src = d + "/src";
+			QDir().mkpath(src);
+			QFile f(src + "/brain.obj");
+			if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+			{
+				f.write("v 10 10 10\nv 60 10 10\nv 10 60 10\nv 10 10 60\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n");
+				f.close();
+			}
+			LoadMeshFiles(QStringList(src + "/brain.obj"), QString(), QStringList(), m_canvas);
+			for (MeshData* md : m_canvas->Meshes())
+				if (md->GetName().ToQt() == "brain.obj") *mesh = md;
+			check(*mesh, "brain.obj opened");
+			if (!*mesh) return;
+			const QString md_dir = pf + "/mesh";
+			QDir().mkpath(md_dir);
+			qputenv("VVD_QT_FILEDLG_FILE_SAVEMESH", (md_dir + "/").toLocal8Bit());
+			m_tree->SelectMesh(*mesh);
+			menu_save("mesh");
+			qunsetenv("VVD_QT_FILEDLG_FILE_SAVEMESH");
+			opened("Save Mesh Data", "brain.obj", "brain", "OBJ file (*.obj)");
+			QFile out(md_dir + "/brain.obj");
+			const QByteArray text = out.open(QIODevice::ReadOnly) ? out.readAll() : QByteArray();
+			check(text.contains("Wavefront OBJ") && text.contains("\nv ") && text.contains("\nf "),
+				"Save with the name as filled in -> prefill/mesh/brain.obj (OBJ, v and f lines)");
+		});
+		add("mesh Save: typed without .obj", [=]() {
+			if (!*mesh) return;
+			qputenv("VVD_QT_FILEDLG_FILE_SAVEMESH", (pf + "/mesh/typed_mesh").toLocal8Bit());
+			m_tree->SelectMesh(*mesh);
+			menu_save("mesh");
+			qunsetenv("VVD_QT_FILEDLG_FILE_SAVEMESH");
+			check(QFileInfo::exists(pf + "/mesh/typed_mesh.obj") && !QFileInfo::exists(pf + "/mesh/typed_mesh"),
+				"typed typed_mesh -> typed_mesh.obj");
+			log("prefill/mesh/: %s", QDir(pf + "/mesh").entryList(QDir::Files).join(", ").toLocal8Bit().constData());
+		});
+		add("annotations Save: name filled in", [=]() {
+			// named "spots" inside spots_file.txt: the Workspace name is used
+			const QString f = d + "/src/spots_file.txt";
+			QDir().mkpath(d + "/src");
+			QFile file(f);
+			if (file.open(QIODevice::WriteOnly | QIODevice::Text))
+			{
+				file.write("Name: spots\nDisplay: 1\n");
+				file.close();
+			}
+			Annotations* ann = m_data_mgr->LoadAnnotations(VVDString(f));
+			check(ann && ann->GetName().ToQt() == "spots", "annotations 'spots' opened");
+			if (!ann) return;
+			m_canvas->AddAnnotations(ann);
+			RefreshTree();
+			check(m_tree->SelectAnnotations(ann), "annotations selected in the Workspace");
+			const QString ad = pf + "/ann";
+			QDir().mkpath(ad);
+			qputenv("VVD_QT_FILEDLG_FILE_SAVEANNOTATIONS", (ad + "/").toLocal8Bit());
+			menu_save("annotations");
+			qunsetenv("VVD_QT_FILEDLG_FILE_SAVEANNOTATIONS");
+			opened("Save Annotations", "spots.txt", "spots", "Text file (*.txt)");
+			QFile out(ad + "/spots.txt");
+			check(out.open(QIODevice::ReadOnly) && out.readAll().startsWith("Name: spots"),
+				"Save with the name as filled in -> prefill/ann/spots.txt");
+		});
+		add("mesh Save: the macOS panel", [=]() {
+			if (!*mesh) return;
+			// the platform dialog, as the user gets it; the last folder used
+			// is prefill/ann (the annotations above)
+			qputenv("VVD_QT_FILEDLG_NATIVE_SAVEMESH", "1");
+			m_tree->SelectMesh(*mesh);
+			menu_save("mesh");
+			qunsetenv("VVD_QT_FILEDLG_NATIVE_SAVEMESH");
+			const FileDialogs::OpenedState o = FileDialogs::LastOpened();
+			log("platform panel: '%s' in '%s', type '%s'", o.name.toLocal8Bit().constData(),
+				o.folder.toLocal8Bit().constData(), o.type.toLocal8Bit().constData());
+			check(o.name == "brain.obj", "the platform Save panel starts with brain.obj");
+			check(QFileInfo(o.folder).canonicalFilePath() == QFileInfo(pf + "/ann").canonicalFilePath(),
+				"in the last folder used (prefill/ann)");
+		});
+		add("Qt file dialog settings unchanged", [=]() {
+			const QVariantMap now = qt_dialog_settings();
+			QStringList diff;
+			QStringList keys = qt_before->keys() + now.keys();
+			keys.removeDuplicates();
+			for (const QString& k : keys)
+				if (qt_before->value(k) != now.value(k)) diff << k;
+			log("changed keys: %s", diff.isEmpty() ? "none" : diff.join(", ").toLocal8Bit().constData());
+			check(diff.isEmpty(), "QtProject FileDialog (last folder, history, view) as before the dialogs");
 		});
 	}
 

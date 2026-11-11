@@ -3083,6 +3083,41 @@ void ClippingView::OnSliderRClick(wxCommandEvent& event)
 	}
 }
 
+//the width of a YZ / XZ / XY slab (axis 0..2): kept where GetSettings reads
+//it (the view with "Sync All Chan.", the group with "Sync Group") and in the
+//volume / mesh. It was kept in the volume / mesh only, so with a sync on the
+//text went back to 1
+void ClippingView::StoreClipDistance(int axis, int dist)
+{
+	if (axis < 0 || axis > 2)
+		return;
+	int d[3];
+	if (m_sel_type == 2 && m_vd)
+	{
+		m_vd->GetClipDistance(d[0], d[1], d[2]);
+		d[axis] = dist;
+		m_vd->SetClipDistance(d[0], d[1], d[2]);
+	}
+	else if (m_sel_type == 3 && m_md)
+	{
+		m_md->GetClipDistance(d[0], d[1], d[2]);
+		d[axis] = dist;
+		m_md->SetClipDistance(d[0], d[1], d[2]);
+	}
+	if (m_vrv && m_vrv->GetSyncClippingPlanes())
+	{
+		m_vrv->GetClipDistance(d[0], d[1], d[2]);
+		d[axis] = dist;
+		m_vrv->SetClipDistance(d[0], d[1], d[2]);
+	}
+	else if (m_group && m_group->GetSyncClippingPlanes())
+	{
+		m_group->GetClipDistance(d[0], d[1], d[2]);
+		d[axis] = dist;
+		m_group->SetClipDistance(d[0], d[1], d[2]);
+	}
+}
+
 void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 {
 	if ( !((m_sel_type==2 && m_vd) || (m_sel_type==3 && m_md)) )
@@ -3101,6 +3136,8 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 	wxString str = m_yz_dist_text->GetValue();
 	long dist;
 	str.ToLong(&dist);
+	//before the edits below: synced, they call GetSettings, which reads it
+	StoreClipDistance(0, (int)dist);
 
 	//reset yz
 	if (m_vrv && m_vrv->GetSyncClippingPlanes())
@@ -3158,17 +3195,6 @@ void ClippingView::OnYZClipBtn(wxCommandEvent& event)
 				wxString::Format(m_x_factor == 1.0 ? "%.0f" : "%.2f", (double)resx * m_x_factor));
 		}
 		SetXLink(true);
-		int distx, disty, distz;
-		if (m_sel_type == 2)
-		{
-			m_vd->GetClipDistance(distx, disty, distz);
-			m_vd->SetClipDistance(dist, disty, distz);
-		}
-		else if (m_sel_type == 3)
-		{
-			m_md->GetClipDistance(distx, disty, distz);
-			m_md->SetClipDistance(dist, disty, distz);
-		}
 	}
 	else
 	{
@@ -3198,6 +3224,8 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 	wxString str = m_xz_dist_text->GetValue();
 	long dist;
 	str.ToLong(&dist);
+	//before the edits below: synced, they call GetSettings, which reads it
+	StoreClipDistance(1, (int)dist);
 
 	//reset xz
 	if (m_vrv && m_vrv->GetSyncClippingPlanes())
@@ -3255,17 +3283,6 @@ void ClippingView::OnXZClipBtn(wxCommandEvent& event)
 				wxString::Format(m_y_factor == 1.0 ? "%.0f" : "%.2f", (double)resy * m_y_factor));
 		}
 		SetYLink(true);
-		int distx, disty, distz;
-		if (m_sel_type == 2)
-		{
-			m_vd->GetClipDistance(distx, disty, distz);
-			m_vd->SetClipDistance(distx, dist, distz);
-		}
-		else if (m_sel_type == 3)
-		{
-			m_md->GetClipDistance(distx, disty, distz);
-			m_md->SetClipDistance(distx, dist, distz);
-		}
 	}
 	else
 	{
@@ -3295,6 +3312,8 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 	wxString str = m_xy_dist_text->GetValue();
 	long dist;
 	str.ToLong(&dist);
+	//before the edits below: synced, they call GetSettings, which reads it
+	StoreClipDistance(2, (int)dist);
 
 	//reset xy
 	if (m_vrv && m_vrv->GetSyncClippingPlanes())
@@ -3352,17 +3371,6 @@ void ClippingView::OnXYClipBtn(wxCommandEvent& event)
 				wxString::Format(m_z_factor == 1.0 ? "%.0f" : "%.2f", (double)resz * m_z_factor));
 		}
 		SetZLink(true);
-		int distx, disty, distz;
-		if (m_sel_type == 2)
-		{
-			m_vd->GetClipDistance(distx, disty, distz);
-			m_vd->SetClipDistance(distx, disty, dist);
-		}
-		else if (m_sel_type == 3)
-		{
-			m_md->GetClipDistance(distx, disty, distz);
-			m_md->SetClipDistance(distx, disty, dist);
-		}
 	}
 	else
 	{

@@ -15,7 +15,11 @@
 #include <QFileInfo>
 #include <QPointer>
 #include <QApplication>
+#include <QAbstractEventDispatcher>
 #include <QMouseEvent>
+#include <QRegularExpression>
+#include <QSettings>
+#include <QShowEvent>
 
 namespace
 {
@@ -23,6 +27,43 @@ namespace
 	bool s_md_save_indv = false;       // m_md_save_indv
 	bool s_crop_output_image = false;  // m_crop_output_image
 	int s_save_scale_level = 0;        // m_save_scale_level
+
+	FileDialogs::OpenedState s_last_opened;   // LastOpened (testing)
+
+	// the extensions of the files VVDViewer reads: volumes (the Open Volume
+	// filter of MainWindow.cpp), meshes (MeshIO::FileDialogFilter, and the
+	// .csv tracks it converts) and annotations
+	const QStringList& DataSuffixes()
+	{
+		static const QStringList s = { "tiff", "tif", "nrrd", "oib", "oif", "lsm", "czi", "h5j", "v3dpbd",
+			"vvd", "n5", "zarr", "zgroup", "zattrs", "json", "xml", "idi", "zip", "nd2",
+			"obj", "swc", "ply", "nml", "csv", "txt" };
+		return s;
+	}
+
+	// QFileDialog writes its last folder, history, sidebar and view to the
+	// user's Qt settings (QtProject, group FileDialog) when it is destroyed;
+	// scripted dialogs put the values read here back afterwards
+	QVariantMap ReadDialogSettings()
+	{
+		QVariantMap m;
+		QSettings qs(QSettings::UserScope, QStringLiteral("QtProject"));
+		qs.beginGroup(QStringLiteral("FileDialog"));
+		for (const QString& k : qs.allKeys())
+			m.insert(k, qs.value(k));
+		return m;
+	}
+
+	void WriteDialogSettings(const QVariantMap& m)
+	{
+		QSettings qs(QSettings::UserScope, QStringLiteral("QtProject"));
+		qs.beginGroup(QStringLiteral("FileDialog"));
+		qs.remove(QString());   // the whole group
+		for (auto it = m.cbegin(); it != m.cend(); ++it)
+			qs.setValue(it.key(), it.value());
+		qs.endGroup();
+		qs.sync();
+	}
 
 	QString EnvFor(const char* prefix, const char* name)
 	{
@@ -33,7 +74,8 @@ namespace
 	{
 		return qEnvironmentVariableIsSet("VVD_QT_GRAB_FILEDLG") ||
 			!EnvFor("VVD_QT_FILEDLG_FILE_", name).isEmpty() ||
-			!EnvFor("VVD_QT_FILEDLG_OPTS_", name).isEmpty();
+			!EnvFor("VVD_QT_FILEDLG_OPTS_", name).isEmpty() ||
+			!EnvFor("VVD_QT_FILEDLG_NATIVE_", name).isEmpty();
 	}
 
 	// the options box at the bottom of the dialog (wx extra control)
@@ -103,6 +145,27 @@ namespace
 			}
 			QFileDialog::accept();   // overwrite prompt for the final name
 		}
+
+		// as the macOS save panel: a name the dialog starts with is selected
+		// without its extension, so typing replaces the name and keeps the
+		// format (Return saves it as it is)
+		void showEvent(QShowEvent* e) override
+		{
+			QFileDialog::showEvent(e);
+			QLineEdit* edit = findChild<QLineEdit*>("fileNameEdit");
+			if (!edit || edit->text().isEmpty())
+				return;
+			const QString text = edit->text();
+			const int dot = text.lastIndexOf('.');
+			bool listed = false;
+			if (dot > 0)
+				for (const QString& f : nameFilters())
+					if (FilterSuffixes(f).contains(text.mid(dot + 1).toLower())) { listed = true; break; }
+			if (listed)
+				edit->setSelection(0, dot);
+			else
+				edit->selectAll();
+		}
 	};
 }
 
@@ -140,23 +203,63 @@ namespace
 namespace FileDialogs
 {
 
+OpenedState LastOpened() { return s_last_opened; }
+
 int Exec(QFileDialog& dlg, const char* name)
 {
 	const QString grab_dir = qEnvironmentVariable("VVD_QT_GRAB_FILEDLG");
 	const QString files = EnvFor("VVD_QT_FILEDLG_FILE_", name);
 	const QString opts = EnvFor("VVD_QT_FILEDLG_OPTS_", name);
+	if (!dlg.testOption(QFileDialog::DontUseNativeDialog) && TestHooksActive(name))
+	{
+		// the platform dialog (VVD_QT_FILEDLG_NATIVE_<NAME>): the file it
+		// shows (folder and name), then cancel
+		QObject::connect(&dlg, &QObject::destroyed, [saved = ReadDialogSettings()]() { WriteDialogSettings(saved); });
+		QPointer<QFileDialog> pd(&dlg);
+		QTimer::singleShot(800, &dlg, [pd, name]() {
+			if (!pd) return;
+			const QFileInfo file(pd->selectedFiles().value(0));
+			s_last_opened = { file.fileName(), QString(), pd->selectedNameFilter(), file.absolutePath() };
+			fprintf(stderr, "[filedlg] %s: platform dialog opened with '%s' in '%s', type '%s'\n", name,
+				s_last_opened.name.toLocal8Bit().constData(), s_last_opened.folder.toLocal8Bit().constData(),
+				s_last_opened.type.toLocal8Bit().constData());
+			pd->reject();
+			// the macOS panel runs its own modal loop, which a stop from a
+			// timer may leave only at the next event (Apple, stopModal):
+			// interrupt posts one
+			if (QAbstractEventDispatcher* ed = QCoreApplication::eventDispatcher())
+				ed->interrupt();
+		});
+		return dlg.exec();
+	}
 	if (!grab_dir.isEmpty() || !files.isEmpty() || !opts.isEmpty())
 	{
 		BlockMouse block(&dlg);
+		// the user's Qt file dialog settings back after ~QFileDialog wrote
+		// them (QObject::destroyed comes after the QFileDialog destructor)
+		QObject::connect(&dlg, &QObject::destroyed, [saved = ReadDialogSettings()]() { WriteDialogSettings(saved); });
+		// "<dir>/": accept the name the dialog starts with, in <dir>
+		const bool keep_name = !files.contains(';') && (files.endsWith('/') || files.endsWith('\\'));
 		// the directory of the files first: QFileDialog lists it
 		// asynchronously, and selectFile only selects listed files
-		if (!files.isEmpty())
+		if (keep_name)
+			dlg.setDirectory(QDir(files).absolutePath());
+		else if (!files.isEmpty())
 			dlg.setDirectory(QFileInfo(files.split(';', Qt::SkipEmptyParts).value(0)).absolutePath());
 		QPointer<QFileDialog> pd(&dlg);
 		const QString pic = grab_dir.isEmpty() ? QString() :
 			QDir(grab_dir).filePath(QString("filedlg_%1.png").arg(QString(name).toLower()));
-		QTimer::singleShot(800, &dlg, [pd, files, opts, pic, name]() {
+		QTimer::singleShot(800, &dlg, [pd, files, opts, pic, name, keep_name]() {
 			if (!pd) return;
+			// the name box as the dialog opened
+			if (auto* edit = pd->findChild<QLineEdit*>("fileNameEdit"))
+				s_last_opened = { edit->text(), edit->selectedText(), pd->selectedNameFilter(),
+					pd->directory().absolutePath() };
+			else
+				s_last_opened = OpenedState();
+			fprintf(stderr, "[filedlg] %s: opened with name '%s' (selected '%s'), type '%s'\n", name,
+				s_last_opened.name.toLocal8Bit().constData(), s_last_opened.selected.toLocal8Bit().constData(),
+				s_last_opened.type.toLocal8Bit().constData());
 			// options through the controls' own signals (click / edit)
 			for (const QString& kv : opts.split(',', Qt::SkipEmptyParts))
 			{
@@ -182,18 +285,21 @@ int Exec(QFileDialog& dlg, const char* name)
 				pd->grab().save(pic);
 			if (!files.isEmpty())
 			{
-				const QStringList list = files.split(';', Qt::SkipEmptyParts);
 				// typed into the file name box (selectFile does not change the
-				// box while it has the keyboard focus)
-				QString text;
-				if (list.size() == 1)
-					text = list.first();
-				else
-					for (const QString& f : list) text += "\"" + QFileInfo(f).fileName() + "\" ";
-				if (auto* edit = pd->findChild<QLineEdit*>("fileNameEdit"))
-					edit->setText(text.trimmed());
-				else
-					pd->selectFile(text.trimmed());
+				// box while it has the keyboard focus); "<dir>/" keeps the name
+				if (!keep_name)
+				{
+					const QStringList list = files.split(';', Qt::SkipEmptyParts);
+					QString text;
+					if (list.size() == 1)
+						text = list.first();
+					else
+						for (const QString& f : list) text += "\"" + QFileInfo(f).fileName() + "\" ";
+					if (auto* edit = pd->findChild<QLineEdit*>("fileNameEdit"))
+						edit->setText(text.trimmed());
+					else
+						pd->selectFile(text.trimmed());
+				}
 				if (pd->selectedFiles().isEmpty())
 					fprintf(stderr, "[filedlg] %s: could not select %s\n", name, files.toLocal8Bit().constData());
 				QMetaObject::invokeMethod(pd.data(), "accept");   // QFileDialog::accept is protected
@@ -302,14 +408,57 @@ bool GetMetadataSeparate() { return s_md_save_indv; }
 bool GetCropToClip() { return s_crop_output_image; }
 int GetScaleLevel() { return s_save_scale_level; }
 
+QString DefaultSaveName(const QString& data_name, const QStringList& filters, int* filter_index)
+{
+	QString base = data_name.trimmed();
+	static const QRegularExpression bad(QStringLiteral("[/\\\\:*?\"<>|]"));
+	base.replace(bad, QStringLiteral("_"));
+	// the last ".<data file extension>" at the end or before a "_"
+	static const QRegularExpression ext_re(
+		QStringLiteral("\\.(%1)(?=_|$)").arg(DataSuffixes().join('|')),
+		QRegularExpression::CaseInsensitiveOption);
+	QRegularExpressionMatch last;
+	for (auto it = ext_re.globalMatch(base); it.hasNext(); )
+		last = it.next();
+	QString ext;   // as the name spells it
+	if (last.hasMatch())
+	{
+		ext = last.captured(1);
+		base.remove(last.capturedStart(), last.capturedLength());
+	}
+	// that file's format when it is listed, else the first format
+	int index = 0;
+	for (int i = 0; !ext.isEmpty() && i < filters.size(); i++)
+		if (FilterSuffixes(filters[i]).contains(ext.toLower())) { index = i; break; }
+	if (filter_index)
+		*filter_index = index;
+	const QStringList suf = filters.isEmpty() ? QStringList() : FilterSuffixes(filters[index]);
+	if (base.isEmpty() || suf.isEmpty())
+		return base;
+	return base + "." + (suf.contains(ext.toLower()) ? ext : suf.first());
+}
+
+// a Save dialog starts with the data's name and format: the format first (in
+// a save dialog, choosing a format changes the extension of the name in the
+// box); a bare name keeps the dialog's folder (the last one used)
+static void StartWithName(QFileDialog& dlg, const QStringList& filters, const QString& data_name)
+{
+	if (data_name.isEmpty() || filters.isEmpty())
+		return;
+	int index = 0;
+	const QString file = DefaultSaveName(data_name, filters, &index);
+	dlg.selectNameFilter(filters[index]);
+	if (!file.isEmpty())
+		dlg.selectFile(file);
+}
+
 QString SaveVolume(QWidget* parent, const char* name, const QString& title, const QStringList& filters,
-	int* filter_index, const QString& default_file)
+	int* filter_index, const QString& data_name)
 {
 	FormatSaveDialog dlg(parent, title, QString(), filters.join(";;"));
 	PrepareDialog(dlg, true);
 	dlg.setFileMode(QFileDialog::AnyFile);   // wxFD_SAVE|wxFD_OVERWRITE_PROMPT
-	if (!default_file.isEmpty())
-		dlg.selectFile(default_file);
+	StartWithName(dlg, filters, data_name);
 
 	auto* panel = new QGroupBox(QObject::tr("Additional Options"), &dlg);
 	auto* group1 = new QVBoxLayout(panel);
@@ -412,6 +561,25 @@ QString OpenFile(QWidget* parent, const char* name, const QString& title, const 
 	QFileDialog dlg(parent, title, dir, filter);
 	PrepareDialog(dlg, false);
 	dlg.setFileMode(QFileDialog::ExistingFile);
+	if (Exec(dlg, name) != QDialog::Accepted)
+		return QString();
+	const QStringList files = dlg.selectedFiles();
+	return files.isEmpty() ? QString() : files.first();
+}
+
+QString SaveFile(QWidget* parent, const char* name, const QString& title, const QString& filter,
+	const QString& data_name)
+{
+	// as getSaveFileName with an empty folder (the last one used); the
+	// platform panel adds the type's extension itself, FormatSaveDialog does
+	// it in Qt's own dialog of the testing aids
+	FormatSaveDialog dlg(parent, title, QString(), filter);
+	if (TestHooksActive(name) && EnvFor("VVD_QT_FILEDLG_NATIVE_", name).isEmpty())
+		PrepareDialog(dlg, true);
+	else
+		dlg.setAcceptMode(QFileDialog::AcceptSave);
+	dlg.setFileMode(QFileDialog::AnyFile);   // wxFD_SAVE|wxFD_OVERWRITE_PROMPT
+	StartWithName(dlg, filter.split(QStringLiteral(";;"), Qt::SkipEmptyParts), data_name);
 	if (Exec(dlg, name) != QDialog::Accepted)
 		return QString();
 	const QStringList files = dlg.selectedFiles();

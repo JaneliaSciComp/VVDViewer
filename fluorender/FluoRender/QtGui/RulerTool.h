@@ -115,6 +115,11 @@ public:
 	void SetCurTime(int t);
 	bool GetDrawRulers() const { return m_draw_rulers; }
 	void SetDrawRulers(bool b);
+	// Measurement "Show ID at start" (not in wx): each ruler's name (the ID
+	// column) also at its first point, on the side away from the ruler; wx
+	// draws it at the last point only. Not for locators (one point).
+	bool GetDrawStartIds() const { return m_draw_start_ids; }
+	void SetDrawStartIds(bool b);
 	// landmarks of the displayed volumes (wx SetLandmarkVisibility / m_draw_landmarks)
 	bool GetDrawLandmarks() const { return m_draw_landmarks; }
 	void SetDrawLandmarks(bool b);
@@ -157,6 +162,11 @@ public:
 	double GetPointVolumeBox2(FLIVR::Point& p1, FLIVR::Point& p2, int mx, int my, VolumeData* vd);
 	double GetPointPlane(FLIVR::Point& mp, int mx, int my, FLIVR::Point* planep = nullptr, bool calc_mats = true);
 	FLIVR::Point* GetEditingRulerPoint(int mx, int my);
+	// the listed ruler that owns point p (null: none, or a landmark)
+	Ruler* RulerOfPoint(const FLIVR::Point* p) const;
+	// a click in the view in any mode: the ruler whose point is under
+	// (mx, my) is announced with rulerPicked; returns it (null: none)
+	Ruler* PickRulerAt(int mx, int my);
 	bool SwitchRulerBalloonVisibility_Point(int mx, int my);
 
 	// ---- MeasureDlg actions that live in the wx view
@@ -196,6 +206,10 @@ public:
 Q_SIGNALS:
 	// ruler list or a ruler changed (wx: MeasureDlg::GetSettings(m_vrv))
 	void rulersChanged();
+	// a ruler was picked in the view: one of its points pressed (Edit mode,
+	// or a click in any mode), or the ruler a click added a point to. The
+	// Measurement list selects its row (not in wx)
+	void rulerPicked(Ruler* ruler);
 	// interaction mode changed from the canvas side (e.g. right click left
 	// ruler mode); mode as in GetIntMode()
 	void intModeChanged(int mode);
@@ -234,6 +248,7 @@ public:
 private:
 	int m_tseq_cur_num = 0;
 	bool m_draw_rulers = true;
+	bool m_draw_start_ids = false;
 	bool m_draw_landmarks = false;
 	int m_text_color_mode = 0;
 

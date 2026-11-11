@@ -842,6 +842,9 @@ public:
 		m_link_x_chk = copy->GetClippingLinkX();
 		m_link_y_chk = copy->GetClippingLinkY();
 		m_link_z_chk = copy->GetClippingLinkZ();
+		//the YZ / XZ / XY slab widths too: the Clipping Planes texts keep
+		//their numbers when "Sync All Chan." is turned on
+		copy->GetClipDistance(m_clip_dist_x, m_clip_dist_y, m_clip_dist_z);
 		
 		for (int i = 0; i < 6; i++)
 			m_linked_plane_params[i] = copy->GetLinkedParam(i);
@@ -855,6 +858,9 @@ public:
 		m_link_x_chk = copy->GetClippingLinkX();
 		m_link_y_chk = copy->GetClippingLinkY();
 		m_link_z_chk = copy->GetClippingLinkZ();
+		//the YZ / XZ / XY slab widths too: the Clipping Planes texts keep
+		//their numbers when "Sync All Chan." is turned on
+		copy->GetClipDistance(m_clip_dist_x, m_clip_dist_y, m_clip_dist_z);
 
 		vector<Plane*>* planes = 0;
 		if (copy->GetVR())
@@ -875,6 +881,9 @@ public:
 		m_link_x_chk = copy->GetClippingLinkX();
 		m_link_y_chk = copy->GetClippingLinkY();
 		m_link_z_chk = copy->GetClippingLinkZ();
+		//the YZ / XZ / XY slab widths too: the Clipping Planes texts keep
+		//their numbers when "Sync All Chan." is turned on
+		copy->GetClipDistance(m_clip_dist_x, m_clip_dist_y, m_clip_dist_z);
 
 		vector<Plane*>* planes = 0;
 		if (copy->GetMR())

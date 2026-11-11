@@ -719,6 +719,7 @@ void SettingsDialog::SetDefaults()
 	m_ruler_use_transf = false;
 	m_ruler_time_dep = true;
 	m_ruler_auto_select = true;   // Measurement Auto-select on by default
+	m_ruler_start_ids = false;    // Measurement Show ID at start
 	m_sphere_rot = true;
 	m_cell_warp = rigidcells::Params();
 	m_cell_warp.device = -1;   // the plugin's default: the first GPU if there is one
@@ -821,6 +822,7 @@ void SettingsDialog::LoadSettings()
 	if (!cfg.Read(L"/ruler time dep/value", m_ruler_time_dep))
 		cfg.Read(L"/ruler time dependent/value", m_ruler_time_dep);
 	cfg.Read(L"/ruler auto select/value", m_ruler_auto_select);
+	cfg.Read(L"/ruler start id/value", m_ruler_start_ids);
 	cfg.Read(L"/sphere rotation/value", m_sphere_rot);
 	if (cfg.Read(L"/warp target/value", s)) m_warp_target = FromVVD(s);
 	if (cfg.Read(L"/rigid cells/files", s)) m_cell_files_labels = FromVVD(s);
@@ -1002,6 +1004,7 @@ void SettingsDialog::SaveSettings()
 	cfg.Write(L"/ruler use transf/value", m_ruler_use_transf);
 	cfg.Write(L"/ruler time dependent/value", m_ruler_time_dep);   // same key as wx SaveSettings
 	cfg.Write(L"/ruler auto select/value", m_ruler_auto_select);   // Qt only
+	cfg.Write(L"/ruler start id/value", m_ruler_start_ids);   // Qt only
 	cfg.Write(L"/sphere rotation/value", m_sphere_rot);   // Qt only
 	cfg.Write(L"/warp target/value", ToVVD(m_warp_target));   // Qt only
 	cfg.Write(L"/rigid cells/files", ToVVD(m_cell_files_labels));

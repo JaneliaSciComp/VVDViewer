@@ -37,6 +37,9 @@
 #include <QColorDialog>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QScrollBar>
+#include <QTimer>
+#include <QPointer>
 #include <QPixmap>
 #include <QIcon>
 #include <climits>
@@ -80,7 +83,32 @@ class RulerListWidget : public QTreeWidget
 public:
 	explicit RulerListWidget(MeasureDialog* dlg) : QTreeWidget(dlg), m_dlg(dlg) {}
 
+	// The row of the ruler picked in the view keeps the strong highlight
+	// while the view, not this tool window, has the focus: the inactive
+	// selection colours are the active ones (macOS: light grey otherwise)
+	void KeepActiveSelectionColors()
+	{
+		QPalette pal = palette();
+		bool changed = false;
+		for (QPalette::ColorRole role : { QPalette::Highlight, QPalette::HighlightedText })
+		{
+			if (pal.brush(QPalette::Inactive, role) == pal.brush(QPalette::Active, role))
+				continue;
+			pal.setBrush(QPalette::Inactive, role, pal.brush(QPalette::Active, role));
+			changed = true;
+		}
+		if (changed)
+			setPalette(pal);
+	}
+
 protected:
+	void changeEvent(QEvent* e) override
+	{
+		QTreeWidget::changeEvent(e);
+		// light / dark mode switched: new system colours
+		if (e->type() == QEvent::PaletteChange)
+			KeepActiveSelectionColors();
+	}
 	void keyPressEvent(QKeyEvent* e) override
 	{
 		// wx OnKeyDown: WXK_DELETE / WXK_BACK -> DeleteSelection
@@ -235,8 +263,16 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 		"Where no volume is hit, the point is placed as without Auto-select.");
 	sizer_1->addSpacing(10);
 	sizer_1->addWidget(m_auto_select_chk, 0, Qt::AlignVCenter);
+	//not in wx: each ruler's ID at its first point too
+	m_start_id_chk = new QCheckBox("Show ID at start", this);
+	m_start_id_chk->setObjectName("ruler_start_id");
+	m_start_id_chk->setToolTip("Also draws each ruler's ID (the ID column) at its first point, on the side away from "
+		"the ruler. The ID is always drawn at the last point; a locator has only that point.");
+	sizer_1->addSpacing(10);
+	sizer_1->addWidget(m_start_id_chk, 0, Qt::AlignVCenter);
 	sizer_1->addStretch(1);
 	connect(m_auto_select_chk, &QCheckBox::toggled, this, &MeasureDialog::OnAutoSelectCheck);
+	connect(m_start_id_chk, &QCheckBox::toggled, this, &MeasureDialog::OnStartIdCheck);
 	connect(m_int_method_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnIntensityMethodsCombo);
 
 	//more options
@@ -378,6 +414,7 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_rulerlist->setColumnWidth(ColName, 50);   // half the former Name column's 100
 	for (int c = ColName + 1; c < ColNum; ++c)
 		m_rulerlist->resizeColumnToContents(c);
+	m_rulerlist->KeepActiveSelectionColors();
 	connect(m_rulerlist, &QTreeWidget::itemDoubleClicked, this, &MeasureDialog::OnItemDoubleClicked);
 	connect(m_rulerlist, &QTreeWidget::itemChanged, this, &MeasureDialog::OnItemChanged);
 
@@ -408,6 +445,7 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	{
 		connect(m_tool, &RulerTool::rulersChanged, this, &MeasureDialog::GetSettings);
 		connect(m_tool, &RulerTool::intModeChanged, this, &MeasureDialog::GetSettings);
+		connect(m_tool, &RulerTool::rulerPicked, this, &MeasureDialog::SelectRuler);
 	}
 	GetSettings();
 	OnWarpType(m_warp_type_combo->currentIndex());
@@ -420,13 +458,17 @@ void MeasureDialog::SetTool(RulerTool* tool)
 	if (tool == m_tool) return;
 	if (m_tool) disconnect(m_tool, nullptr, this, nullptr);
 	m_tool = tool;
-	//Auto-select is one option for every view (Settings)
+	//Auto-select and Show ID at start are one option for every view (Settings)
 	if (m_tool && m_settings)
+	{
 		m_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+		m_tool->SetDrawStartIds(m_settings->GetRulerStartIds());
+	}
 	if (m_tool)
 	{
 		connect(m_tool, &RulerTool::rulersChanged, this, &MeasureDialog::GetSettings);
 		connect(m_tool, &RulerTool::intModeChanged, this, &MeasureDialog::GetSettings);
+		connect(m_tool, &RulerTool::rulerPicked, this, &MeasureDialog::SelectRuler);
 	}
 	GetSettings();
 }
@@ -594,9 +636,10 @@ void MeasureDialog::GetSettings()
 	else if (int_mode == 6)
 		m_ruler_edit_act->setChecked(true);
 
-	QSignalBlocker b5(m_int_method_combo), b6(m_use_transfer_chk), b7(m_transient_chk), b8(m_auto_select_chk);
+	QSignalBlocker b5(m_int_method_combo), b6(m_use_transfer_chk), b7(m_transient_chk), b8(m_auto_select_chk), b9(m_start_id_chk);
 	m_int_method_combo->setCurrentIndex(m_tool->GetPointVolumeMode());
 	m_auto_select_chk->setChecked(m_tool->GetRulerAutoSelect());
+	m_start_id_chk->setChecked(m_tool->GetDrawStartIds());
 	m_use_transfer_chk->setChecked(m_tool->GetRulerUseTransf());
 	m_transient_chk->setChecked(m_tool->GetRulerTimeDep());
 }
@@ -670,6 +713,11 @@ void MeasureDialog::UpdateList()
 	if (!m_tool) return;
 	m_updating = true;
 	Ruler* sel = RulerOf(m_rulerlist->currentItem());
+	// the list is rebuilt on every change, also on every move while a ruler
+	// point is dragged in the view: it stays where it was (it went back to
+	// the top, or to the selected row at the bottom)
+	QScrollBar* vsb = m_rulerlist->verticalScrollBar();
+	const int scroll = vsb ? vsb->value() : 0;
 	m_rulerlist->clear();
 
 	std::vector<Ruler*>* ruler_list = m_tool->GetRulerList();
@@ -736,7 +784,64 @@ void MeasureDialog::UpdateList()
 		QSignalBlocker b(m_rulerlist);
 		m_rulerlist->setCurrentItem(sel_item);
 	}
+	RestoreScroll(scroll);
 	m_updating = false;
+}
+
+// the scroll range is only known after the rows are laid out, and selecting
+// a row scrolls on its own: restore the position after both, now and once
+// more after the pending layout (unless SelectRuler scrolled since)
+void MeasureDialog::RestoreScroll(int value)
+{
+	QScrollBar* vsb = m_rulerlist->verticalScrollBar();
+	if (!vsb)
+		return;
+	m_rulerlist->doItemsLayout();
+	vsb->setValue(value);
+	const int gen = ++m_scroll_gen;
+	QPointer<QScrollBar> guard(vsb);
+	QTimer::singleShot(0, this, [this, guard, value, gen]() {
+		if (guard && gen == m_scroll_gen)
+			guard->setValue(value);
+	});
+}
+
+// a ruler picked in the view (RulerTool::rulerPicked): its row becomes the
+// selected one and is scrolled into view
+void MeasureDialog::SelectRuler(Ruler* ruler)
+{
+	if (!ruler || !m_rulerlist)
+		return;
+	auto find = [this, ruler]() -> QTreeWidgetItem* {
+		for (int i = 0; i < m_rulerlist->topLevelItemCount(); ++i)
+		{
+			QTreeWidgetItem* it = m_rulerlist->topLevelItem(i);
+			if (reinterpret_cast<Ruler*>(it->data(ColName, Qt::UserRole).value<quintptr>()) == ruler)
+				return it;
+		}
+		return nullptr;
+	};
+	QTreeWidgetItem* item = find();
+	if (!item)
+	{
+		UpdateList();
+		item = find();
+	}
+	if (!item)
+		return;   // not listed (a transient ruler of another time point)
+	++m_scroll_gen;   // no pending restore moves it out of view again
+	m_rulerlist->setCurrentItem(item);
+	m_rulerlist->scrollToItem(item);
+	// per-pixel scrolling (macOS): QTreeView's EnsureVisible leaves the
+	// row's last pixel row below the bottom edge; show all of it
+	QScrollBar* vsb = m_rulerlist->verticalScrollBar();
+	if (vsb && m_rulerlist->verticalScrollMode() == QAbstractItemView::ScrollPerPixel)
+	{
+		const QRect vr = m_rulerlist->visualItemRect(item);
+		const int over = vr.bottom() - m_rulerlist->viewport()->rect().bottom();
+		if (over > 0 && vr.top() - over >= 0)
+			vsb->setValue(vsb->value() + over);
+	}
 }
 
 // RulerListCtrl::UpdateRulers, annotation part: one count per shown
@@ -1210,6 +1315,15 @@ void MeasureDialog::OnAutoSelectCheck(bool checked)
 	m_tool->SetRulerAutoSelect(checked);
 	if (m_settings)
 		m_settings->SetRulerAutoSelect(checked);
+}
+
+void MeasureDialog::OnStartIdCheck(bool checked)
+{
+	if (!m_tool) return;
+	m_tool->SetDrawStartIds(checked);
+	if (m_settings)
+		m_settings->SetRulerStartIds(checked);
+	Q_EMIT startIdsToggled(checked);
 }
 
 void MeasureDialog::OnScatterRulers()

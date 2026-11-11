@@ -1787,9 +1787,11 @@ void TreePanel::OnSave()
 		QStringList filters;
 		filters << tr("Muti-page Tiff file (*.tif *.tiff)") << tr("Single-page Tiff sequence (*.tif)");
 		if (!vd->isBrxml()) filters << tr("Nrrd file (*.nrrd)");
-		// wx: + CreateExtraControl (crop to the clipping planes, pyramid level)
+		// wx: + CreateExtraControl (crop to the clipping planes, pyramid level).
+		// Qt: the dialog starts with the volume's name and format (wx: empty)
 		int mode = 0;
-		QString filename = FileDialogs::SaveVolume(this, "SAVEVOLUME", tr("Save Volume Data"), filters, &mode);
+		QString filename = FileDialogs::SaveVolume(this, "SAVEVOLUME", tr("Save Volume Data"), filters, &mode,
+			Q(vd->GetName()));
 		if (filename.isEmpty()) return;
 		vd->Save(V(filename), mode, false, true, true, true, CurCanvas() ? CurCanvas()->GetLoader() : nullptr,
 			FileDialogs::GetCropToClip(), FileDialogs::GetScaleLevel());
@@ -1797,15 +1799,21 @@ void TreePanel::OnSave()
 	}
 	else if (type == TypeMesh)
 	{
-		QString filename = QFileDialog::getSaveFileName(this, tr("Save Mesh Data"), QString(), tr("OBJ file (*.obj)"));
+		// Qt: the dialog starts with the mesh's name (wx: empty)
+		MeshData* md = (MeshData*)ptr;
+		QString filename = FileDialogs::SaveFile(this, "SAVEMESH", tr("Save Mesh Data"), tr("OBJ file (*.obj)"),
+			Q(md->GetName()));
 		if (filename.isEmpty()) return;
-		((MeshData*)ptr)->Save(V(filename));
+		md->Save(V(filename));
 	}
 	else if (type == TypeAnnotations)
 	{
-		QString filename = QFileDialog::getSaveFileName(this, tr("Save Annotations"), QString(), tr("Text file (*.txt)"));
+		// Qt: the dialog starts with the annotations' name (wx: empty)
+		Annotations* ann = (Annotations*)ptr;
+		QString filename = FileDialogs::SaveFile(this, "SAVEANNOTATIONS", tr("Save Annotations"), tr("Text file (*.txt)"),
+			Q(ann->GetName()));
 		if (filename.isEmpty()) return;
-		((Annotations*)ptr)->Save(V(filename));
+		ann->Save(V(filename));
 	}
 }
 
@@ -1831,7 +1839,8 @@ void TreePanel::OnSaveSegmentedVolume()
 	else
 		filters << tr("Muti-page Tiff file (*.tif *.tiff)") << tr("Single-page Tiff sequence (*.tif)") << tr("Nrrd file (*.nrrd)");
 	int mode = 0;
-	QString filename = FileDialogs::SaveVolume(this, "SAVESEGMENTED", tr("Save Volume Data"), filters, &mode);
+	QString filename = FileDialogs::SaveVolume(this, "SAVESEGMENTED", tr("Save Volume Data"), filters, &mode,
+		Q(vd->GetName()));
 	if (filename.isEmpty()) return;
 	if (vd->isBrxml()) mode = 1;
 	auto mskmode = vd->GetMaskHideMode();
@@ -1892,7 +1901,8 @@ void TreePanel::OnBakeVolume()
 	// wx shows the same options box here, but always crops (crop = true)
 	// and saves level 0, whatever the box says
 	int mode = 0;
-	QString filename = FileDialogs::SaveVolume(this, "BAKEVOLUME", tr("Bake Volume Data"), filters, &mode);
+	QString filename = FileDialogs::SaveVolume(this, "BAKEVOLUME", tr("Bake Volume Data"), filters, &mode,
+		Q(vd->GetName()));
 	if (filename.isEmpty()) return;
 	vd->Save(V(filename), mode, true, Compression(), false, false, nullptr, true);
 }

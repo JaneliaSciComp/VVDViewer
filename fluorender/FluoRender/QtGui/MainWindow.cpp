@@ -1411,6 +1411,7 @@ void MainWindow::ApplyRulerSettings()
 		r->SetRulerUseTransf(m_settings->GetRulerUseTransf());
 		r->SetRulerTimeDep(m_settings->GetRulerTimeDep());
 		r->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+		r->SetDrawStartIds(m_settings->GetRulerStartIds());
 		r->SetTextColorMode(m_settings->GetTextColor());
 		r->SetFont(m_settings->GetFontPath(), m_settings->GetTextSize());
 	}
@@ -1757,10 +1758,10 @@ bool MainWindow::OpenProject(const QString& path)
 		m_cur_sel_mesh = view.cur_sel_mesh;
 	}
 	// wx OpenProject /prop_panel: plane_mode, then the legacy "chann_link"
-	// keys of old projects
+	// keys of old projects. The project's plane_mode is not applied (it is
+	// still saved, for wx): the Clipping Planes Display Mode stays as chosen
+	// in this session, Frame at start (ClipPanel::LoadDefault)
 	m_clip->SetRenderCanvas(m_canvas);
-	if (view.has_plane_mode)
-		m_clip->SetPlaneMode(view.plane_mode);
 	if (view.has_chann_link)
 	{
 		if (view.has_linked_legacy)

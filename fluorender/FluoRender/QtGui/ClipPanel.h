@@ -68,8 +68,10 @@ public:
 	void MoveLinkedClippingPlanes(int dir);
 	// wx GetXdist / GetYdist / GetZdist (axis 0..2): slab width in the boxes
 	int GetDist(int axis) const;
-	void LoadDefault();               // default_clip_settings.dft (plane_mode)
-	void SaveDefault();
+	// the YZ / XZ / XY slab width boxes -> view / group / selection
+	void StoreDist();
+	void LoadDefault();               // default_clip_settings.dft: nothing is restored (see the .cpp)
+	void SaveDefault();               // plane_mode / link_channels, for the wx app (same file)
 
 Q_SIGNALS:
 	void clipChanged();               // planes/rotations/mode changed; redraw
@@ -133,7 +135,7 @@ private:
 	bool m_fix_rots = false;
 	bool m_mouse_in = false;
 	bool m_draw_clip = false;
-	int m_plane_mode = 0;             // PM_NORMAL
+	int m_plane_mode = 1;             // PM_FRAME: the Display Mode at start (wx PM_NORMAL)
 	int m_res[3] = {512, 512, 512};   // slider maxima (bounding box, voxels)
 	double m_factor[3] = {1.0, 1.0, 1.0};
 	int m_lo[3] = {0, 0, 0};

@@ -41,6 +41,7 @@
 #include "DataManager.h"
 #include "Core/FileUtil.h"
 #include "img/icons.h"
+#include "StyleSheets.h"
 
 double MoviePanel::m_Mbitrate = 10.0;
 
@@ -107,7 +108,7 @@ QString MoviePanel::StyleSheetText()
 		" { color: #a0a0a0; background: #f4f4f4; border-color: #d0d0d0; }"
 		"MoviePanel QComboBox {"
 		" font-size: 11px; color: #000000; background: #ffffff;"
-		" border: 1px solid #b4b4b4; border-radius: 2px; padding: 1px 4px; min-height: 15px; }"
+		" border: 1px solid #b4b4b4; border-radius: 2px; padding: 1px 4px; min-height: 15px;%1 }"
 		"MoviePanel QPushButton {"
 		" font-size: 11px; color: #000000; background: #ffffff;"
 		" border: 1px solid #b4b4b4; border-radius: 3px; padding: 2px 6px; min-height: 16px; }"
@@ -127,7 +128,8 @@ QString MoviePanel::StyleSheetText()
 		" font-size: 11px; background: #ffffff; border: 1px solid #b4b4b4; }"
 		"MoviePanel QTreeWidget QLineEdit, MoviePanel QTreeWidget QComboBox { border: 0px; padding: 0px 2px; min-height: 12px; }"
 		"MoviePanel QHeaderView::section { font-size: 11px; background: #f2f2f2;"
-		" border: 0px; border-right: 1px solid #d0d0d0; border-bottom: 1px solid #d0d0d0; padding: 1px 4px; }");
+		" border: 0px; border-right: 1px solid #d0d0d0; border-bottom: 1px solid #d0d0d0; padding: 1px 4px; }")
+		.arg(VVDQtComboSelectionColors());
 }
 
 MoviePanel::MoviePanel(QWidget* parent) : QWidget(parent)

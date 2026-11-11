@@ -387,6 +387,7 @@ private:
 	void OnSliderRClick(wxCommandEvent& event);
 
 	//clip buttons
+	void StoreClipDistance(int axis, int dist);
 	void OnYZClipBtn(wxCommandEvent& event);
 	void OnXZClipBtn(wxCommandEvent& event);
 	void OnXYClipBtn(wxCommandEvent& event);

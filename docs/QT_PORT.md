@@ -223,6 +223,23 @@ engine changes that also change the wx app are under "Bug fixes".
   (wx "Name", half width, in-place rename), Start Volume, End Volume, then the
   wx columns (Color, Length, Angle/Pitch, Start/End Points, Time,
   Volumes/Score).
+* **Show ID at start** check box (new, off by default, saved as
+  `/ruler start id`): each ruler's ID (the ID column) is also drawn at its
+  first point, on the side away from the ruler's first segment, in every
+  view. wx (and this app with the box off) draws it at the last point only,
+  so with the end points off screen - e.g. landmarks from a volume to a
+  template far away - the rulers on screen showed no ID. Not for locators
+  (their ID is at their only point).
+* **The list follows the view** (new): the ruler picked in the view is the
+  selected row of the list and scrolled into view - a point pressed or
+  dragged in Edit mode, a point clicked in the camera mode, the ruler a
+  click adds a point to (`RulerTool::rulerPicked`,
+  `MeasureDialog::SelectRuler`). The selected row keeps the strong
+  highlight while the view, not the Measurement window, has the focus
+  (macOS draws an inactive selection light grey), and the list keeps its
+  scroll position when it is rebuilt (on every move of a dragged point it
+  jumped to the top, or put the selected row at the bottom). wx neither
+  selects nor keeps the position.
 * **Auto-select** check box (new, on by default, saved as
   `/ruler auto select`): each ruler click, Edit-mode drag and Shift-paint
   ruler press first selects in the tree the displayed volume with the
@@ -341,6 +358,16 @@ engine changes that also change the wx app are under "Bug fixes".
   `std::terminate` aborted the app (seen once in the app, minutes into the
   warp). The started threads and the calling thread now finish the loop;
   with injected start failures the result and the tables are identical.
+* **Clipping Planes slab width went back to 1** (both apps): the YZ / XZ /
+  XY buttons kept the width typed below them in the selected volume or mesh
+  only, but with "Sync All Chan." (or "Sync Group") the pane shows the
+  view's (group's) width, and each plane edit of the button refreshes the
+  pane; so right after a 50-slice XZ slab the box showed 1, and the next
+  press made a 1-slice slab. The width is now also kept where the pane
+  reads it, and turning "Sync All Chan." on gives the view the selected
+  volume's widths (as its planes and links). Qt: a width confirmed with
+  Return (or by leaving the box) is kept without pressing the button, and
+  the button uses a width typed without Return (`ClipPanel::StoreDist`).
 * **Edit mode could not grab a ruler point outside the current volume**
   (both apps): Select & move only took points inside the current volume's
   clipping planes, but a ruler is drawn with all its points once one of
@@ -435,6 +462,36 @@ engine changes that also change the wx app are under "Bug fixes".
 
 ### Qt port
 
+* **Clipping Planes Display Mode starts as Frame**: wx restores the mode
+  last used (`plane_mode` in `default_clip_settings.dft`) and the one saved
+  in a project, so a mode picked once - e.g. LowTrans, easy to pick by
+  mistake while the list hid the item under the pointer - came back on
+  every start and with every project saved meanwhile. The mode now starts
+  as Frame (the factory default) and only changes when it is picked in the
+  pane, as "Sync All Chan." starts off. Both files still record it for the
+  wx app.
+* **Combo box lists hid the item under the pointer**: in the Clipping Planes
+  "Display Mode" list it was white on white (a blank row), the Record /
+  Export combo boxes showed no highlight. With a background in a combo
+  box's style sheet rule, QStyleSheetStyle paints the list items with that
+  background as the highlight (and the rule's text color as the
+  highlighted text). The rules now name the menu selection colors
+  (`VVDQtComboSelectionColors`, `QtGui/StyleSheets.h`), as an unstyled
+  combo box shows them; the closed boxes look the same.
+* **Save dialogs start with the data's name** (new): Save (Workspace
+  toolbar Save As and the volume menu), Save 3D Painted Region and Bake open
+  with the selected volume's name in the file name box and its format
+  chosen - brain.nrrd as NRRD - the name without the
+  extension selected as in the macOS save panel (typing replaces it, Return
+  saves). The extension of the file it was read from moves to the end
+  (a.nrrd_Ch2 -> a_Ch2.nrrd, a.nrrd_1 -> a_1.nrrd); a format the dialog
+  cannot write gives the first one (a.czi -> a.tif). Choosing another file
+  type changes the extension in the box. Save in the menu of a mesh or of
+  annotations opens the platform save panel, as before, now with the
+  Workspace name and .obj / .txt (neuron.swc -> neuron.obj, brain.obj_1 ->
+  brain_1.obj, Antn_1 -> Antn_1.txt) in the last folder used
+  (`FileDialogs::SaveFile`). wx starts with an empty name and the first
+  format (TIFF) (`FileDialogs::DefaultSaveName`).
 * **Saved volumes got no .nrrd / .tif extension**: Save Volume (also Save 3D
   Painted Region, Bake and Export metadata) and Save Project use Qt's own
   file dialog to make room for their option boxes, and it adds no extension,
@@ -1519,7 +1576,10 @@ command line.
 | `rulerlist` | the opened project's Measurement list (`VVD_QT_EXPECT_START`, `VVD_QT_EXPECT_END`) |
 | `rulerauto` | Auto-select on two separated volumes: clicks, Edit drag, View Plane locator, empty space, paint-ruler press, off = unchanged; `a01_measure_list_auto.png` |
 | `rulermove` | Edit mode on a 2-point ruler between two volumes that do not overlap: start and end point grabbed with either volume current, start point dragged with the end volume current; `rm01_view.png` |
-| `savevol` | Defaults with fresh settings (Measurement Auto-select on, Clipping Planes Sync All Chan. off), then Save in the volume menu through the scripted dialog: names typed without an extension get .nrrd / .tif / the TIFF sequence pages, w.nrrd with Muti-page Tiff chosen saves NRRD, x_0.5um gets .nrrd, y.tif stays y.tif |
+| `rulerid` | Show ID at start: a 2-point ruler (start lower right, end upper left) and a locator; captures off / on / off: only the start point's surroundings change, the ID lies to the lower right of the start (away from the ruler), off again is identical; the check box drives the ruler tool and the Settings value (`id_off.png`, `id_on.png`) |
+| `rulersel` | Measurement list and the view (one or two volumes): 36 View Plane locators clicked in a grid inside the volume (each new one the selected, shown row; the list scrolls), Edit press on locator 30 with the list at the top, Edit drag of locator 20 (row kept, list not scrolled, the row shows the new position), camera-mode click on locator 3 and beside it, a new locator with the list at the top, the selected row's colour (`rulersel_list.png`) |
+| `clip` | Clipping Planes with two volumes (96x80x40): Display Mode Frame at start (also with a saved `plane_mode=2`) and after opening a project saved in LowTrans (the file keeps `plane_mode=2`); slab widths typed into the YZ / XZ / XY boxes (without Return, then the button; with Return) kept with Sync All Chan. off and on, across selections and when the sync is turned on and off; the Display Mode list and every other combo box shown highlight the item under the pointer (`clip_mode_list.png`) |
+| `savevol` | Defaults with fresh settings (Measurement Auto-select on, Clipping Planes Sync All Chan. off), then Save in the volume menu through the scripted dialog: names typed without an extension get .nrrd / .tif / the TIFF sequence pages, w.nrrd with Muti-page Tiff chosen saves NRRD, x_0.5um gets .nrrd, y.tif stays y.tif; the names the dialogs start with (`DefaultSaveName` cases); toolbar Save As, Save 3D Painted Region and Bake open with C1.nrrd ("C1" selected, Nrrd file) and save it as it is filled in, Muti-page Tiff chosen makes it C1.tif; Save in the mesh and annotations menus: the `DefaultSaveName` cases (neuron.swc -> neuron.obj, brain.obj_1 -> brain_1.obj, Antn_1 -> Antn_1.txt), brain.obj and spots (named inside spots_file.txt) open as brain.obj / spots.txt and save as filled in, typed_mesh gets .obj, the macOS panel (`VVD_QT_FILEDLG_NATIVE_SAVEMESH`) opens with brain.obj in the last folder used; the user's Qt file dialog settings unchanged (`filedlg_savevolume.png`) |
 | `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`; optional `_SRC` = volume index, `_TARGET` = auto / same / extend / volume index), result voxels to `VVD_QT_WARP_OUT` (raw), the source's and result's origins |
 | `origin` | the opened volumes' origins and world boxes (`VVD_QT_ORIGIN_EXPECT=x,y,z`: the first one's); `VVD_QT_ORIGIN_SAVE=1`: a copy, whole.nrrd, origin.vrp (its `origin=` key) and crop.nrrd (upper halves of the clipping box) of the first volume, each checked for the origin |
 | `dispview` | three or more volumes (the first two in one group, the rest in groups of their own) or a project: tree Toggle Visibility on a volume and on a group, all but the last off one by one, Isolate / Show All, visibility undo / redo; the view's centre, pan, distance, zoom and radius stay those of the start (`v0*_*.png`) |
@@ -1549,7 +1609,7 @@ command line.
 | `VVD_QT_GRAB_CAPDLG` | picture of the capture dialog |
 | `VVD_QT_MOVIE=<mp4/mov/tif>` | Record/Export Save... without the dialog (`_LEN`, `_FPS`, `_AXIS`, `_DEG`, `_STYLE`, `_REWIND`, `_ROT`, `_SEQ`, `_CROP`, `_KEYS`, `_KEYDUR`, `_MODE`, `_KEEP`, `_PRJ`, `_DELAY`; see QtMain.cpp) |
 | `VVD_QT_GRAB_MOVPANEL=<dir>` | pictures of the four Record/Export tabs and the save dialog (`VVD_QT_GRAB_MOVDLG`) |
-| `VVD_QT_FILEDLG_RUN="step,..."` | file dialogs / tree save actions in order, then quit: `openvolume`, `openmesh`, `openproject`, `saveproject`, `savevolume`, `savesegmented`, `bake`, `exportmeta`, `select:<i>`, `clip:x0:x1:y0:y1:z0:z1`, `wait:<ms>`; per dialog `VVD_QT_FILEDLG_FILE_<NAME>=a;b`, `VVD_QT_FILEDLG_OPTS_<NAME>=key=value,...` (option controls by object name, `filter=<i>`); `VVD_QT_GRAB_FILEDLG=<dir>` pictures; `VVD_QT_FILEDLG_DELAY` (see FileDialogs.h) |
+| `VVD_QT_FILEDLG_RUN="step,..."` | file dialogs / tree save actions in order, then quit: `openvolume`, `openmesh`, `openproject`, `saveproject`, `savevolume`, `savesegmented`, `bake`, `exportmeta`, `select:<i>`, `clip:x0:x1:y0:y1:z0:z1`, `wait:<ms>`; per dialog `VVD_QT_FILEDLG_FILE_<NAME>=a;b` (`<dir>/`: the name in the box, in `<dir>`), `VVD_QT_FILEDLG_OPTS_<NAME>=key=value,...` (option controls by object name, `filter=<i>`); `VVD_QT_FILEDLG_NATIVE_<NAME>=1` (mesh / annotations Save: keep the platform panel, log the file it opens with, cancel it); `VVD_QT_GRAB_FILEDLG=<dir>` pictures; `VVD_QT_FILEDLG_DELAY` (see FileDialogs.h) |
 | `VVD_QT_DATASETS=all\|none\|cancel\|<i,j>` | answers the Zarr / N5 dataset dialog (picture `filedlg_datasets.png`) |
 | `VVD_QT_TIME_SEQ=1` | Open Volume option "Read a sequence as time series" for the session |
 | `VVD_QT_GRAB_LEGEND=<dir>` | Legend drop-down clicks, `legend_menu_<step>.png` (each row's check mark against its check state), `legend_view.png` (`_DELAY`, default 5000 ms) |

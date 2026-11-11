@@ -20,7 +20,7 @@ inline bool VVDQtPaintTestKind(const QString& kind)
 {
 	return kind == "paint" || kind == "calc" || kind == "seg" || kind == "index" || kind == "nr" ||
 		kind == "hide" || kind == "ctx" || kind == "ui" || kind == "diffuse" || kind == "rulervol" || kind == "rulerauto" || kind == "rulermove" ||
-		kind == "rulerlist" || kind == "savevol" || kind == "warp" || kind == "warptarget" || kind == "cells" || kind == "origin" || kind == "dispview" || kind == "view3d" || kind == "na" || kind == "legend2" ||
+		kind == "rulerlist" || kind == "savevol" || kind == "clip" || kind == "rulersel" || kind == "rulerid" || kind == "warp" || kind == "warptarget" || kind == "cells" || kind == "origin" || kind == "dispview" || kind == "view3d" || kind == "na" || kind == "legend2" ||
 		kind == "layout" ||   // MainWindowLayout.cpp
 		kind == "cdm" ||      // MainWindowCDM.cpp
 		kind.startsWith("b3_") ||   // MainWindowBatch3Test.cpp

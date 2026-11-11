@@ -28,6 +28,7 @@
 #include "FLIVR/Transform.h"
 #include "Core/FileUtil.h"
 #include "TestRun.h"
+#include "StyleSheets.h"
 
 using namespace FLIVR;
 
@@ -197,20 +198,21 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 {
 	setObjectName("ClipPanel");
 	setMinimumWidth(150);
-	setStyleSheet(
+	setStyleSheet(QStringLiteral(
 		"#ClipPanel { background:#ececec; }"
 		"#ClipPanel QLabel, #ClipPanel QCheckBox { font-size:11px; color:#222; }"
 		"#ClipPanel QPushButton { font-size:11px; padding:1px 4px; min-height:18px; max-height:20px;"
 		"  background:#ffffff; border:1px solid #c4c4c4; border-radius:3px; }"
 		"#ClipPanel QPushButton:pressed { background:#dcdcdc; }"
 		"#ClipPanel QPushButton:disabled { color:#999; }"
-		"#ClipPanel QComboBox { font-size:11px; min-height:18px; max-height:20px; background:#fff; }"
+		"#ClipPanel QComboBox { font-size:11px; min-height:18px; max-height:20px; background:#fff;%1 }"
 		"#ClipPanel QSpinBox, #ClipPanel QDoubleSpinBox { font-size:11px; padding:0 1px; min-height:16px;"
 		"  max-height:20px; background:#fff; border:1px solid #c4c4c4; }"
 		"#ClipPanel QSlider::groove:vertical { width:4px; background:#9ab8e8; border-radius:2px; }"
 		"#ClipPanel QSlider::handle:vertical { height:12px; width:12px; margin:0 -5px; border-radius:6px;"
 		"  background:#fafafa; border:1px solid #969696; }"
-		"#ClipPanel QSpinBox[spinOnly=\"true\"] { color:transparent; border:none; background:transparent; }");
+		"#ClipPanel QSpinBox[spinOnly=\"true\"] { color:transparent; border:none; background:transparent; }")
+		.arg(VVDQtComboSelectionColors()));
 
 	auto makeSmall = [](QWidget* w) { w->setAttribute(Qt::WA_MacSmallSize, true); };
 
@@ -227,6 +229,7 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 	QLabel* dm = new QLabel("Display Mode:", this);
 	v->addWidget(dm, 0, Qt::AlignHCenter);
 	m_mode = new QComboBox(this);
+	m_mode->setObjectName("clip_mode");
 	m_mode->addItems({"Normal", "Frame", "LowTrans", "LowTransBack", "NormalBack"});
 	m_mode->setCurrentIndex(m_plane_mode);
 	m_mode->setMinimumWidth(90);
@@ -287,9 +290,11 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 	const char* pn[3] = {"YZ", "XZ", "XY"};
 	for (int a = 0; a < 3; ++a) {
 		m_planeBtn[a] = new QPushButton(pn[a], this);
+		m_planeBtn[a]->setObjectName(QString("clip_slab_btn_%1").arg(a));
 		m_planeBtn[a]->setMinimumWidth(28);
 		btns->addWidget(m_planeBtn[a], 1);
 		m_distBox[a] = new QSpinBox(this);
+		m_distBox[a]->setObjectName(QString("clip_slab_dist_%1").arg(a));
 		m_distBox[a]->setButtonSymbols(QAbstractSpinBox::NoButtons);
 		m_distBox[a]->setRange(0, 100000);
 		m_distBox[a]->setValue(1);
@@ -357,6 +362,8 @@ ClipPanel::ClipPanel(QWidget* parent) : QWidget(parent)
 			if (!m_blocked) EditPlane(a, 1, m_maxBox[a]->value()); });
 		connect(m_linkChk[a], &QCheckBox::clicked, this, [this, a](bool on) { OnLinkToggled(a, on); });
 		connect(m_planeBtn[a], &QPushButton::clicked, this, [this, a] { OnPlaneButton(a); });
+		connect(m_distBox[a], &QSpinBox::editingFinished, this, [this] {
+			if (!m_blocked) StoreDist(); });
 		connect(m_rotBox[a], QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
 			[this, a](double d) { OnRotEdit(a, d); });
 		// wx OnXRotChange: slider -> "%.1f" text -> OnXRotEdit
@@ -393,6 +400,24 @@ int ClipPanel::GetDist(int a) const
 	const long v1 = long(m_minBox[a]->value());
 	const long v2 = long(m_maxBox[a]->value());
 	return int(std::labs(v2 - v1));
+}
+
+// The YZ / XZ / XY slab widths in the boxes: kept where GetSettings reads
+// them (the view with "Sync All Chan.", the group with "Sync Group") and in
+// the selected volume / mesh (wx OnYZClipBtn)
+void ClipPanel::StoreDist()
+{
+	ClippingLayer* l = Layer();
+	if (!l)
+		return;
+	int d[3];
+	for (int a = 0; a < 3; ++a)
+		d[a] = m_distBox[a]->value();
+	l->SetClipDistance(d[0], d[1], d[2]);
+	if (ViewSync())
+		m_canvas->SetClipDistance(d[0], d[1], d[2]);
+	else if (GroupSync())
+		m_group->SetClipDistance(d[0], d[1], d[2]);
 }
 
 // wx OnSliderRClick: a right click on the low (x1) slider sets x2 = x1 + 1,
@@ -1017,7 +1042,15 @@ void ClipPanel::OnPlaneButton(int a)
 	CalcBoundingBoxDimensions(bd[0], bd[1], bd[2]);
 	int res[3];
 	for (int i = 0; i < 3; ++i) res[i] = int(std::round(bd[i]));
+	// widths typed without Return (keyboard tracking is off): the button
+	// does not take the focus, so the boxes have not read their text yet
+	for (QSpinBox* b : m_distBox)
+		b->interpretText();
 	const long dist = m_distBox[a]->value();
+	// before EditPlane: with "Sync All Chan." / "Sync Group" each EditPlane
+	// refreshes the pane (GetSettings), which reads the widths from the view
+	// / group; wx kept them in the volume only, and the box went back to 1
+	StoreDist();
 
 	for (int o = 0; o < 3; ++o)
 	{
@@ -1042,13 +1075,6 @@ void ClipPanel::OnPlaneButton(int a)
 			EditPlane(a, 1, res[a] * m_factor[a]);
 		}
 		SetLink(a, true);
-		if (ClippingLayer* l = Layer())
-		{
-			int d[3];
-			l->GetClipDistance(d[0], d[1], d[2]);
-			d[a] = int(dist);
-			l->SetClipDistance(d[0], d[1], d[2]);
-		}
 	}
 	else
 	{
@@ -1433,21 +1459,13 @@ void ClipPanel::OnSyncGroup(bool on)
 // defaults (wx LoadDefault / SaveDefault)
 // ---------------------------------------------------------------------------
 
+// wx LoadDefault restores the Display Mode last used (plane_mode). Here it
+// starts as Frame in every session, as "Sync All Chan." starts off (wx saves
+// link_channels but does not restore it): a mode picked once, e.g. LowTrans,
+// came back on every start and with every project saved meanwhile. SaveDefault
+// still writes both keys for the wx app, which reads the same file.
 void ClipPanel::LoadDefault()
 {
-	const VVDString dft = ClipDefaultFile(false);
-	vvd::IniFile fconfig;
-	if (!vvd::FileExists(dft) || !fconfig.Load(dft))
-		return;
-	long ival;
-	if (fconfig.Read(L"plane_mode", &ival) && ival >= 0 && ival < m_mode->count())
-	{
-		QSignalBlocker b(m_mode);
-		m_mode->setCurrentIndex(int(ival));
-		m_plane_mode = int(ival);
-		UpdateCanvasDisplay();
-	}
-	// wx: link_channels is saved but not restored
 }
 
 void ClipPanel::SaveDefault()

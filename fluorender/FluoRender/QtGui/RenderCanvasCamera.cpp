@@ -910,6 +910,9 @@ void RenderCanvas::SetSyncClippingPlanes(bool val, VolumeData* copy)
 	m_link_x_chk = copy->GetClippingLinkX();
 	m_link_y_chk = copy->GetClippingLinkY();
 	m_link_z_chk = copy->GetClippingLinkZ();
+	// the YZ / XZ / XY slab widths too (not in wx): the Clipping Planes
+	// boxes keep their numbers when "Sync All Chan." is turned on
+	copy->GetClipDistance(m_clip_dist_x, m_clip_dist_y, m_clip_dist_z);
 	std::vector<Plane*>* planes = VolumePlanes(copy);
 	if (!planes) return;
 	for (int i = 0; i < 6; i++)
@@ -926,6 +929,7 @@ void RenderCanvas::SetSyncClippingPlanes(bool val, MeshData* copy)
 	m_link_x_chk = copy->GetClippingLinkX();
 	m_link_y_chk = copy->GetClippingLinkY();
 	m_link_z_chk = copy->GetClippingLinkZ();
+	copy->GetClipDistance(m_clip_dist_x, m_clip_dist_y, m_clip_dist_z);
 	std::vector<Plane*>* planes = MeshPlanes(copy);
 	if (!planes) return;
 	for (int i = 0; i < 6; i++)

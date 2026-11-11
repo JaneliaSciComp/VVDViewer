@@ -1037,7 +1037,7 @@ private:
 	int m_clip_dist_x = 1, m_clip_dist_y = 1, m_clip_dist_z = 1;
 	bool m_draw_clip = false;
 	int m_clip_mask = -1;
-	int m_clip_plane_mode = 0;
+	int m_clip_plane_mode = 1;   // Frame, as the Clipping Planes pane at start
 	bool m_clip_chann_link = false;
 	int m_clip_sel_type = -1;
 	VolumeData* m_clip_vd = nullptr;

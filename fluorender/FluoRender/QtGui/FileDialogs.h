@@ -20,17 +20,26 @@
 //   Save Project  VRenderFrame::OnSaveProject + CreateExtraControlProjectSave
 //     Embed all files in the project folder  VRenderFrame::m_vrp_embed (session)
 //     Compression                            VRenderFrame::m_save_compress (settings "/save cmp")
-//   Open Mesh / Open Project: no extra controls in wx (plain dialogs here too).
+//   Open Mesh / Open Project / Save Mesh / Save Annotations: no extra controls
+//   in wx (the platform dialogs here too).
 //
-// Testing aids (Exec):
+// Testing aids (Exec; the platform dialogs become Qt's own under them):
 //   VVD_QT_GRAB_FILEDLG=<dir>          picture of each dialog: <dir>/filedlg_<name>.png
 //   VVD_QT_FILEDLG_OPTS_<NAME>=k=v,..  set option controls (by object name) through
 //                                      the same click / edit path as the mouse;
 //                                      filter=<i> selects the i-th file type
 //   VVD_QT_FILEDLG_FILE_<NAME>=a;b     accept with these files (else: cancel after the
-//                                      picture, or wait for the user)
+//                                      picture, or wait for the user); "<dir>/"
+//                                      accepts the name in the box, in <dir>
+//   VVD_QT_FILEDLG_NATIVE_<NAME>=1     SaveFile keeps the platform dialog: the file
+//                                      it opens with is logged (LastOpened, no
+//                                      selection), then it is cancelled (Qt cannot
+//                                      accept the macOS panel from code)
 // <NAME> = OPENVOLUME, SAVEVOLUME, SAVESEGMENTED, BAKEVOLUME, EXPORTMETA,
-// SAVEPROJECT, OPENMESH, OPENPROJECT.
+// SAVEPROJECT, OPENMESH, OPENPROJECT, SAVEMESH, SAVEANNOTATIONS.
+// A scripted dialog logs the name in its box when it opens (LastOpened) and
+// puts back the user's Qt file dialog settings (QtProject / FileDialog: last
+// folder, history, view), which QFileDialog writes when it is destroyed.
 
 #include <QString>
 #include <QStringList>
@@ -68,9 +77,28 @@ namespace FileDialogs
 	bool GetCropToClip();         // m_crop_output_image
 	int GetScaleLevel();          // m_save_scale_level
 	// name: test-hook name (SAVEVOLUME, ...). filter_index: index of the
-	// chosen filter in filters (wx GetFilterIndex). Returns "" when cancelled.
+	// chosen filter in filters (wx GetFilterIndex). data_name: the volume's
+	// name in the Workspace; the dialog starts with DefaultSaveName of it and
+	// that format, the name without its extension selected (wx: an empty
+	// name, the first format). Returns "" when cancelled.
 	QString SaveVolume(QWidget* parent, const char* name, const QString& title, const QStringList& filters,
-		int* filter_index, const QString& default_file = QString());
+		int* filter_index, const QString& data_name = QString());
+	// The file name a Save dialog starts with for data (a volume, mesh or
+	// annotations) named data_name in the Workspace: the extension of the
+	// file it was read from, at the end of the name or before the "_..."
+	// that channels, copies and transforms add ("a.nrrd_Ch2", "a.nrrd_1",
+	// "a.tif_WARPED", "b.obj_1"), goes to the end. *filter_index: the first
+	// of filters with that extension, else 0; the name ends with that
+	// filter's extension ("a.czi_Ch2" -> "a_Ch2.tif", "n.swc" -> "n.obj").
+	// Folder separators and characters Windows does not allow become "_".
+	QString DefaultSaveName(const QString& data_name, const QStringList& filters, int* filter_index);
+
+	// ---- Save Mesh Data / Save Annotations (wx: a plain wxFileDialog with
+	// an empty name): the platform save dialog in the last folder used,
+	// starting with DefaultSaveName(data_name) and that file type. name:
+	// test-hook name (SAVEMESH, SAVEANNOTATIONS). Returns "" when cancelled.
+	QString SaveFile(QWidget* parent, const char* name, const QString& title, const QString& filter,
+		const QString& data_name);
 
 	// ---- Save Project
 	QString SaveProject(QWidget* parent, const QString& dir, bool& embed,
@@ -82,6 +110,10 @@ namespace FileDialogs
 
 	// exec with the testing aids above; returns QDialog::exec()
 	int Exec(QFileDialog& dlg, const char* name);
+	// testing: the file name box of the last scripted dialog when it opened
+	// (its text and the selected part), the file type and the folder then
+	struct OpenedState { QString name, selected, type, folder; };
+	OpenedState LastOpened();
 
 	// ---- wx DatasetSelectionDialog (VRenderFrame::LoadVolumes, Zarr / N5):
 	// "Choose Zarr/N5 datasets", one check box per dataset (all unchecked;

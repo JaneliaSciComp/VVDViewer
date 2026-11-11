@@ -262,7 +262,13 @@ void MainWindow::WireView(ViewSlot& slot)
 		if (m_trace_dlg) m_trace_dlg->CellLink(false); });
 	connect(brush, &BrushTool::brushSelected, this, [this, brush](int m) { if (brush == m_brush_tool) m_tree->SelectBrush(m); });
 	// clicks in the view (wx OnMouse: LeftUp -> Pick, LeftDClick -> SelSegVolume)
-	connect(c, &RenderCanvas::pickRequested, this, [this, c](const QPoint& pos) { ActivateCanvas(c); PickAt(pos); });
+	// a click on a ruler point also selects the ruler's row in the
+	// Measurement list (not in wx; Edit mode: RulerTool::MousePress)
+	connect(c, &RenderCanvas::pickRequested, this, [this, c, ruler](const QPoint& pos) {
+		ActivateCanvas(c);
+		if (ruler) ruler->PickRulerAt(pos.x(), pos.y());
+		PickAt(pos);
+	});
 	// wx OnMouse LeftDClick: a ruler point under the pointer is centred by
 	// an animated move (StartManipulation with the object translation that
 	// brings the point to the object centre)
@@ -497,6 +503,7 @@ QString MainWindow::CreateView()
 	slot->ruler->SetRulerUseTransf(m_settings->GetRulerUseTransf());
 	slot->ruler->SetRulerTimeDep(m_settings->GetRulerTimeDep());
 	slot->ruler->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+	slot->ruler->SetDrawStartIds(m_settings->GetRulerStartIds());
 	slot->ruler->SetTextColorMode(m_settings->GetTextColor());
 	slot->ruler->SetFont(m_settings->GetFontPath(), m_settings->GetTextSize());
 	// a view sharing the rotation link (Settings "Link all rendering views'
