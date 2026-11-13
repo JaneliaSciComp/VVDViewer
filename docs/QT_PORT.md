@@ -44,6 +44,23 @@ or Vulkan SDK. The app sets `VK_DRIVER_FILES` to the bundled ICD unless the
 user set it. Distribution outside your own Macs needs a Developer ID and
 notarization (not set up).
 
+Two options for local builds of VVDViewerQt on macOS, both off by default
+(keep them off for release packaging):
+* `VVD_QT_QUICK_BUNDLE=ON`: after one complete run, macdeployqt is skipped
+  while the bundle has every Qt framework the executable links and Qt is
+  unchanged, and `macos_bundle_fixup.sh` only rewrites, checks and signs the
+  files changed since its last complete run (the relinked executable, the
+  libraries vcpkg's applocal step copies in again), then seals the bundle.
+  Stamp files next to the bundle (`VVDViewerQt.deployqt-stamp`,
+  `VVDViewerQt.fixup-stamp`) record the last complete runs; delete them for a
+  complete run. Resources are copied only when they differ (always).
+  Without it the bundle steps take about ten minutes on a Mac whose
+  security agents scan every file and process.
+* `VVD_QT_STAGED_BUNDLE=ON`: the bundle is built in `<build>/stage` and,
+  once every step has succeeded, cloned to `<build>/bin/VVDViewerQt.app` in
+  one step (`cmake/macos_publish_bundle.sh`): the app there is never
+  half-built, and a copy of it that is running keeps working.
+
 With the Homebrew Qt the bundle needs macOS 15: the app is linked for 14.0,
 but QtSvg, the Qt plugins and the Homebrew libraries Qt loads are built for
 15.0.
@@ -129,7 +146,7 @@ detailed sections. Open items are listed under "Known issues / not done".
 | Projects (.vrp) | done | wx-compatible load / save, round trip loses no wx key ("Projects") |
 | Start-up / command line / drop | done | `-d`, `-m`, `-p`, `vvd:` URLs, Finder open, folder drop |
 | Paint brush / selection / masks | done | all strokes, undo / redo, erase / extract, calculations, components, index / NA volumes |
-| Measurement | done + extensions | rulers, transforms (TPS ... Cells), Start / End Volume, Auto-select, Target: grid ("Measurement and warps") |
+| Measurement | done + extensions | rulers, transforms (TPS ... Cells), Start / End Volume, Auto-select, Show Rulers, Target: grid ("Measurement and warps") |
 | Analyze dialogs | done | Noise Reduction, Counting and Volume, Colocalization, Convert, Information |
 | Color Depth MIP | done (new, both apps) | "Save Color Depth MIP..." in the volume menu: native port of the Fiji macro Color_Depth_MIP_batch_0308_2021, pixel-identical output ("Color Depth MIP") |
 | Components & Tracking | done | `TraceDialog`, all pages ("Components & Tracking") |
@@ -230,6 +247,25 @@ engine changes that also change the wx app are under "Bug fixes".
   so with the end points off screen - e.g. landmarks from a volume to a
   template far away - the rulers on screen showed no ID. Not for locators
   (their ID is at their only point).
+* **Show Rulers** check box (new, after Show ID at start) and an **ON/OFF
+  check box left of each ID** in the list (new): Show Rulers unchecked hides
+  every ruler and locator of the view, checked shows them all; a row's box
+  shows or hides that one ruler, so a few can be kept on screen (hide all,
+  then check those). Both set the ruler's display flag, which projects
+  already save as `display` (wx writes and reads it but always draws every
+  ruler), so a saved project keeps the rulers hidden. A hidden ruler is not
+  drawn and its points cannot be grabbed, clicked, double-clicked or have
+  balloons toggled (`RulerTool::IsRulerDrawn`, `GetEditingRulerPoint`); its
+  row stays, unchecked and in grey, and it is still exported and used by
+  Apply Transform. Rulers added later are shown, and so is a hidden
+  unfinished ruler a click adds a point to. With some rulers hidden Show
+  Rulers is partly checked, and a click shows them all; it is disabled
+  while the view has no rulers (`RulerTool::SetRulersShown` /
+  `GetRulersShown`). A double click on a row's box toggles it twice (it does
+  not edit the name); Space stays the view's frame step (it does not toggle
+  the box: the view handles it in every window). The boxes are drawn by
+  `RulerIdDelegate` (MeasureDialog.cpp): the macOS style of Qt 6.11 draws
+  the check box of an item view's first row only (see the Legend).
 * **The list follows the view** (new): the ruler picked in the view is the
   selected row of the list and scrolled into view - a point pressed or
   dragged in Edit mode, a point clicked in the camera mode, the ruler a
@@ -241,13 +277,20 @@ engine changes that also change the wx app are under "Bug fixes".
   jumped to the top, or put the selected row at the bottom). wx neither
   selects nor keeps the position.
 * **Auto-select** check box (new, on by default, saved as
-  `/ruler auto select`): each ruler click, Edit-mode drag and Shift-paint
-  ruler press first selects in the tree the displayed volume with the
-  brightest voxel on the click ray (Maximum Intensity on the value after the
-  transfer function, inside the clipping planes, across all groups; ties keep
-  the current volume) and places the point on it with the pointing method
-  (View Plane: on the view plane, the volume still recorded). Properties and
-  Clipping follow the selection. No hit = the normal behaviour.
+  `/ruler auto select`): each ruler click and Shift-paint ruler press first
+  selects in the tree the displayed volume under the pointer and places the
+  point on it with the pointing method (View Plane: on the view plane, the
+  volume still recorded). Compared after each volume's transfer function,
+  inside its clipping planes, across all groups: with Accumulated Intensity
+  the volume whose surface the click ray meets first (the one in front),
+  otherwise the one with the brightest voxel on the ray, equal ones going
+  to the one whose brightest voxel is nearest (binary masks are all
+  equal); equal distances keep the current volume. Properties and Clipping
+  follow the selection. No hit = the normal behaviour. An Edit-mode drag
+  places the point on that volume on every move but keeps the selection
+  (and the Clipping Planes pane); the volume is selected after the release
+  only when the ruler is drawn with it but not with the current volume
+  (e.g. a locator moved onto another volume).
 * **Transform "Cells: shape preserving"** (new): applies BigWarp landmarks to a
   segmented (label or binary) volume without distorting the cells. A thin
   plate spline that matches every landmark exactly can stretch, shear or fold
@@ -368,6 +411,57 @@ engine changes that also change the wx app are under "Bug fixes".
   volume's widths (as its planes and links). Qt: a width confirmed with
   Return (or by leaving the box) is kept without pressing the button, and
   the button uses a width typed without Return (`ClipPanel::StoreDist`).
+* **The whole view went black after a resize** (both apps, macOS): MoltenVK
+  1.4.0 / 1.4.1 build a swapchain by setting the CAMetalLayer's
+  drawableSize and then, when an image of the old swapchain is still on its
+  way to the screen, set it to 1x1 to flush that image
+  (`MVKSwapchain::initCAMetalLayer`; MoltenVK main flushes first). Every
+  frame was then drawn into a 1x1 drawable, so only the background colour
+  showed. The rebuild for the suboptimal acquire hit the same flush when a
+  frame had just been presented, and after a second suboptimal swapchain
+  the rebuilds stopped (`suboptimalPersists`) until the next resize; zooming
+  did not bring the view back. Large projects made it likely: a pane hidden,
+  or the Properties pane refitted (a channel's ON/OFF or colour, another
+  selection), then zooming while frames were still being drawn. The
+  layer's drawable size is now put back after each rebuild and checked at
+  each frame (`VulkanExampleBase::restoreSurfaceDrawable`), and a frame
+  rebuilds the swapchain first whenever the surface has another size. Qt:
+  the CAMetalLayer follows the window only after the resize event, so the
+  rebuild of that event got the old size and the old image stayed
+  stretched over the view until the next redraw; after a resize, frames
+  are now drawn until the swapchain has the view's size.
+* **Objects grew when a pane was hidden** (Qt; wx still does): the zoom
+  fits the view's shorter side (Ortho) or its height (perspective), so a
+  taller view drew everything larger. A resize of the view now changes the
+  zoom so that the objects keep their size on the screen (a pane shown or
+  hidden, the Properties pane refitting, the window resized); a project's
+  zoom is kept while its pane layout settles, and so is the zoom of a new
+  scene (`RenderCanvas::KeepZoomOnResize`).
+* **Accumulated Intensity put ruler points below the surface** (Qt; wx
+  still has (2) and (3), it has no Auto-select): (1) with Auto-select, a click
+  went onto the volume with the brightest voxel along the ray, and equal
+  ones kept the current volume; overlapping binary masks are all equal, so
+  a click on the mask in front put the point onto the current mask behind
+  it. Auto-select now takes the surface the ray meets first (Accumulated
+  Intensity) or breaks equal brightness by distance (other methods).
+  (2) The accumulated opacity used the volume's Sample Rate as its
+  exponent: at 0.18 a half-bright voxel added a quarter of the opacity it
+  adds at 1, and the point went several voxels deeper; each sample's value
+  is now its opacity per voxel of path (about the old result at Sample Rate
+  1). (3) The ray took fixed steps in the 0..1 texture space: along the
+  long axis of a 2953x625x625 volume 3.4 voxels at a time, past the
+  surface of thin objects; now at most half a voxel along every axis
+  (`RulerTool::AutoSelectCandidate`, `GetPointVolume`).
+* **Clipping looked cancelled while a ruler point was dragged** (Qt, with
+  Measurement Auto-select): every move of an Edit-mode drag selected the
+  volume under the pointer, so the Clipping Planes pane switched to that
+  volume and showed its planes (with "Sync All Chan." off, e.g. the full
+  range of an unclipped channel instead of the slab set on the other), and
+  the rulers drawn were those inside its planes. The drag now places the
+  point on the volume under the pointer without selecting it; the dragged
+  ruler is drawn while it moves, and after the release the volume is
+  selected only when the ruler would not be drawn otherwise
+  (`RulerTool::AutoSelectCandidate`, `IsRulerDrawn`).
 * **Edit mode could not grab a ruler point outside the current volume**
   (both apps): Select & move only took points inside the current volume's
   clipping planes, but a ruler is drawn with all its points once one of
@@ -619,6 +713,13 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   which were shown and brings exactly those back; its drop-down has Toggle All
   Panels + one check item per pane; check marks follow the real pane
   visibility (title-bar close included). Projects save / restore /ui_layout.
+  Not in wx: a new session shows every pane and the main toolbar, with
+  Measurement (a floating window) closed; the panes' sizes and places come
+  from the last session's window state, their ON/OFF does not
+  (`MainWindow::ShowDefaultPanes`). Projects keep every pane's ON/OFF: also
+  `ui_movie_view` (Record/Export) and the real `ui_measure_view` (wx writes
+  no `ui_movie_view` and always `ui_measure_view=0`); opening a project
+  applies them over the session's panes.
 * **Window size** (`MainWindow::FitToScreen`, MainWindowLayout.cpp, after
   restoreState and once shown): the restored geometry is clamped to the
   screen's available area, floating docks restored off-screen are moved back.
@@ -657,12 +758,21 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   replacing data does (wx InitView(INIT_BOUNDS | INIT_CENTER)).
 * **Workspace tree** (`TreePanel`, full wx DataTreeCtrl port): view → volume
   groups / meshes / mesh groups / annotations / segment trees (volumes) and
-  SWC segment trees (meshes, built on expansion as wx), wx bulb icons,
+  SWC segment trees (meshes, built on expansion as wx), wx bulb icons (not
+  in wx: a volume's / mesh's bulb has its colour at full brightness, so a
+  dim channel colour still shows its hue; grey and black give white;
+  `QtGui/SwatchColor.h`, also the squares of the legend in the view),
   visibility history (PushVisHistory / Undo / Redo, 10 steps),
   ShowAllDatasets / HideOtherDatasets / HideSelectedItem, single selection,
   toggle (double click / Enter / button), rename, Delete key, every wx context
   menu, drag & drop as wx OnEndDrag (a volume dropped on the view or empty
-  space gets a new group through OrganizeLayers). Real layer list in
+  space gets a new group through OrganizeLayers). Not in wx: a group
+  dragged in its view lands before or after the view-level item under the
+  pointer, by the half of that item's rows (an expanded group's volumes
+  included) the pointer is in, or at the end below every row; a line shows
+  where (`TreePanel::GroupDropTarget`). wx moved a group only when it was
+  dropped on another group's own row, and then always below it when coming
+  from above. Real layer list in
   `RenderCanvasLayers.cpp` (wx m_layer_list API); groups drawn per group with
   their blend mode. Scroll position: restored after the selection and the
   layout (see "Bug fixes").
@@ -689,8 +799,12 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   (`VolumeRenderer::prepareVRayPipeline` uses peel 0 for colormap 2). Mesh shadows
   use the Settings shadow direction too (was 0).
 * **Overlays** (`ViewOverlays`): Center, Info, Legend, scale bar, colormap,
-  annotation labels (`DrawAnnotations`); an annotation layer that carries a
-  mesh (the `Mesh:` line of its file) is drawn as that mesh, ADDed with the
+  annotation labels (`DrawAnnotations`). Not in wx: a legend square (and a
+  selected name) has the colour of the Workspace bulb, the data colour at
+  full brightness (`VVDSwatchColor`); wx drew the colour itself, so a dim
+  channel gave a black square in the view and in captures. An annotation
+  layer that carries a mesh (the `Mesh:` line of its file) is drawn as that
+  mesh, ADDed with the
   layer's alpha (`RenderCanvas::DrawAnnotationMesh`). Settings gradient
   background (wx DrawGradBg).
 * **Capture** (`CaptureDialog` = wx OnCapture save dialog + Additional
@@ -1577,7 +1691,15 @@ command line.
 | `rulerauto` | Auto-select on two separated volumes: clicks, Edit drag, View Plane locator, empty space, paint-ruler press, off = unchanged; `a01_measure_list_auto.png` |
 | `rulermove` | Edit mode on a 2-point ruler between two volumes that do not overlap: start and end point grabbed with either volume current, start point dragged with the end volume current; `rm01_view.png` |
 | `rulerid` | Show ID at start: a 2-point ruler (start lower right, end upper left) and a locator; captures off / on / off: only the start point's surroundings change, the ID lies to the lower right of the start (away from the ruler), off again is identical; the check box drives the ruler tool and the Settings value (`id_off.png`, `id_on.png`) |
+| `rulershow` | Show Rulers and the check box per ID: Show Rulers checked and disabled without rulers; a 2-point ruler and a locator, then unchecked: every ruler hidden, the view identical to the one without rulers, no point grabbed or picked (an Edit press on the locator selects nothing), the rows stay, unchecked and grey; a click on the locator's box in the list shows only it (only it drawn, its point grabbed again); a double click on a box toggles twice without opening the name editor; a locator added then is shown, Show Rulers partly checked; a click shows all, the next hides all; a hidden unfinished polyline is shown when a click adds its next point; every row's box is drawn, checked or unchecked (list grabs); a saved project has `display=0` and opens with the rulers hidden (`rs_none.png`, `rs_shown`, `rs_hidden`, `rs_one`, `rs_partial`, `rs_all`, `rs_list_*`, `rs_dialog`) |
+| `rulerdepth` | P.nrrd Q.nrrd G.nrrd: two binary blocks on one grid, one behind the other along the view, the one behind current; a click with Auto-select goes onto the block in front with Accumulated Intensity, Maximum Intensity (equal brightness) and View Plane, in perspective and Ortho, within 1 voxel of its front face; an Edit drag stays on that face; the uniform half-bright slab G: the Accumulated point is within 1.5 voxels of its front face at Sample Rate 0.18, 1 and 2 (the same depth at all three); logs what a camera-mode click selects |
+| `cellsview` | After Apply Transform with "Cells: shape preserving" (12 landmarks inside the source box, `VVD_QT_CV_SRC`, target `VVD_QT_CV_TARGET` same / vol:<name>, device `VVD_QT_CV_DEVICE`, `VVD_QT_CV_ORTHO`, `VVD_QT_CV_FOG` Depth Int.): every channel in turn off, on and recoloured (tree Toggle Visibility, Properties colour box); each capture still shows the channels that are on, not much darker than before the transform (`cv_before.png`, `cv_after`, `cv_v<i>_off/on/color`) |
+| `resizeview` | Opens the files given (e.g. a project), then rounds of: Properties hidden / shown, wheel zoom, both at once, the window resized, a channel off / on / recoloured, Properties hidden / shown while frames are drawn back to back (with and without zooming). After each: the capture shows the channels, the CAMetalLayer's drawable has the swapchain's size and the swapchain the view's, and a resize alone keeps the objects' size on the screen (`VVD_QT_RV_CYCLES` rounds, `VVD_QT_RV_WIN` window size; `VVD_VK_OLD_RESIZE=1` for the swapchain handling before the fix) |
+| `treegroups` | Six volumes put into G1, G2, G3 by dragging them onto the groups, every group expanded: G3 over G1's last volume shows the line under G1's rows (gone when the drag leaves); G3 dropped there lands after G1, G1 on G2's first volume (upper half) before G2, G1 on its own volume stays, G3 below every row moves to the end |
+| `bulbs` | Workspace bulb colours: the first volume coloured dim purple (0.2 0.05 0.25), dim grey and almost black; its bulb has (204 51 255), white and white, never the dim colour itself. Then the legend in the view (that volume only): captured with a dim violet (0.0130 0.0020 0.0167, a channel colour at luminance 0.017), dim purple and almost black, every pixel of its square is (199 31 255), (204 51 255) and white |
+| `panes` | Two runs. `VVD_QT_PANES_PHASE=1 VVD_QT_PANES_STATE=<file>`: every pane and the main toolbar hidden, Measurement opened, the window state written to `<file>`. Then `VVD_QT_STATE_HEX=<file>`: after the restored state has settled every pane and the toolbar are shown and Measurement is closed; a project saved with Record/Export and Properties off and Measurement open has `ui_movie_view=0`, `ui_prop_view=0`, `ui_measure_view=1`, and opening it brings that back (`panes.vrp`) |
 | `rulersel` | Measurement list and the view (one or two volumes): 36 View Plane locators clicked in a grid inside the volume (each new one the selected, shown row; the list scrolls), Edit press on locator 30 with the list at the top, Edit drag of locator 20 (row kept, list not scrolled, the row shows the new position), camera-mode click on locator 3 and beside it, a new locator with the list at the top, the selected row's colour (`rulersel_list.png`) |
+| `rulerclip` | Edit-mode drag with Auto-select on two volumes (96x80x40), volume A clipped (x 19..76, z 18..23 linked): without sync (A only), with Sync All Chan. and with Sync Group; View Plane, Maximum Intensity and Accumulated. A locator inside A's planes dragged to where B is brighter: the point goes onto B, A stays selected (tree, Clipping Planes, current volume) and the pane keeps A's ranges on every move, the locator is drawn, no plane of A or B changes; after the release A is still selected when the point is inside A's planes, else B (the locator stays drawn); the view is the same before, during and after the drag (`rc<n>_before.png`, `_drag`, `_after`) |
 | `clip` | Clipping Planes with two volumes (96x80x40): Display Mode Frame at start (also with a saved `plane_mode=2`) and after opening a project saved in LowTrans (the file keeps `plane_mode=2`); slab widths typed into the YZ / XZ / XY boxes (without Return, then the button; with Return) kept with Sync All Chan. off and on, across selections and when the sync is turned on and off; the Display Mode list and every other combo box shown highlight the item under the pointer (`clip_mode_list.png`) |
 | `savevol` | Defaults with fresh settings (Measurement Auto-select on, Clipping Planes Sync All Chan. off), then Save in the volume menu through the scripted dialog: names typed without an extension get .nrrd / .tif / the TIFF sequence pages, w.nrrd with Muti-page Tiff chosen saves NRRD, x_0.5um gets .nrrd, y.tif stays y.tif; the names the dialogs start with (`DefaultSaveName` cases); toolbar Save As, Save 3D Painted Region and Bake open with C1.nrrd ("C1" selected, Nrrd file) and save it as it is filled in, Muti-page Tiff chosen makes it C1.tif; Save in the mesh and annotations menus: the `DefaultSaveName` cases (neuron.swc -> neuron.obj, brain.obj_1 -> brain_1.obj, Antn_1 -> Antn_1.txt), brain.obj and spots (named inside spots_file.txt) open as brain.obj / spots.txt and save as filled in, typed_mesh gets .obj, the macOS panel (`VVD_QT_FILEDLG_NATIVE_SAVEMESH`) opens with brain.obj in the last folder used; the user's Qt file dialog settings unchanged (`filedlg_savevolume.png`) |
 | `warp` | Import `VVD_QT_WARP_CSV` + Apply Transform (`VVD_QT_WARP_TTYPE`, `_LAMBDA`, `_INTERP`; optional `_SRC` = volume index, `_TARGET` = auto / same / extend / volume index), result voxels to `VVD_QT_WARP_OUT` (raw), the source's and result's origins |

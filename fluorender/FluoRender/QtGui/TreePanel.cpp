@@ -11,6 +11,8 @@
 #include <QPixmap>
 #include <QSignalBlocker>
 #include <QDrag>
+#include <QPainter>
+#include <QPen>
 #include <QMimeData>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -25,12 +27,15 @@
 #include <QStringList>
 
 #include <climits>
+#include <cmath>
+#include <algorithm>
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/lexical_cast.hpp>
 
 #include "DataManager.h"
 #include "RenderCanvas.h"
+#include "SwatchColor.h"
 #include "Formats/brkxml_reader.h"
 #include "Formats/brkxml_writer.h"
 #include "img/icons.h"
@@ -49,17 +54,21 @@ namespace
 	}
 #define VVD_ICON(name) IconFromPng(icons::name##_png, (int)sizeof(icons::name##_png))
 
-	QColor ToQColor(const FLIVR::Color& c)
+	// a bulb's colour: the data colour at full brightness (VVDSwatchColor,
+	// as the squares of the legend in the view)
+	QColor BulbColor(const FLIVR::Color& c)
 	{
-		return QColor((unsigned char)(c.r() * 255), (unsigned char)(c.g() * 255), (unsigned char)(c.b() * 255));
+		const FLIVR::Color s = VVDSwatchColor(c);
+		auto u = [](double v) { return (int)std::lround(v * 255.0); };
+		return QColor(u(s.r()), u(s.g()), u(s.b()));
 	}
-	QColor VolumeColor(VolumeData* vd) { return ToQColor(vd->GetColor()); }
+	QColor VolumeColor(VolumeData* vd) { return BulbColor(vd->GetColor()); }
 	QColor MeshColor(MeshData* md)
 	{
 		FLIVR::Color amb, diff, spec;
 		double shine, alpha;
 		md->GetMaterial(amb, diff, spec, shine, alpha);
-		return ToQColor(diff);
+		return BulbColor(diff);
 	}
 	QString Q(const VVDString& s) { return QString::fromStdWString(s); }
 	VVDString V(const QString& s) { return VVDString(s.toStdWString()); }
@@ -85,6 +94,10 @@ void DataTreeWidget::startDrag(Qt::DropActions)
 	if (type < TreePanel::TypeVolume || type > TreePanel::TypeSegGroup)
 		return;
 	m_drag_item = item;
+	// a group: our own line between the items it would land between
+	// (TreePanel::GroupDropTarget) instead of Qt's indicator on one row
+	const bool group = type == TreePanel::TypeGroup || type == TreePanel::TypeMGroup;
+	if (group) setDropIndicatorShown(false);
 	auto* drag = new QDrag(this);
 	auto* mime = new QMimeData;
 	mime->setData("application/x-vvd-tree-item", TreePanel::ItemName(item).toUtf8());
@@ -93,6 +106,31 @@ void DataTreeWidget::startDrag(Qt::DropActions)
 	if (!icon.isNull()) drag->setPixmap(icon.pixmap(16, 16));
 	drag->exec(Qt::MoveAction, Qt::MoveAction);
 	m_drag_item = nullptr;
+	SetDropLine(-1);
+	if (group) setDropIndicatorShown(true);
+}
+
+void DataTreeWidget::SetDropLine(int y)
+{
+	if (y == m_drop_line_y) return;
+	m_drop_line_y = y;
+	viewport()->update();
+}
+
+void DataTreeWidget::paintEvent(QPaintEvent* e)
+{
+	QTreeWidget::paintEvent(e);
+	if (m_drop_line_y < 0) return;
+	QPainter p(viewport());
+	p.setPen(QPen(palette().color(QPalette::Highlight), 2));
+	const int y = std::max(1, std::min(viewport()->height() - 1, m_drop_line_y));
+	p.drawLine(QPoint(2, y), QPoint(viewport()->width() - 2, y));
+}
+
+void DataTreeWidget::dragLeaveEvent(QDragLeaveEvent* e)
+{
+	SetDropLine(-1);
+	QTreeWidget::dragLeaveEvent(e);
 }
 
 void DataTreeWidget::dragEnterEvent(QDragEnterEvent* e)
@@ -109,6 +147,13 @@ void DataTreeWidget::dragMoveEvent(QDragMoveEvent* e)
 	{
 		QTreeWidget::dragMoveEvent(e);   // auto-scroll, drop indicator
 		e->acceptProposedAction();        // anywhere, incl. empty space (wx)
+		const QPoint pos = e->position().toPoint();
+		QTreeWidgetItem* target = nullptr;
+		int mode = 0, line = -1;
+		if (m_panel->GroupDropTarget(m_drag_item, itemAt(pos), pos.y(), target, mode, line) && target && target != m_drag_item)
+			SetDropLine(line);
+		else
+			SetDropLine(-1);
 	}
 	else
 		e->ignore();
@@ -127,6 +172,7 @@ void DataTreeWidget::dropEvent(QDropEvent* e)
 	e->setDropAction(Qt::CopyAction);   // never let Qt remove the source
 	e->accept();
 	m_drag_item = nullptr;
+	SetDropLine(-1);
 	// changes the layer model; the tree is rebuilt after the drop returns
 	m_panel->OnEndDrag(src, dst, pos.y());
 }
@@ -1273,11 +1319,78 @@ void TreePanel::DeleteSelection()
 // wx OnEndDrag
 // ---------------------------------------------------------------------------
 
+bool TreePanel::GroupDropTarget(QTreeWidgetItem* src, QTreeWidgetItem* dst, int y,
+	QTreeWidgetItem*& target, int& insert_mode, int& line_y) const
+{
+	target = nullptr;
+	insert_mode = 0;
+	line_y = -1;
+	if (!src) return false;
+	const int st = ItemType(src);
+	if (st != TypeGroup && st != TypeMGroup) return false;
+	QTreeWidgetItem* view = src->parent();
+	if (!view || ItemType(view) != TypeView || view->childCount() == 0) return false;
+	// the bottom of an item's rows: its own, or its last shown descendant's
+	std::function<int(QTreeWidgetItem*)> bottom = [&](QTreeWidgetItem* it) {
+		if (it->isExpanded() && it->childCount() > 0)
+			return bottom(it->child(it->childCount() - 1));
+		return m_tree->visualItemRect(it).bottom();
+	};
+	if (!dst)
+	{
+		// empty space below every row: after the view's last item
+		target = view->child(view->childCount() - 1);
+		insert_mode = 1;
+		line_y = bottom(target);
+		return true;
+	}
+	if (dst == view)
+	{
+		target = view->child(0);
+		line_y = m_tree->visualItemRect(target).top();
+		return true;
+	}
+	QTreeWidgetItem* top = dst;
+	while (top->parent() && top->parent() != view)
+		top = top->parent();
+	if (top->parent() != view)
+		return false;   // another view
+	const int top_y = m_tree->visualItemRect(top).top();
+	const int bottom_y = bottom(top);
+	target = top;
+	insert_mode = y < (top_y + bottom_y) / 2 ? 0 : 1;
+	line_y = insert_mode == 0 ? top_y : bottom_y;
+	return true;
+}
+
 void TreePanel::OnEndDrag(QTreeWidgetItem* src_item, QTreeWidgetItem* dst_item, int mouse_pos_y)
 {
 	// wx: every move stays inside one view (GetView(<view item text>))
 	RenderCanvas* m_canvas = CanvasOf(src_item);
 	if (m_fixed || !m_canvas || !src_item) return;
+	// Qt extension: a group lands before or after the view-level item under
+	// the pointer (GroupDropTarget); wx moved it only when it was dropped on
+	// another group's own row, so with expanded groups it was hard to hit
+	{
+		QTreeWidgetItem* target = nullptr;
+		int insert_mode = 0, line_y = -1;
+		if (GroupDropTarget(src_item, dst_item, mouse_pos_y, target, insert_mode, line_y))
+		{
+			if (!target || target == src_item)
+			{
+				UpdateSelection();
+				return;
+			}
+			const QString name = src_item->text(0);
+			const int type = ItemType(src_item);
+			m_canvas->MoveLayerinView(V(name), V(target->text(0)), insert_mode);
+			QTimer::singleShot(0, this, [this, name, type]() {
+				UpdateTree(name, type);
+				RefreshViews();
+			});
+			return;
+		}
+	}
 	// Qt extension: a volume / mesh dropped onto another view (its item, a
 	// group or an item in it) moves to that view (wx does nothing then)
 	if (dst_item && ItemType(src_item) != TypeView && CanvasOf(dst_item) != m_canvas &&

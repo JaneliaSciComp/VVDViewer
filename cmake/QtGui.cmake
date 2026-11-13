@@ -70,6 +70,16 @@ endif()
 
 set(CMAKE_AUTOMOC ON)
 
+# Faster local builds on macOS (both off for release packaging):
+#  VVD_QT_QUICK_BUNDLE: after one full run, the bundle steps redo only what
+#    changed (the relinked executable, libraries copied in again); macdeployqt
+#    runs again only when the Qt it uses or the Qt modules linked change
+#  VVD_QT_STAGED_BUNDLE: the bundle is built in <build>/stage and, once all
+#    its steps have succeeded, copied to <build>/bin/VVDViewerQt.app in one
+#    step, so the app there is never half-built (an open one keeps running)
+option(VVD_QT_QUICK_BUNDLE "macOS: VVDViewerQt.app bundle steps redo only what changed (local builds)" OFF)
+option(VVD_QT_STAGED_BUNDLE "macOS: build VVDViewerQt.app in <build>/stage, then put it into <build>/bin in one step" OFF)
+
 if(APPLE)
 	add_executable(VVDViewerQt MACOSX_BUNDLE ${qtgui_src} ${qtgui_hdr} ${qt_engine_src})
 	set_target_properties(VVDViewerQt PROPERTIES
@@ -77,6 +87,9 @@ if(APPLE)
 		MACOSX_BUNDLE_GUI_IDENTIFIER "org.janelia.vvdviewer.qt"
 		MACOSX_BUNDLE_BUNDLE_VERSION "${VVD_VERSION}"
 		MACOSX_BUNDLE_SHORT_VERSION_STRING "${VVD_VERSION}")
+	if(VVD_QT_STAGED_BUNDLE)
+		set_target_properties(VVDViewerQt PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/stage")
+	endif()
 elseif(WIN32)
 	add_executable(VVDViewerQt WIN32 ${qtgui_src} ${qtgui_hdr} ${qt_engine_src})
 else()
@@ -162,16 +175,29 @@ set(qtplugin_res
 	${VVDViewer_SOURCE_DIR}/plugin_fiji/fiji/plugins/Apply_Bigwarp_Filter.jar
 	${VVDViewer_SOURCE_DIR}/plugin_nblast/r/nblast_search.R)
 if(APPLE)
+	# unchanged files are not written again (fewer files for the code
+	# signature and for file scanners to look at)
+	if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+		set(_vvd_copy_dir copy_directory_if_different)
+	else()
+		set(_vvd_copy_dir copy_directory)
+	endif()
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Settings" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/CL_code"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/Fonts" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/Fonts"
+		COMMAND ${CMAKE_COMMAND} -E ${_vvd_copy_dir} "${VVDViewer_SOURCE_DIR}/Settings" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources"
+		COMMAND ${CMAKE_COMMAND} -E ${_vvd_copy_dir} "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/CL_code"
+		COMMAND ${CMAKE_COMMAND} -E ${_vvd_copy_dir} "${VVDViewer_SOURCE_DIR}/Fonts" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/Fonts"
 		# masks and LUT of "Save Color Depth MIP..." (ColorDepthMIP.cpp)
-		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/ColorDepthMIP" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/ColorDepthMIP"
+		COMMAND ${CMAKE_COMMAND} -E ${_vvd_copy_dir} "${VVDViewer_SOURCE_DIR}/ColorDepthMIP" "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/ColorDepthMIP"
 		# plugin files (wx StartFiji copies these from Resources into Fiji;
 		# runNBLAST runs Resources/nblast_search.R)
-		COMMAND ${CMAKE_COMMAND} -E copy ${qtplugin_res} "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/"
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${qtplugin_res} "$<TARGET_FILE_DIR:VVDViewerQt>/../Resources/"
 		COMMENT "Copying VVDViewerQt resources")
+	# VVD_QT_QUICK_BUNDLE: macos_deployqt.sh / macos_bundle_fixup.sh redo
+	# only what changed since their last run (stamp files next to the bundle)
+	set(_vvd_bundle_env)
+	if(VVD_QT_QUICK_BUNDLE)
+		set(_vvd_bundle_env ${CMAKE_COMMAND} -E env VVD_QUICK_BUNDLE=1)
+	endif()
 	# Qt frameworks + MoltenVK into the bundle for a relocatable app
 	find_program(MACDEPLOYQT macdeployqt HINTS ${_brew_qt}/bin ${Qt6_DIR}/../../../bin)
 	if(MACDEPLOYQT)
@@ -189,7 +215,7 @@ if(APPLE)
 		endif()
 		# (macos_deployqt.sh: why the executable needs an rpath to that dir)
 		add_custom_command(TARGET VVDViewerQt POST_BUILD
-			COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_deployqt.sh" ${MACDEPLOYQT}
+			COMMAND ${_vvd_bundle_env} /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_deployqt.sh" ${MACDEPLOYQT}
 				"$<TARGET_BUNDLE_DIR:VVDViewerQt>" "${_qt_fw_dir}" -always-overwrite ${_macdeployqt_libpath}
 			COMMENT "macdeployqt VVDViewerQt.app")
 	else()
@@ -205,7 +231,7 @@ if(APPLE)
 	#  - OpenSSL TLS backend (the app only uses plain QTcpSocket/QTcpServer;
 	#    SecureTransport stays. libssl/libcrypto remain: QtNetwork links them).
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
-		COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_bundle_fixup.sh"
+		COMMAND ${_vvd_bundle_env} /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_bundle_fixup.sh"
 			"$<TARGET_BUNDLE_DIR:VVDViewerQt>" "${MOLTENVK_LIBRARY}" "${MOLTENVK_ICD_JSON}"
 			"${Vulkan_LIBRARY}" "${VVD_CODESIGN_IDENTITY}"
 			platforminputcontexts/libqtvirtualkeyboardplugin.dylib
@@ -213,6 +239,12 @@ if(APPLE)
 			imageformats/libqpdf.dylib
 			tls/libqopensslbackend.dylib
 		COMMENT "Making VVDViewerQt.app self-contained (MoltenVK, rpaths, codesign)")
+	if(VVD_QT_STAGED_BUNDLE)
+		add_custom_command(TARGET VVDViewerQt POST_BUILD
+			COMMAND /bin/bash "${VVDViewer_SOURCE_DIR}/cmake/macos_publish_bundle.sh"
+				"$<TARGET_BUNDLE_DIR:VVDViewerQt>" "${CMAKE_BINARY_DIR}/bin"
+			COMMENT "Putting the finished VVDViewerQt.app into bin")
+	endif()
 else()
 	add_custom_command(TARGET VVDViewerQt POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory "${VVDViewer_SOURCE_DIR}/CL_code" "$<TARGET_FILE_DIR:VVDViewerQt>/CL_code"

@@ -175,6 +175,11 @@ public:
 	void ToggleAllTools();
 	bool IsPaneShown(int pane) const;
 	void ShowPane(int pane, bool show);
+	// a new session (not in wx: the last session's ON/OFF came back with the
+	// window state): every pane and the main toolbar shown, Measurement (a
+	// floating window) closed; sizes and places stay those of the last
+	// session, a project's /ui_layout applies over this
+	void ShowDefaultPanes();
 	QMenu* UIMenu() const { return m_tb_menu_ui; }
 	// wx VRenderVulkanView::OnContextMenu: the render view's right-click menu
 	// (built for the current state; the caller owns it)

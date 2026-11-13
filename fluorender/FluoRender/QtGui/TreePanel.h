@@ -59,15 +59,21 @@ public:
 	explicit DataTreeWidget(TreePanel* panel, QWidget* parent = nullptr);
 	QTreeWidgetItem* DragItem() const { return m_drag_item; }
 	void SetDragItem(QTreeWidgetItem* item) { m_drag_item = item; }   // testing
+	// a group dragged: where the line shows it would land (viewport y; -1 none)
+	int DropLineY() const { return m_drop_line_y; }
 protected:
 	void startDrag(Qt::DropActions supportedActions) override;
 	void dragEnterEvent(QDragEnterEvent* e) override;
 	void dragMoveEvent(QDragMoveEvent* e) override;
+	void dragLeaveEvent(QDragLeaveEvent* e) override;
 	void dropEvent(QDropEvent* e) override;
 	void keyPressEvent(QKeyEvent* e) override;
+	void paintEvent(QPaintEvent* e) override;
 private:
+	void SetDropLine(int y);
 	TreePanel* m_panel = nullptr;
 	QTreeWidgetItem* m_drag_item = nullptr;
+	int m_drop_line_y = -1;
 };
 
 class TreePanel : public QWidget
@@ -134,6 +140,15 @@ public:
 	// wx OnEndDrag: src dropped onto dst (null: empty space); drop_y is the
 	// drop position in viewport coordinates (before / after dst)
 	void OnEndDrag(QTreeWidgetItem* src, QTreeWidgetItem* dst, int drop_y);
+	// a group dragged within its view (not in wx, where it moved only when
+	// dropped on another group's own row): it lands before or after the
+	// view-level item under the pointer -- whichever half of that item's
+	// rows, its expanded contents included, the pointer is in -- or after
+	// the last one below every row. target: that item (src itself: no move);
+	// line_y: the line between items where it lands (viewport y). False:
+	// src is not a group or dst is in another view.
+	bool GroupDropTarget(QTreeWidgetItem* src, QTreeWidgetItem* dst, int y,
+		QTreeWidgetItem*& target, int& insert_mode, int& line_y) const;
 	// the context menu of an item (wx OnContextMenu); the caller owns it
 	QMenu* BuildContextMenu(QTreeWidgetItem* item);
 	QTreeWidget* Tree() const { return m_tree; }

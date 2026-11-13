@@ -9,10 +9,13 @@
 //   options   Pointing Method, Auto-select (not in wx: each click picks the
 //             displayed volume with the brightest voxel on the ray, see
 //             RulerTool::SetRulerAutoSelect), Show ID at start (not in wx:
-//             RulerTool::SetDrawStartIds), Transient, Use Volume Properties,
+//             RulerTool::SetDrawStartIds), Show Rulers (not in wx: shows /
+//             hides every ruler, RulerTool::SetRulersShown; partly checked
+//             when some are hidden; hidden rows in grey), Transient, Use Volume Properties,
 //             Scatter Rulers + Density, Transform + Interpolation,
 //             Stiffness, Apply Transform
-//   list      ID (wx "Name"), Start Volume, End Volume (not in wx: the
+//   list      ID (wx "Name"; not in wx: an ON/OFF check box left of it shows /
+//             hides that ruler, drawn by RulerIdDelegate), Start Volume, End Volume (not in wx: the
 //             volumes the first / last point were picked on, empty for the
 //             view plane), Color, Length, Angle/Pitch, Start/End Points
 //             (X, Y, Z), Time, Volumes/Score (rulers of the current time
@@ -99,6 +102,11 @@ public:
 	// rows of the list (rulers + annotations), for tests
 	int RowCount() const;
 	QString RowText(int row, int col) const;
+	// the ON/OFF check box of a ruler row, in the list's viewport
+	// coordinates (empty: no such row or an annotation row), for tests
+	QRect RulerCheckRect(int row) const;
+	// a name is being edited in the list, for tests
+	bool ListEditing() const;
 	// RulerListCtrl::Export: the text file of the toolbar's Export (.txt)
 	void Export(const QString& filename);
 	// "Apply Transform" with the current options (also Ctrl+B in the view)
@@ -138,6 +146,7 @@ private Q_SLOTS:
 	void OnTransientCheck(bool checked);
 	void OnAutoSelectCheck(bool checked);
 	void OnStartIdCheck(bool checked);
+	void OnShowRulersCheck();
 	void OnScatterRulers();
 	void OnWarp();
 	void OnWarpStiffness(int value);
@@ -156,6 +165,8 @@ private:
 	QString UnitText() const;
 	Ruler* RulerOf(QTreeWidgetItem* item) const;
 	void FillItem(QTreeWidgetItem* item, Ruler* ruler);
+	void SetRowGrey(QTreeWidgetItem* item, bool grey);
+	void UpdateShowRulersCheck();
 
 	RulerTool* m_tool;
 	AnalysisContext* m_ctx;
@@ -172,6 +183,7 @@ private:
 	QCheckBox* m_transient_chk;
 	QCheckBox* m_auto_select_chk;
 	QCheckBox* m_start_id_chk = nullptr;   // Show ID at start (not in wx)
+	QCheckBox* m_show_rulers_chk = nullptr;   // Show Rulers (not in wx)
 	QPushButton* m_scatter_btn;
 	QLineEdit* m_density_txt;
 	QPushButton* m_warp_btn;

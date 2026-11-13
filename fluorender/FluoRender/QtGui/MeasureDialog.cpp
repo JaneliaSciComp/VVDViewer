@@ -42,6 +42,11 @@
 #include <QPointer>
 #include <QPixmap>
 #include <QIcon>
+#include <QStyledItemDelegate>
+#include <QPainter>
+#include <QPainterPath>
+#include <QApplication>
+#include <QStyle>
 #include <climits>
 #include <functional>
 #include <algorithm>
@@ -75,13 +80,147 @@ enum
 };
 
 // ---------------------------------------------------------------------------
+// RulerIdDelegate: the ON/OFF check box left of each ruler's ID (the ruler's
+// display flag, not in wx). The macOS style of Qt 6.11 draws the check box
+// of an item view's first row only (LegendMenu.cpp), so the style lays the
+// cell out with room for an icon there and the box is drawn here; a click on
+// it toggles the item's check state.
+// ---------------------------------------------------------------------------
+
+class RulerIdDelegate : public QStyledItemDelegate
+{
+public:
+	static constexpr int Box = 14;
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	// the check box of a cell (option: the view's, rect = the cell); empty
+	// for a row without one (annotation rows)
+	QRect BoxRect(const QStyleOptionViewItem& option, const QModelIndex& index) const
+	{
+		if (!index.data(Qt::CheckStateRole).isValid())
+			return QRect();
+		QStyleOptionViewItem opt(option);
+		initStyleOption(&opt, index);
+		const QWidget* w = opt.widget;
+		QStyle* s = w ? w->style() : QApplication::style();
+		return s->subElementRect(QStyle::SE_ItemViewItemDecoration, &opt, w);
+	}
+
+	void paint(QPainter* p, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+	{
+		QStyledItemDelegate::paint(p, option, index);
+		const QRect r = BoxRect(option, index);
+		if (r.isEmpty())
+			return;
+		const bool on = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+		const bool sel = option.state & QStyle::State_Selected;
+		const QPalette& pal = option.palette;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+		const QColor accent = pal.color(QPalette::Active, QPalette::Accent);
+#else
+		const QColor accent = pal.color(QPalette::Active, QPalette::Highlight);
+#endif
+		const QColor sel_line = pal.color(QPalette::Active, QPalette::HighlightedText);
+		QColor line = pal.color(QPalette::Active, QPalette::Text);
+		line.setAlphaF(0.4);
+		const qreal s = std::min<qreal>(Box, std::min(r.width(), r.height())) - 1.0;
+		const QRectF box(r.left() + (r.width() - s) / 2.0, r.top() + (r.height() - s) / 2.0, s, s);
+		p->save();
+		p->setRenderHint(QPainter::Antialiasing);
+		// on a selected row a light outline keeps the box apart from the highlight
+		if (on)
+		{
+			p->setPen(sel ? QPen(sel_line, 1.0) : QPen(Qt::NoPen));
+			p->setBrush(accent);
+		}
+		else
+		{
+			p->setPen(QPen(sel ? sel_line : line, 1.0));
+			p->setBrush(pal.color(QPalette::Active, QPalette::Base));
+		}
+		p->drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 3.0, 3.0);
+		if (on)
+		{
+			QPen pen(Qt::white, 1.8);
+			pen.setCapStyle(Qt::RoundCap);
+			pen.setJoinStyle(Qt::RoundJoin);
+			p->setPen(pen);
+			p->setBrush(Qt::NoBrush);
+			QPainterPath mark;
+			mark.moveTo(box.left() + box.width() * 0.25, box.top() + box.height() * 0.53);
+			mark.lineTo(box.left() + box.width() * 0.43, box.top() + box.height() * 0.72);
+			mark.lineTo(box.left() + box.width() * 0.76, box.top() + box.height() * 0.30);
+			p->drawPath(mark);
+		}
+		p->restore();
+	}
+
+	bool editorEvent(QEvent* e, QAbstractItemModel* model, const QStyleOptionViewItem& option,
+		const QModelIndex& index) override
+	{
+		const QVariant v = index.data(Qt::CheckStateRole);
+		const Qt::ItemFlags flags = model->flags(index);
+		if (!v.isValid() || !(flags & Qt::ItemIsUserCheckable) || !(flags & Qt::ItemIsEnabled) ||
+			!(option.state & QStyle::State_Enabled))
+			return QStyledItemDelegate::editorEvent(e, model, option, index);
+		// the mouse only: Space is the view's frame step in every window
+		// (RenderCanvas::OnViewKey), so it does not toggle the box
+		if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::MouseButtonDblClick &&
+			e->type() != QEvent::MouseButtonRelease)
+			return false;
+		auto* me = static_cast<QMouseEvent*>(e);
+		if (me->button() != Qt::LeftButton || !BoxRect(option, index).contains(me->position().toPoint()))
+			return false;
+		if (e->type() != QEvent::MouseButtonRelease)
+			return true;
+		return model->setData(index, v.toInt() == Qt::Checked ? Qt::Unchecked : Qt::Checked, Qt::CheckStateRole);
+	}
+
+protected:
+	void initStyleOption(QStyleOptionViewItem* opt, const QModelIndex& index) const override
+	{
+		QStyledItemDelegate::initStyleOption(opt, index);
+		if (opt->features & QStyleOptionViewItem::HasCheckIndicator)
+		{
+			// room for the box where an icon goes; the style draws neither
+			opt->features &= ~QStyleOptionViewItem::HasCheckIndicator;
+			opt->features |= QStyleOptionViewItem::HasDecoration;
+			opt->decorationSize = QSize(Box, Box);
+			opt->icon = QIcon();
+		}
+	}
+};
+
+// ---------------------------------------------------------------------------
 // RulerListWidget: the wx RulerListCtrl's key / drag handling
 // ---------------------------------------------------------------------------
 
 class RulerListWidget : public QTreeWidget
 {
 public:
-	explicit RulerListWidget(MeasureDialog* dlg) : QTreeWidget(dlg), m_dlg(dlg) {}
+	explicit RulerListWidget(MeasureDialog* dlg) : QTreeWidget(dlg), m_dlg(dlg)
+	{
+		m_id_delegate = new RulerIdDelegate(this);
+		setItemDelegateForColumn(MeasureDialog::ColID, m_id_delegate);
+	}
+
+	// the ON/OFF check box of a row (viewport coordinates; empty: none)
+	QRect CheckRect(QTreeWidgetItem* item) const
+	{
+		if (!item)
+			return QRect();
+		const QModelIndex idx = indexFromItem(item, MeasureDialog::ColID);
+		QStyleOptionViewItem opt;
+		initViewItemOption(&opt);
+		opt.rect = visualRect(idx);
+		return m_id_delegate->BoxRect(opt, idx);
+	}
+	bool OnCheckBox(const QPoint& pos) const
+	{
+		QTreeWidgetItem* it = itemAt(pos);
+		return it && CheckRect(it).contains(pos);
+	}
+	bool Editing() const { return state() == QAbstractItemView::EditingState; }
 
 	// The row of the ruler picked in the view keeps the strong highlight
 	// while the view, not this tool window, has the focus: the inactive
@@ -125,10 +264,24 @@ protected:
 		QTreeWidget::mousePressEvent(e);
 		m_dragging_row = -1;
 		m_press_pos = e->position().toPoint();
-		if (e->button() == Qt::LeftButton)
+		// a press on a check box (toggled on the release) does not reorder
+		if (e->button() == Qt::LeftButton && !OnCheckBox(m_press_pos))
 			if (QTreeWidgetItem* it = itemAt(m_press_pos))
 				m_dragging_row = indexOfTopLevelItem(it);
 		m_drag_started = false;
+	}
+	void mouseDoubleClickEvent(QMouseEvent* e) override
+	{
+		// a double click on a check box is a second click on it (toggles
+		// again), not the double click that edits the name
+		if (e->button() == Qt::LeftButton && OnCheckBox(e->position().toPoint()))
+		{
+			QMouseEvent press(QEvent::MouseButtonPress, e->position(), e->scenePosition(), e->globalPosition(),
+				e->button(), e->buttons(), e->modifiers(), e->pointingDevice());
+			mousePressEvent(&press);
+			return;
+		}
+		QTreeWidget::mouseDoubleClickEvent(e);
 	}
 	void mouseMoveEvent(QMouseEvent* e) override
 	{
@@ -169,6 +322,7 @@ protected:
 
 private:
 	MeasureDialog* m_dlg;
+	RulerIdDelegate* m_id_delegate = nullptr;
 	int m_dragging_row = -1;
 	bool m_drag_started = false;
 	QPoint m_press_pos;
@@ -185,6 +339,21 @@ public:
 	{
 		if (beforePopup) beforePopup();
 		QComboBox::showPopup();
+	}
+};
+
+// "Show Rulers": partly checked (set by GetSettings) while only some rulers
+// are hidden. A click shows them all (unchecked or partly checked) or hides
+// them all (checked); it never gives the partly checked state.
+class AllOrNoneCheckBox : public QCheckBox
+{
+public:
+	using QCheckBox::QCheckBox;
+
+protected:
+	void nextCheckState() override
+	{
+		setCheckState(checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
 	}
 };
 
@@ -249,6 +418,11 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_int_method_combo->addItem("Accumulated Intensity");
 	m_int_method_combo->setCurrentIndex(0);
 	m_int_method_combo->setMinimumWidth(162);
+	m_int_method_combo->setToolTip("Where a click puts the point along the ray:\n"
+		"View Plane: on the plane through the centre of the view.\n"
+		"Maximum Intensity: on the brightest voxel.\n"
+		"Accumulated Intensity: on the surface the ray meets first, where the accumulated opacity reaches 0.5 "
+		"(each voxel's value counts as its opacity per voxel of path, whatever the volume's Sample Rate).");
 	sizer_1->addWidget(st, 0, Qt::AlignVCenter);
 	sizer_1->addSpacing(10);
 	sizer_1->addWidget(m_int_method_combo, 0, Qt::AlignVCenter);
@@ -256,11 +430,16 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_auto_select_chk = new QCheckBox("Auto-select", this);
 	m_auto_select_chk->setObjectName("ruler_auto_select");
 	m_auto_select_chk->setToolTip("While creating or editing rulers (all ruler types, also painting in ruler mode), "
-		"each click first finds the displayed volume (any view, any shown group) with the brightest voxel along the "
-		"click ray, compared as the normalized value after the volume's transfer function and clipping (what you see), "
-		"selects it in the Workspace tree (it becomes the current volume) and places the point on it with the Pointing "
-		"Method (View Plane: on the view plane). The point's Start / End Volume is that volume. "
-		"Where no volume is hit, the point is placed as without Auto-select.");
+		"each click first finds the displayed volume (any view, any shown group) under the pointer, compared after "
+		"each volume's transfer function and clipping (what you see): with Accumulated Intensity the one whose surface "
+		"the click ray meets first (the one in front), otherwise the one with the brightest voxel along the ray (equal "
+		"ones, e.g. binary masks: the one in front). It is selected in the Workspace tree (it becomes the current "
+		"volume) and the point is placed on it with the Pointing Method (View Plane: on the view plane). The point's "
+		"Start / End Volume is that volume. "
+		"Where no volume is hit, the point is placed as without Auto-select. "
+		"A point dragged in Edit mode goes onto the volume under the pointer, but the selection and the Clipping "
+		"Planes pane stay as they were (the volume is selected after the drag only when the ruler would no longer "
+		"be shown, e.g. a locator moved onto another volume).");
 	sizer_1->addSpacing(10);
 	sizer_1->addWidget(m_auto_select_chk, 0, Qt::AlignVCenter);
 	//not in wx: each ruler's ID at its first point too
@@ -270,9 +449,21 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 		"the ruler. The ID is always drawn at the last point; a locator has only that point.");
 	sizer_1->addSpacing(10);
 	sizer_1->addWidget(m_start_id_chk, 0, Qt::AlignVCenter);
+	//not in wx: shows / hides every ruler (the rulers' display flags)
+	m_show_rulers_chk = new AllOrNoneCheckBox("Show Rulers", this);
+	m_show_rulers_chk->setObjectName("ruler_show_all");
+	m_show_rulers_chk->setToolTip("Shows or hides every ruler and locator of this view; the check box left of each ID in "
+		"the list shows or hides that one (e.g. hide all, then check the few to keep). Hidden rulers are not drawn, and "
+		"their points cannot be picked or moved; they stay in the list (in grey) and are still saved with the project, "
+		"exported and used by Apply Transform. Rulers added later are shown. With some rulers hidden the box is partly "
+		"checked, and a click shows them all.");
+	sizer_1->addSpacing(10);
+	sizer_1->addWidget(m_show_rulers_chk, 0, Qt::AlignVCenter);
 	sizer_1->addStretch(1);
 	connect(m_auto_select_chk, &QCheckBox::toggled, this, &MeasureDialog::OnAutoSelectCheck);
 	connect(m_start_id_chk, &QCheckBox::toggled, this, &MeasureDialog::OnStartIdCheck);
+	// clicked, not toggled: partly checked -> checked keeps isChecked() true
+	connect(m_show_rulers_chk, &QCheckBox::clicked, this, &MeasureDialog::OnShowRulersCheck);
 	connect(m_int_method_combo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MeasureDialog::OnIntensityMethodsCombo);
 
 	//more options
@@ -411,7 +602,8 @@ MeasureDialog::MeasureDialog(RulerTool* tool, AnalysisContext* ctx, SettingsDial
 	m_rulerlist->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	m_rulerlist->header()->setStretchLastSection(false);
 	m_rulerlist->header()->setSectionsMovable(false);
-	m_rulerlist->setColumnWidth(ColName, 50);   // half the former Name column's 100
+	// half the former Name column's 100, plus the ON/OFF check box
+	m_rulerlist->setColumnWidth(ColName, 50 + RulerIdDelegate::Box + 10);
 	for (int c = ColName + 1; c < ColNum; ++c)
 		m_rulerlist->resizeColumnToContents(c);
 	m_rulerlist->KeepActiveSelectionColors();
@@ -642,6 +834,7 @@ void MeasureDialog::GetSettings()
 	m_start_id_chk->setChecked(m_tool->GetDrawStartIds());
 	m_use_transfer_chk->setChecked(m_tool->GetRulerUseTransf());
 	m_transient_chk->setChecked(m_tool->GetRulerTimeDep());
+	UpdateShowRulersCheck();
 }
 
 QString MeasureDialog::UnitText() const
@@ -704,7 +897,38 @@ void MeasureDialog::FillItem(QTreeWidgetItem* item, Ruler* ruler)
 	else
 		item->setText(ColTime, "N/A");
 	item->setText(ColInfo, S2Q(ruler->GetDelInfoValues(L", ")));
-	item->setFlags(item->flags() | Qt::ItemIsEditable);
+	item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsUserCheckable);
+	// the ON/OFF check box left of the ID: the ruler is shown (not in wx)
+	item->setCheckState(ColName, ruler->GetDisp() ? Qt::Checked : Qt::Unchecked);
+	SetRowGrey(item, !ruler->GetDisp());
+}
+
+// a hidden ruler's row in grey
+void MeasureDialog::SetRowGrey(QTreeWidgetItem* item, bool grey)
+{
+	const QVariant fg = grey ? QVariant(m_rulerlist->palette().brush(QPalette::Disabled, QPalette::Text)) : QVariant();
+	for (int c = 0; c < ColNum; ++c)
+		item->setData(c, Qt::ForegroundRole, fg);
+}
+
+QRect MeasureDialog::RulerCheckRect(int row) const
+{
+	return m_rulerlist ? m_rulerlist->CheckRect(m_rulerlist->topLevelItem(row)) : QRect();
+}
+
+bool MeasureDialog::ListEditing() const
+{
+	return m_rulerlist && m_rulerlist->Editing();
+}
+
+// Show Rulers follows the rulers' display flags (partly checked: some hidden)
+void MeasureDialog::UpdateShowRulersCheck()
+{
+	if (!m_tool || !m_show_rulers_chk)
+		return;
+	QSignalBlocker block(m_show_rulers_chk);
+	m_show_rulers_chk->setCheckState(m_tool->GetRulersShown());
+	m_show_rulers_chk->setEnabled(!m_tool->GetRulerList()->empty());
 }
 
 // RulerListCtrl::UpdateRulers (rulers of the current time point)
@@ -964,6 +1188,20 @@ void MeasureDialog::OnItemChanged(QTreeWidgetItem* item, int column)
 	if (m_updating || column != ColName) return;
 	Ruler* ruler = RulerOf(item);
 	if (!ruler) return;
+	// the ON/OFF check box: show / hide this ruler. The row is updated in
+	// place: the list must not be rebuilt in its own itemChanged (the item
+	// is still in use when the signal returns)
+	const bool on = item->checkState(ColName) == Qt::Checked;
+	if (on != ruler->GetDisp())
+	{
+		ruler->SetDisp(on);
+		m_updating = true;
+		SetRowGrey(item, !on);
+		m_updating = false;
+		UpdateShowRulersCheck();
+		if (m_tool->Canvas()) m_tool->Canvas()->RefreshView();
+		return;
+	}
 	ruler->SetNameDisp(vvd::String(item->text(ColName).toStdWString()));
 	if (m_tool->Canvas()) m_tool->Canvas()->RefreshView();
 }
@@ -1324,6 +1562,12 @@ void MeasureDialog::OnStartIdCheck(bool checked)
 	if (m_settings)
 		m_settings->SetRulerStartIds(checked);
 	Q_EMIT startIdsToggled(checked);
+}
+void MeasureDialog::OnShowRulersCheck()
+{
+	if (!m_tool) return;
+	// SetRulersShown -> rulersChanged -> GetSettings: the box and the list follow
+	m_tool->SetRulersShown(m_show_rulers_chk->checkState() == Qt::Checked);
 }
 
 void MeasureDialog::OnScatterRulers()

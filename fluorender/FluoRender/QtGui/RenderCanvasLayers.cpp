@@ -851,7 +851,7 @@ void RenderCanvas::OrganizeLayers()
 // ---------------------------------------------------------------------------
 
 // move layer of the same level within this view; source is after the destination
-void RenderCanvas::MoveLayerinView(const VVDString& src_name, const VVDString& dst_name)
+void RenderCanvas::MoveLayerinView(const VVDString& src_name, const VVDString& dst_name, int insert_mode)
 {
 	int i, src_index = 0;
 	TreeLayer* src = nullptr;
@@ -872,10 +872,8 @@ void RenderCanvas::MoveLayerinView(const VVDString& src_name, const VVDString& d
 	{
 		if (m_layer_list[i] && m_layer_list[i]->GetName() == dst_name)
 		{
-			if (i >= src_index)
-				m_layer_list.insert(m_layer_list.begin() + i + 1, src);
-			else
-				m_layer_list.insert(m_layer_list.begin() + i, src);
+			const bool after = insert_mode < 0 ? i >= src_index : insert_mode == 1;
+			m_layer_list.insert(m_layer_list.begin() + (after ? i + 1 : i), src);
 			inserted = true;
 			break;
 		}

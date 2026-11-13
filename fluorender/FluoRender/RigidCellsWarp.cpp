@@ -2035,6 +2035,14 @@ VolumeData* RigidCellsWarpVolumeByRulers(VolumeData* src, const std::vector<Rule
 		tg.spacing[0] = tsx; tg.spacing[1] = tsy; tg.spacing[2] = tsz;
 		for (int d = 0; d < 3; d++)
 			tg.origin[d] = mo[d] * aspect[d];
+		double gs[3] = { 1, 1, 1 }, go[3] = { 0, 0, 0 };
+		VolumeData* gv = target ? target : src;
+		gv->GetSpacings(gs[0], gs[1], gs[2]);
+		gv->GetOrigin(go[0], go[1], go[2]);
+		std::fprintf(stderr, "Apply BigWarp to Cells (shape preserving): output grid %d x %d x %d, spacing %g %g %g, "
+			"origin %g %g %g in the source's frame (grid scale %g %g %g); %s: spacing %g %g %g, origin %g %g %g\n",
+			trx, try_, trz, tsx, tsy, tsz, tg.origin[0], tg.origin[1], tg.origin[2], ms[0], ms[1], ms[2],
+			target ? "target" : "source", gs[0], gs[1], gs[2], go[0], go[1], go[2]);
 	}
 	vd->SetName(src->GetName() + suffixes[mode]);
 	Nrrd* onrrd = (vd->GetTexture() && vd->GetTexture()->get_nrrd(0)) ? vd->GetTexture()->get_nrrd(0)->getNrrd() : nullptr;

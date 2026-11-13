@@ -45,9 +45,35 @@ mkdir -p "${FW}" "${CONTENTS}/Resources/vulkan/icd.d"
 
 realpath_of() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
 is_macho() { file -b "$1" | grep -q 'Mach-O'; }
-# all Mach-O files of the bundle, one per line (no symlinks)
+# VVD_QUICK_BUNDLE=1 (VVD_QT_QUICK_BUNDLE, local builds): after a complete run
+# with the same arguments, this script and MoltenVK / loader files (stamp next
+# to the bundle, written at the end of a complete run), only the Mach-O files
+# changed since then -- the relinked executable, libraries copied in again by
+# vcpkg's applocal step -- are rewritten, checked and signed, and the bundle
+# is sealed again without re-signing everything in it. macos_deployqt.sh
+# removes the stamp when it runs macdeployqt.
+STAMP="${APP%.app}.fixup-stamp"
+KEY=$(printf '%s\n' "$(shasum -a 256 "$0" | awk '{print $1}')" "${MVK_LIB}" "${MVK_ICD}" "${VULKAN_LIB}" "${SIGN_ID}" "${DROP_PLUGINS}"
+	stat -L -f '%z %m' "${MVK_LIB}" "${VULKAN_LIB}" 2>/dev/null || true)
+QUICK=0
+if [ "${VVD_QUICK_BUNDLE:-0}" = "1" ] && [ -f "${STAMP}" ] && [ -d "${FW}" ] && [ "$(cat "${STAMP}")" = "${KEY}" ]; then
+	QUICK=1
+	# a dropped plugin back in the bundle: macdeployqt has run, do it all
+	for p in ${DROP_PLUGINS}; do
+		if [ -e "${CONTENTS}/PlugIns/${p}" ]; then QUICK=0; fi
+	done
+fi
+[ "${QUICK}" = 1 ] && echo "macos_bundle_fixup: quick run (files changed since the last complete run)" || true
+# all Mach-O files of the bundle, one per line (no symlinks); quick: those
+# changed since the stamp
 # (framework binaries are often not +x, so test every file outside Resources)
-machos() { find "${CONTENTS}" \( -path "${CONTENTS}/Resources" -o -name _CodeSignature -o -name Headers \) -prune -o -type f -print | while read -r f; do is_macho "$f" && echo "$f"; done; }
+machos() {
+	if [ "${QUICK}" = 1 ]; then
+		find "${CONTENTS}" \( -path "${CONTENTS}/Resources" -o -name _CodeSignature -o -name Headers \) -prune -o -type f -newer "${STAMP}" -print
+	else
+		find "${CONTENTS}" \( -path "${CONTENTS}/Resources" -o -name _CodeSignature -o -name Headers \) -prune -o -type f -print
+	fi | while read -r f; do is_macho "$f" && echo "$f"; done
+}
 deps_of() { otool -L "$1" | grep '^[[:space:]]' | awk '{print $1}' | sort -u; }
 id_of() { otool -D "$1" | grep -v ':$' | head -1; }
 rpaths_of() { otool -l "$1" | awk '/cmd LC_RPATH/{getline; getline; print $2}'; }
@@ -59,9 +85,14 @@ if [ ! -f "${MVK_LIB}" ]; then
 	echo "macos_bundle_fixup: MoltenVK not found (${MVK_LIB}); install the Vulkan SDK or set MOLTENVK_LIBRARY" >&2
 	exit 1
 fi
+ICD_OUT="${CONTENTS}/Resources/vulkan/icd.d/MoltenVK_icd.json"
+# quick: both are there from the last complete run (a changed MoltenVK makes
+# a complete run, see the stamp)
+if [ "${QUICK}" = 1 ] && [ -f "${FW}/libMoltenVK.dylib" ] && [ -f "${ICD_OUT}" ]; then
+	:
+else
 cp -f "$(realpath_of "${MVK_LIB}")" "${FW}/libMoltenVK.dylib"
 chmod u+w "${FW}/libMoltenVK.dylib"
-ICD_OUT="${CONTENTS}/Resources/vulkan/icd.d/MoltenVK_icd.json"
 if [ -n "${MVK_ICD}" ] && [ -f "${MVK_ICD}" ]; then
 	# keep the SDK's api_version etc.; point library_path into the bundle
 	sed -E 's|"library_path"[[:space:]]*:[[:space:]]*"[^"]*"|"library_path": "../../../Frameworks/libMoltenVK.dylib"|' \
@@ -77,6 +108,7 @@ else
     }
 }
 JSON
+fi
 fi
 if ! ls "${FW}"/libvulkan*.dylib >/dev/null 2>&1; then
 	[ -f "${VULKAN_LIB}" ] || { echo "macos_bundle_fixup: Vulkan loader not found (${VULKAN_LIB})" >&2; exit 1; }
@@ -161,8 +193,10 @@ for f in $(machos); do
 done
 rpaths_of "${EXE}" | grep -qxF "${FW_PREFIX}" || install_name_tool -add_rpath "${FW_PREFIX}" "${EXE}"
 
-# unreferenced libraries (left behind by dropped plugins): remove
-if [ -n "${DROP_PLUGINS}" ]; then
+# unreferenced libraries (left behind by dropped plugins): remove. Needs every
+# Mach-O's references, so not in a quick run (whose machos are the changed
+# ones only; nothing is dropped anew without a macdeployqt run)
+if [ -n "${DROP_PLUGINS}" ] && [ "${QUICK}" = 0 ]; then
 	while :; do
 		refs=$(for f in $(machos); do deps_of "$f" | grep -v -xF "$(id_of "$f")"; done | sed -n 's|^@executable_path/../Frameworks/||p; s|^@rpath/||p' | sed 's|/.*||' | sort -u)
 		removed=0
@@ -207,8 +241,23 @@ for f in $(machos); do
 	sign "$f"
 done
 for d in "${FW}"/*.framework; do
-	[ -d "$d" ] && sign "$d"
+	[ -d "$d" ] || continue
+	# quick: only frameworks with a changed file
+	if [ "${QUICK}" = 1 ] && [ -z "$(find "$d" -type f -newer "${STAMP}" -print -quit)" ]; then
+		continue
+	fi
+	sign "$d"
 done
-sign --deep "${APP}"
+# quick: the nested code is signed already; seal the bundle and sign the
+# executable without re-signing everything inside it
+if [ "${QUICK}" = 1 ]; then
+	sign "${APP}"
+else
+	sign --deep "${APP}"
+fi
 codesign --verify --deep --strict "${APP}"
+# the next quick run takes the files changed after this point
+if [ "${VVD_QUICK_BUNDLE:-0}" = "1" ]; then
+	printf '%s' "${KEY}" > "${STAMP}"
+fi
 echo "macos_bundle_fixup: ${APP##*/} is self-contained and signed (${SIGN_ID})"

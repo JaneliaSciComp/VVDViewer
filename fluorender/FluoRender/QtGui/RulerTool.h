@@ -90,25 +90,44 @@ public:
 	void SetRulerUseTransf(bool val) { m_ruler_use_transf = val; }
 	bool GetRulerTimeDep() const { return m_ruler_time_dep; }
 	void SetRulerTimeDep(bool val) { m_ruler_time_dep = val; }
-	// Measurement "Auto-select" (not in wx; default off = wx behaviour): every
-	// click that creates or moves a ruler point (modes 5 / 6, the stroke of a
-	// paint ruler in mode 7) first picks AutoSelectVolume(mx, my), which then
-	// is the volume the point is placed on (with the pointing method; the
-	// View Plane method still places it on the view plane) and the point's
-	// volume (Start / End Volume)
+	// Measurement "Auto-select" (not in wx; on by default, off = wx
+	// behaviour): every click that creates a ruler point (mode 5, the stroke
+	// of a paint ruler in mode 7) first picks AutoSelectVolume(mx, my), which
+	// then is the volume the point is placed on (with the pointing method;
+	// the View Plane method still places it on the view plane) and the
+	// point's volume (Start / End Volume). A point dragged in Edit mode (6)
+	// goes onto AutoSelectCandidate on every move, but the selection stays
+	// as it was: it changed on every move, so the Clipping Planes pane
+	// switched to the volume under the pointer and the rulers drawn were
+	// those inside its planes. Only when the ruler would no longer be drawn
+	// after the release (none of its points inside the current volume's
+	// clipping planes, e.g. a locator moved onto another volume) is the
+	// volume it went onto selected.
 	bool GetRulerAutoSelect() const { return m_ruler_auto_select; }
 	void SetRulerAutoSelect(bool val) { m_ruler_auto_select = val; }
 	// With Auto-select on: among the displayed volumes of the view
-	// (PopVolumeList, shown ones), the one whose brightest voxel on the ray
-	// under (mx, my) is the brightest - GetPointVolume Maximum Intensity with
-	// the voxel value after the volume's transfer function (normalized 0..1,
-	// what is drawn) inside its clipping planes; ties keep the current
-	// volume, else the first in layer order. A volume other than the current
-	// one is announced with volumeAutoSelected (the main window selects it in
-	// the Workspace tree; without a receiver it is made the canvas's current
+	// (PopVolumeList, shown ones) hit by the ray under (mx, my), with the
+	// voxel values after each volume's transfer function (normalized 0..1,
+	// what is drawn) inside its clipping planes:
+	//  - Accumulated Intensity: the volume whose surface the ray meets first
+	//    (GetPointVolume mode 2 reaching 0.5; the smallest distance), so the
+	//    point goes onto the surface in front. Volumes without such a
+	//    surface count only when none has one.
+	//  - otherwise (and then): the one whose brightest voxel is the brightest
+	//    (Maximum Intensity); ties (binary masks: every volume) go to the
+	//    volume whose brightest voxel is nearest.
+	// Equal distances keep the current volume, else the first in layer
+	// order. Before, ties always kept the current volume: with overlapping
+	// binary masks a click on the one in front put the point onto the
+	// current one behind it. A volume other than the current one is
+	// announced with volumeAutoSelected (the main window selects it in the
+	// Workspace tree; without a receiver it is made the canvas's current
 	// volume). Returns null (Auto-select off, no volume hit): the caller
 	// falls back to the current volume / view plane.
 	VolumeData* AutoSelectVolume(int mx, int my);
+	// the volume AutoSelectVolume picks, without selecting it (null:
+	// Auto-select off or no volume hit)
+	VolumeData* AutoSelectCandidate(int mx, int my);
 	// current time point (wx m_tseq_cur_num); time-dependent ("transient")
 	// rulers are shown/listed only at their time. Emits rulersChanged().
 	int GetCurTime() const { return m_tseq_cur_num; }
@@ -120,6 +139,17 @@ public:
 	// draws it at the last point only. Not for locators (one point).
 	bool GetDrawStartIds() const { return m_draw_start_ids; }
 	void SetDrawStartIds(bool b);
+	// Measurement "Show Rulers" and the list's ON/OFF check box per ID (not
+	// in wx): the rulers' display flags (Ruler::GetDisp; projects save them
+	// as "display", which wx reads but never uses). A hidden ruler is not drawn and its points are not picked
+	// (Edit mode, a click or double click in the view, balloons); it stays in
+	// the list and is still saved, exported and used by Apply Transform. New
+	// rulers are shown, and so is a hidden unfinished ruler a click adds a
+	// point to. Checked: every ruler shown (also with no rulers), Unchecked:
+	// every ruler hidden, PartiallyChecked: some hidden (all time points).
+	Qt::CheckState GetRulersShown() const;
+	// shows / hides every ruler (all time points); redraws, emits rulersChanged
+	void SetRulersShown(bool show);
 	// landmarks of the displayed volumes (wx SetLandmarkVisibility / m_draw_landmarks)
 	bool GetDrawLandmarks() const { return m_draw_landmarks; }
 	void SetDrawLandmarks(bool b);
@@ -150,7 +180,11 @@ public:
 	Ruler* GetLastRuler() { return m_ruler_list.empty() ? nullptr : m_ruler_list.back(); }
 
 	// ---- picking (verbatim ports; mx/my in canvas coordinates, top-left origin)
-	// max_value (mode 1, optional): the maximum value found on the ray
+	// max_value (mode 1, optional): the maximum value found on the ray.
+	// Not as wx: the ray is sampled at most half a voxel apart along every
+	// axis, and mode 2 (Accumulated) counts each sample's value as its
+	// opacity per voxel of path, whatever the volume's Sample Rate (wx: the
+	// rate was the exponent, so at low rates the point went deeper)
 	double GetPointVolume(FLIVR::Point& mp, int mx, int my, VolumeData* vd, int mode, bool use_transf, double thresh = 0.5, double* max_value = nullptr);
 	double GetPointAndIntVolume(FLIVR::Point& mp, double& intensity, bool normalize, int mx, int my, VolumeData* vd, double thresh = 0.5);
 	// wx GetPointAndLabelMax (NA mode): along the ray under (mx, my), the
@@ -164,6 +198,10 @@ public:
 	FLIVR::Point* GetEditingRulerPoint(int mx, int my);
 	// the listed ruler that owns point p (null: none, or a landmark)
 	Ruler* RulerOfPoint(const FLIVR::Point* p) const;
+	// DrawRulers draws a shown ruler (GetRulersShown) of the current time
+	// point when one of its points lies inside the current volume's clipping
+	// planes (wx), and the ruler whose point is being dragged in any case
+	bool IsRulerDrawn(Ruler* ruler) const;
 	// a click in the view in any mode: the ruler whose point is under
 	// (mx, my) is announced with rulerPicked; returns it (null: none)
 	Ruler* PickRulerAt(int mx, int my);
@@ -273,6 +311,11 @@ public:
 	bool HandlesRightClick(QMouseEvent* e) const override;
 private:
 	bool m_point_drag = false;    // dragging m_editing_ruler_point
+	// Auto-select: the volume the dragged point was last placed on
+	VolumeData* m_drag_vd = nullptr;
+	// one of the ruler's points inside the current volume's clipping planes
+	// (true without a current volume)
+	bool InsideCurrentClipping(Ruler* ruler) const;
 };
 
 #endif // VVD_QT_RULERTOOL_H

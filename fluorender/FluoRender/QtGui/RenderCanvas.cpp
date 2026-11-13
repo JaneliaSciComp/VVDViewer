@@ -50,6 +50,16 @@
 #include <xcb/xcb.h>
 #endif
 
+// Testing aid: VVD_VK_OLD_RESIZE=1, the resize handling of before 2026-11-12
+// (also in VulkanExampleBase): no CAMetalLayer resize of our own, no frames
+// after a resize until the swapchain has caught up
+[[maybe_unused]] static bool OldResizeHandlingQt()
+{
+	static const bool old = qEnvironmentVariableIsSet("VVD_VK_OLD_RESIZE") &&
+		qEnvironmentVariable("VVD_VK_OLD_RESIZE") != "0";
+	return old;
+}
+
 using namespace FLIVR;
 
 namespace
@@ -573,6 +583,8 @@ void RenderCanvas::ComputeBounds()
 		m_obj_ctrz = (m_bounds.min().z() + m_bounds.max().z()) / 2.0;
 		if (!had_bounds)
 		{
+			// a new scene: the panes refit to it right after; keep its zoom
+			SettleZoomReference();
 			if (m_use_dft_settings)
 			{
 				// wx InitView(INIT_TRANSL | INIT_ROTATE) with default view
@@ -1549,6 +1561,20 @@ void RenderCanvas::Render()
 			}
 		}
 	}
+#if defined(__APPLE__)
+	// After a resize the swapchain can keep the old size until the
+	// CAMetalLayer has followed the window (prepareFrame rebuilds it then);
+	// the old image would stay stretched over the view until the next
+	// redraw. Keep frames coming (each re-presents the retained image) until
+	// the swapchain has the view's size, at most 120 of them.
+	if (m_resize_followups > 0 && !OldResizeHandlingQt())
+	{
+		QSize px, sc, dr;
+		SurfaceSizes(px, sc, dr);
+		if (sc != px) { m_resize_followups--; RequestFrame(); }
+		else m_resize_followups = 0;
+	}
+#endif
 	// wx OnIdle: keep drawing while the brick loop is running
 	StreamingIdle();
 	StreamingDebugFrame();
@@ -1586,6 +1612,7 @@ void RenderCanvas::OnSurfaceResized()
 	// VK_ERROR_SURFACE_LOST_KHR, then a crash in vkCreateSwapchainKHR)
 	if (m_shutdown) return;
 	m_frame_presented = false;
+	KeepZoomOnResize(DeviceSize());
 	if (!m_vulkan) return;
 	QSize s = DeviceSize();
 	if (s.width() <= 0 || s.height() <= 0) return;
@@ -1597,8 +1624,98 @@ void RenderCanvas::OnSurfaceResized()
 	for (VolumeData* vd : m_volumes)
 		if (vd && vd->GetVR()) vd->GetVR()->resize();
 	ResizeMultiVolumeRenderer();   // wx: if (m_mvr) m_mvr->resize();
+#if defined(__APPLE__)
+	// the CAMetalLayer takes the view's size now rather than in Qt's later
+	// layout pass, so the swapchain below gets the new size
+	if (!OldResizeHandlingQt())
+		syncMetalLayerToView((void*)m_window->winId());
+#endif
 	m_vulkan->setSize(s.width(), s.height());
+	m_resize_followups = 120;   // see Render
 	RequestRender();
+}
+
+// Not in wx (the objects grow and shrink with the view there): the objects
+// keep their size on the screen when the view is resized, e.g. by a pane
+// shown or hidden. HandleProjection fits the zoom's extent to the shorter
+// side (Ortho) or to the height (perspective), so the zoom follows the
+// length of that side.
+void RenderCanvas::KeepZoomOnResize(const QSize& s)
+{
+	// a tiny view (minimized, a pane taking all the room) changes nothing,
+	// and the last real size stays the reference
+	if (s.width() < 100 || s.height() < 100)
+		return;
+	const bool adopt = !m_zoom_ref_size.isValid() || m_free || m_tile_rendering ||
+		QDateTime::currentMSecsSinceEpoch() < m_zoom_settle_ms;
+	if (!adopt && s != m_zoom_ref_size)
+	{
+		auto side = [this](const QSize& z) { return double(m_persp ? z.height() : std::min(z.width(), z.height())); };
+		const double f = side(m_zoom_ref_size) / side(s);
+		if (std::fabs(f - 1.0) > 1e-9)
+		{
+			m_scale_factor = std::clamp(m_scale_factor * f, 0.01, 100.0);
+			Q_EMIT zoomChanged(m_scale_factor);
+		}
+	}
+	m_zoom_ref_size = s;
+}
+
+void RenderCanvas::SettleZoomReference(int ms)
+{
+	m_zoom_settle_ms = QDateTime::currentMSecsSinceEpoch() + ms;
+}
+
+void RenderCanvas::SurfaceSizes(QSize& view_px, QSize& swapchain, QSize& drawable) const
+{
+	const qreal dpr = m_window ? m_window->devicePixelRatio() : 1.0;
+	view_px = (QSizeF(DeviceSize()) * dpr).toSize();
+	swapchain = m_vulkan ? QSize((int)m_vulkan->width, (int)m_vulkan->height) : QSize();
+	drawable = QSize();
+#if defined(__APPLE__)
+	double v[8] = {};
+	if (m_window && m_window->handle() && metalLayerSizes((void*)m_window->winId(), v))
+		drawable = QSize((int)v[0], (int)v[1]);
+#endif
+}
+
+void RenderCanvas::DebugSetLayerDrawable(int w, int h)
+{
+#if defined(__APPLE__)
+	if (m_window && m_window->handle() && w > 0 && h > 0)
+		restoreMetalDrawableSize((void*)m_window->winId(), (unsigned)w, (unsigned)h);
+#else
+	(void)w; (void)h;
+#endif
+}
+
+QString RenderCanvas::DebugStateLine() const
+{
+	const QSize ws = m_window ? m_window->size() : QSize();
+	const QSize ds = DeviceSize();
+	QString s = QString("window %1x%2 (dpr %3), scene %4x%5")
+		.arg(ws.width()).arg(ws.height()).arg(m_window ? m_window->devicePixelRatio() : 0.0)
+		.arg(ds.width()).arg(ds.height());
+	if (m_fbo_final)
+		s += QString(", final buffer %1x%2").arg(m_fbo_final->w).arg(m_fbo_final->h);
+	if (m_vulkan)
+		s += QString(", swapchain %1x%2 (asked %3x%4, built %8) prepared %5 suboptimal-kept %6 skipped %7")
+			.arg(m_vulkan->width).arg(m_vulkan->height).arg(m_vulkan->destWidth).arg(m_vulkan->destHeight)
+			.arg((int)m_vulkan->prepared).arg((int)m_vulkan->suboptimalPersists).arg((int)m_vulkan->frameSkipped)
+			.arg(m_vulkan->swapchainBuilds);
+#if defined(__APPLE__)
+	double v[8] = {};
+	if (m_window && m_window->handle() && metalLayerSizes((void*)m_window->winId(), v))
+		s += QString(", layer drawable %1x%2 bounds %3x%4 (view %7x%8) scale %5 drawables %6")
+			.arg(v[0]).arg(v[1]).arg(v[2]).arg(v[3]).arg(v[4]).arg(v[5]).arg(v[6]).arg(v[7]);
+#endif
+	s += QString(", presented %1 (%2x%3)").arg(m_presented_frames)
+		.arg(m_presented_size.width()).arg(m_presented_size.height());
+	s += QString(", %1 scale %2 distance %3, fog %4 %5..%6, current %7")
+		.arg(m_persp ? "persp" : "ortho").arg(m_scale_factor).arg(m_distance)
+		.arg((int)m_use_fog).arg(m_fog_start).arg(m_fog_end)
+		.arg(m_cur_vol ? QString::fromStdWString(m_cur_vol->GetName()) : QString("-"));
+	return s;
 }
 
 void RenderCanvas::mousePressEvent(QMouseEvent* e)

@@ -108,8 +108,11 @@ public:
 	bool prepared = false;
 	// set when a swapchain recreated for a SUBOPTIMAL acquire is suboptimal
 	// again right away: prepareFrame then stops recreating it every frame until
-	// an acquire succeeds or setSize() asks for a new size
+	// an acquire succeeds, setSize() asks for a new size or the surface's size
+	// differs from the swapchain's
 	bool suboptimalPersists = false;
+	// swapchains built so far (testing: VVD_QT_TEST=resizeview)
+	uint32_t swapchainBuilds = 0;
 	//prepareFrame found no swapchain (a failed rebuild released it) and could
 	//not recreate it: the caller draws nothing this frame (no image to draw to)
 	bool frameSkipped = false;
@@ -265,6 +268,9 @@ public:
 	void initSwapchain();
 	// Create swap chain images
 	bool setupSwapChain();   // false: the old swapchain is kept
+	// macOS: give the CAMetalLayer the swapchain's drawable size back when
+	// MoltenVK left it at another size (1x1, see MetalCompatibility.h)
+	void restoreSurfaceDrawable();
 
 	// Command buffer creation
 	// Creates and returns a new command buffer

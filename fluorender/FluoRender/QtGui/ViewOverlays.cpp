@@ -7,6 +7,7 @@
 #include "RenderCanvas.h"
 #include "RulerTool.h"
 #include "SettingsDialog.h"
+#include "SwatchColor.h"
 
 #include <QMouseEvent>
 #include <QCursor>
@@ -505,7 +506,9 @@ void ViewOverlays::DrawLegend(int nx, int ny)
 		if (md->GetLegend())
 			advance(QString::fromStdWString(md->GetName()), nullptr, false);
 
-	//second pass
+	//second pass: each square (and a selected name) in the colour of the
+	//bulb in Workspace, the data colour at full brightness (wx: the colour
+	//itself, dark for a dim channel)
 	int cur_line = 0;
 	double xpos;
 	length = 0.0;
@@ -518,7 +521,7 @@ void ViewOverlays::DrawLegend(int nx, int ny)
 			cur_line++;
 		bool highlighted = sel_vd && QString::fromStdWString(sel_vd->GetName()) == name;
 		DrawName(xpos + xoffset, ny - (lines - cur_line + 0.1) * font_height - yoffset,
-			nx, ny, name, vd->GetColor(), font_height, highlighted);
+			nx, ny, name, VVDSwatchColor(vd->GetColor()), font_height, highlighted);
 	}
 	for (MeshData* md : md_list)
 	{
@@ -530,7 +533,7 @@ void ViewOverlays::DrawLegend(int nx, int ny)
 		Color amb, diff, spec;
 		double shine, alpha;
 		md->GetMaterial(amb, diff, spec, shine, alpha);
-		Color c(diff.r(), diff.g(), diff.b());
+		Color c = VVDSwatchColor(Color(diff.r(), diff.g(), diff.b()));
 		bool highlighted = sel_md && QString::fromStdWString(sel_md->GetName()) == name;
 		DrawName(xpos + xoffset, ny - (lines - cur_line + 0.1) * font_height - yoffset,
 			nx, ny, name, c, font_height, highlighted);

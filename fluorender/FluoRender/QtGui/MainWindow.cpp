@@ -509,6 +509,9 @@ MainWindow::MainWindow(QWidget* parent)
 		restoreGeometry(geom);
 		const bool restored = restoreState(st);
 		m_inner->restoreState(ist);
+		// the saved state brings back the panes' sizes and places, but a new
+		// session shows them all (their ON/OFF is kept in projects)
+		ShowDefaultPanes();
 		// no saved state: the left column's start-up width once shown (the
 		// resizeDocks of BuildDocks, before the window has a size, is not
 		// kept). Record/Export's width, which used to be the column's
@@ -1702,6 +1705,9 @@ bool MainWindow::OpenProject(const QString& path)
 	// wx VRenderFrame::OpenProject /views/0/properties (camera, object,
 	// scale bar, 2D adjustment, clipping, ...)
 	ApplyProjectView(view, 0);
+	// the pane layout set above resizes the view only later: that resize
+	// keeps the project's zoom (RenderCanvas::KeepZoomOnResize)
+	m_canvas->SettleZoomReference();
 	lap("canvas view settings");
 
 	// wx OpenProject: /views/<i> for i > 0, each in a new view (CreateView):
@@ -1715,6 +1721,9 @@ bool MainWindow::OpenProject(const QString& path)
 		slot.canvas->EnsureVulkan();
 		BuildLayersFromProject(ev, vols, meshes, slot.canvas, false);
 		ApplyProjectView(ev, idx);
+		// every view shrinks for the new one: keep the projects' zooms
+		for (const auto& sv : m_views)
+			sv->canvas->SettleZoomReference();
 		slot.prj_props = ev.passthrough;
 		ApplyProjectBrushSettings(idx);
 		if (std::vector<Ruler*>* rl = slot.ruler->GetRulerList())

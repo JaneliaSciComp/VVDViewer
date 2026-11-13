@@ -285,20 +285,31 @@ void MainWindow::StoreProjectUILayout()
 			if (kv.first == full) { kv.second = v ? "1" : "0"; return; }
 		m_prj_passthrough.emplace_back(full, v ? "1" : "0");
 	};
-	// the keys wx writes (wx writes no ui_movie_view and always
-	// ui_measure_view = false)
+	// the keys wx writes, and every pane's ON/OFF as it is (not in wx: wx
+	// writes no ui_movie_view and always ui_measure_view = false)
 	put("ui_main_tb", m_main_tb && !m_main_tb->isHidden());
 	put("ui_tree_view", IsPaneShown(PaneTree));
-	put("ui_measure_view", false);
+	put("ui_measure_view", IsPaneShown(PaneMeasure));
+	put("ui_movie_view", IsPaneShown(PaneMovie));
 	put("ui_adjust_view", IsPaneShown(PaneAdjust));
 	put("ui_clip_view", IsPaneShown(PaneClip));
 	put("ui_prop_view", IsPaneShown(PaneProp));
 	put("ui_main_tb_float", m_main_tb && m_main_tb->isFloating());
 	put("ui_tree_view_float", m_tree_dock && m_tree_dock->isFloating());
 	put("ui_measure_view_float", true);   // wx: a Dockable(false) pane, always floating
+	put("ui_movie_view_float", m_movie_dock && m_movie_dock->isFloating());
 	put("ui_adjust_view_float", m_adjust_dock && m_adjust_dock->isFloating());
 	put("ui_clip_view_float", m_clip_dock && m_clip_dock->isFloating());
 	put("ui_prop_view_float", m_prop_dock && m_prop_dock->isFloating());
+}
+
+void MainWindow::ShowDefaultPanes()
+{
+	if (m_main_tb)
+		m_main_tb->show();
+	for (int p : { PaneTree, PaneMovie, PaneAdjust, PaneClip, PaneProp })
+		ShowPane(p, true);
+	ShowPane(PaneMeasure, false);
 }
 
 void MainWindow::ApplyProjectUILayout()

@@ -13,8 +13,25 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #endif
+#if defined(VK_USE_PLATFORM_MACOS_MVK)
+#include "MetalCompatibility.h"
+#endif
+#include <cstdlib>
+#include <iostream>
 
 std::vector<const char*> VulkanExampleBase::args;
+
+// Testing aid: VVD_VK_OLD_RESIZE=1 keeps the swapchain handling of before
+// 2026-11-12 (no rebuild when the surface size differs at the start of a
+// frame, no drawable size repair) to compare against.
+static bool OldResizeHandling()
+{
+	static const bool old = [] {
+		const char* e = getenv("VVD_VK_OLD_RESIZE");
+		return e && *e && *e != '0';
+	}();
+	return old;
+}
 
 #if defined(__APPLE__)
 // The app bundle ships its own Vulkan driver (Contents/Frameworks/libMoltenVK
@@ -230,6 +247,28 @@ void VulkanExampleBase::prepareFrame()
 			frameSkipped = true;
 			return;
 		}
+	}
+	if (!OldResizeHandling())
+	{
+		//the surface has another size than the swapchain: rebuild now. Qt on
+		//macOS resizes the CAMetalLayer only after the window's resize event,
+		//so the rebuild that event asked for (setSize) got the old size again;
+		//waiting for MoltenVK's SUBOPTIMAL instead left the old image
+		//stretched over the view, and nothing at all once suboptimalPersists
+		//was set
+		VkExtent2D surf;
+		if (prepared && swapChain.getSurfaceExtent(surf) && (surf.width != width || surf.height != height))
+		{
+			suboptimalPersists = false;
+			windowResize();
+			if (swapChain.swapChain == VK_NULL_HANDLE)
+			{
+				vulkanDevice->ResetRenderSemaphores();
+				frameSkipped = true;
+				return;
+			}
+		}
+		restoreSurfaceDrawable();
 	}
 	VkSemaphore* present_complete = vulkanDevice->GetNextRenderSemaphore();
 
@@ -842,5 +881,36 @@ void VulkanExampleBase::initSwapchain()
 
 bool VulkanExampleBase::setupSwapChain()
 {
-	return swapChain.create(&width, &height, settings.vsync);
+	if (!swapChain.create(&width, &height, settings.vsync))
+		return false;
+	swapchainBuilds++;
+	if (!OldResizeHandling())
+		restoreSurfaceDrawable();
+	return true;
+}
+
+// MoltenVK 1.4.0 / 1.4.1 build a swapchain by writing its size to the
+// CAMetalLayer's drawableSize and then, when an image of the old swapchain is
+// still on its way to the screen, setting drawableSize to 1x1 to flush it
+// (MVKSwapchain::initCAMetalLayer; MoltenVK main does the two the other way
+// round). Every frame is then drawn into a 1x1 drawable stretched over the
+// view: only the background colour shows. Acquires report SUBOPTIMAL, but
+// the rebuild for that (prepareFrame) hits the same flush when a frame was
+// presented just before, and after a second suboptimal swapchain the rebuilds
+// stopped (suboptimalPersists) -- the view stayed blank until the next resize.
+void VulkanExampleBase::restoreSurfaceDrawable()
+{
+#if defined(VK_USE_PLATFORM_MACOS_MVK)
+	if (!view || swapChain.swapChain == VK_NULL_HANDLE || width == 0 || height == 0)
+		return;
+	if (restoreMetalDrawableSize(view, width, height))
+	{
+		static int reported = 0;
+		if (reported < 10)
+		{
+			reported++;
+			std::cerr << "VulkanExampleBase: CAMetalLayer drawable size restored to " << width << "x" << height << std::endl;
+		}
+	}
+#endif
 }

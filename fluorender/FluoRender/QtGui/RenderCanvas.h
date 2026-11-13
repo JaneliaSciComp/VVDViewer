@@ -148,7 +148,9 @@ public:
 	void LayersModified() { LayersChanged(true); }
 	VVDString CheckNewGroupName(const VVDString& name, int type) const;
 	bool CheckGroupNames(const VVDString& name, int type) const;
-	void MoveLayerinView(const VVDString& src_name, const VVDString& dst_name);
+	// insert_mode -1: wx (after dst when dst was below src, else before it);
+	// 0: before dst; 1: after dst
+	void MoveLayerinView(const VVDString& src_name, const VVDString& dst_name, int insert_mode = -1);
 	void MoveLayerinGroup(const VVDString& group_name, const VVDString& src_name, const VVDString& dst_name, int insert_mode = 0);
 	void MoveLayertoView(const VVDString& group_name, const VVDString& src_name, const VVDString& dst_name);
 	void MoveLayertoGroup(const VVDString& group_name, const VVDString& src_name, const VVDString& dst_name);
@@ -202,6 +204,20 @@ public:
 	// (m_rotx/m_roty/m_rotz <-> quaternion m_q; the X slider shows 360-rotx).
 	void GetRotations(double& rx, double& ry, double& rz) const { rx = m_rotx; ry = m_roty; rz = m_rotz; }
 	long long PresentedFrames() const { return m_presented_frames; }
+	// Testing aid: one line with the window, scene buffer and swapchain
+	// sizes (macOS: also the CAMetalLayer's drawable), the camera and the
+	// Depth Int. range
+	QString DebugStateLine() const;
+	// Testing aid: the view in device pixels, the swapchain and (macOS) the
+	// CAMetalLayer's drawable (empty where unknown)
+	void SurfaceSizes(QSize& view_px, QSize& swapchain, QSize& drawable) const;
+	// Testing aid (macOS): sets the CAMetalLayer's drawableSize
+	void DebugSetLayerDrawable(int w, int h);
+	// The zoom follows a resize of the view so that the objects keep their
+	// size on the screen (a pane shown / hidden, the window resized). For ms
+	// milliseconds from now a resize keeps the zoom instead: a project sets
+	// its zoom before its pane layout has resized the view.
+	void SettleZoomReference(int ms = 1500);
 	// Object translation (wx m_obj_trans*, panning).
 	void GetObjTrans(double& x, double& y, double& z) const { x = m_obj_transx; y = m_obj_transy; z = m_obj_transz; }
 	// Object centre / rotation of the object transform in GetMvMat()
@@ -716,6 +732,7 @@ private:
 	bool InitVulkan();
 	void RequestRender();
 	void OnSurfaceResized();
+	void KeepZoomOnResize(const QSize& s);
 	void OnExpose(bool exposed);
 	void Render();
 	void HandleProjection(int nx, int ny);
@@ -768,6 +785,14 @@ private:
 	// expose of an unchanged, already exposed surface needs no new frame
 	int m_render_suspended = 0;   // SuspendRendering depth
 	bool m_frame_presented = false;
+	// the view size the zoom was last seen at (OnSurfaceResized keeps the
+	// objects' size on the screen); resizes before m_zoom_settle_ms (msecs
+	// since epoch) adopt the new size without changing the zoom
+	QSize m_zoom_ref_size;
+	qint64 m_zoom_settle_ms = 0;
+	// frames still allowed after a resize until the swapchain has the view's
+	// size (macOS: the layer follows the window late, see Render)
+	int m_resize_followups = 0;
 	long long m_presented_frames = 0;   // frames submitted (testing: VVD_QT_SPIN)
 	bool m_surface_exposed = false;
 	QSize m_presented_size;

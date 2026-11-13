@@ -559,6 +559,22 @@ public:
 	*
 	* @return VkResult of the image acquisition
 	*/
+	//the surface's current size in pixels (on macOS the CAMetalLayer's bounds
+	//times its contents scale); false when the surface leaves the size to the
+	//swapchain, reports zero, or cannot be queried
+	bool getSurfaceExtent(VkExtent2D& extent)
+	{
+		if (surface == VK_NULL_HANDLE || !fpGetPhysicalDeviceSurfaceCapabilitiesKHR)
+			return false;
+		VkSurfaceCapabilitiesKHR caps;
+		if (fpGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps) != VK_SUCCESS)
+			return false;
+		if (caps.currentExtent.width == (uint32_t)-1 || caps.currentExtent.width == 0 || caps.currentExtent.height == 0)
+			return false;
+		extent = caps.currentExtent;
+		return true;
+	}
+
 	VkResult acquireNextImage(VkSemaphore presentCompleteSemaphore, uint32_t *imageIndex)
 	{
 		// By setting timeout to UINT64_MAX we will always wait until the next image has been acquired or an actual error is thrown

@@ -37,6 +37,7 @@
 #include <QDir>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QScreen>
 #include <QCheckBox>
 #include <QDialog>
 #include <QCoreApplication>
@@ -50,10 +51,14 @@
 #include <cstdio>
 
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
+#include <QMimeData>
+#include <QDragEnterEvent>
 #include <unordered_set>
 #include "VolumePropPanel.h"
 #include "ClipPanel.h"
 #include "ViewPanel.h"
+#include "ViewOverlays.h"
 #include "SettingsDialog.h"
 #include <QApplication>
 #include <QMessageBox>
@@ -1999,6 +2004,1308 @@ void MainWindow::RunPaintTest(const QString& kind)
 		});
 	}
 
+	if (kind == "rulershow")
+	{
+		// Measurement "Show Rulers" and the ON/OFF check box per ID: Show
+		// Rulers checked and disabled without rulers; unchecked hides every
+		// ruler (the image of the view without rulers, no point can be
+		// grabbed or picked, the rows stay, unchecked and grey); the box of
+		// one row shows that ruler only (a click on it in the list; a double
+		// click toggles twice and does not edit the name); a
+		// ruler added then is shown; Show Rulers is partly checked, a click
+		// shows them all, one more hides them all; every row's box is drawn
+		// (the Qt 6.11 macOS style draws only the first); a saved project
+		// keeps them hidden
+		auto chk = [this]() { return EnsureMeasureDialog()->findChild<QCheckBox*>("ruler_show_all"); };
+		auto sid = [this]() { return EnsureMeasureDialog()->findChild<QCheckBox*>("ruler_start_id"); };
+		auto list = [this]() { return EnsureMeasureDialog()->findChild<QTreeWidget*>(); };
+		auto cur_row = [list]() {
+			QTreeWidget* l = list();
+			return l && l->currentItem() ? l->indexOfTopLevelItem(l->currentItem()) : -1;
+		};
+		auto grey = [list](int row) {
+			QTreeWidget* l = list();
+			QTreeWidgetItem* it = l ? l->topLevelItem(row) : nullptr;
+			return it && it->data(MeasureDialog::ColID, Qt::ForegroundRole).isValid();
+		};
+		auto click = [cv](const QPoint& p) {
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+		};
+		auto state = [](Qt::CheckState s) {
+			return QString(s == Qt::Checked ? "checked" : s == Qt::Unchecked ? "unchecked" : "partly checked");
+		};
+		auto shown = [this]() {
+			int n = 0;
+			for (Ruler* r : *m_ruler_tool->GetRulerList()) n += r && r->GetDisp();
+			return n;
+		};
+		// ruler points that can be grabbed at their click positions (Edit
+		// press, a click and a double click in the view all pick with this)
+		auto pts = std::make_shared<std::vector<QPoint>>();   // start, end, locator, new locator (widget px)
+		auto grabbable = [this, pts]() {
+			int n = 0;
+			for (const QPoint& p : *pts) n += m_ruler_tool->GetEditingRulerPoint(p.x(), p.y()) != nullptr;
+			return n;
+		};
+		auto vol = std::make_shared<VolumeData*>(nullptr);
+		auto select = [this, vol]() {
+			if (!*vol) return;
+			m_canvas->SetCurrentVolume(*vol);
+			m_tree->SelectVolume(*vol);
+		};
+		// Edit mode: press + release (no move) on point i; the row selected
+		// after it (-1: none, the press was a camera press)
+		auto edit_press = [=](int i) {
+			QTreeWidget* l = list();
+			if (!l || (int)pts->size() <= i) return -2;
+			l->setCurrentItem(nullptr);
+			m_ruler_tool->SetIntMode(6);
+			const QPoint p = (*pts)[i];
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+			m_ruler_tool->SetIntMode(1);
+			const int row = cur_row();
+			select();   // a camera click may pick another volume
+			return row;
+		};
+		// the list: mouse events on its viewport (the path of a real click:
+		// press, release -> RulerIdDelegate::editorEvent -> itemChanged)
+		auto list_mouse = [list](QEvent::Type type, const QPoint& p) {
+			QTreeWidget* l = list();
+			if (!l) return;
+			const Qt::MouseButtons down = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+			QMouseEvent ev(type, QPointF(p), QPointF(l->viewport()->mapToGlobal(p)), Qt::LeftButton, down, Qt::NoModifier);
+			QCoreApplication::sendEvent(l->viewport(), &ev);
+		};
+		auto click_box = [this, list_mouse](int row) {
+			const QRect r = EnsureMeasureDialog()->RulerCheckRect(row);
+			if (r.isEmpty()) return false;
+			list_mouse(QEvent::MouseButtonPress, r.center());
+			list_mouse(QEvent::MouseButtonRelease, r.center());
+			return true;
+		};
+		auto checked = [list](int row) {
+			QTreeWidget* l = list();
+			QTreeWidgetItem* it = l ? l->topLevelItem(row) : nullptr;
+			return it && it->checkState(MeasureDialog::ColID) == Qt::Checked;
+		};
+		// the boxes as drawn: per row, the pixels of the accent colour (a
+		// checked box's fill) and those not of the list's background (the box
+		// is drawn at all) inside its rect; no row selected (the highlight)
+		struct BoxPx { long long accent = 0, drawn = 0; };
+		auto boxes = [=](const QString& file) {
+			std::vector<BoxPx> n;
+			QTreeWidget* l = list();
+			if (!l) return n;
+			l->clearSelection();
+			l->setCurrentItem(nullptr);
+			QImage img = l->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
+			const qreal dpr = img.devicePixelRatio();
+			img.setDevicePixelRatio(1.0);
+			img.save(st->dir + "/" + file + ".png");
+			const QColor ac = l->palette().color(QPalette::Active, QPalette::Accent);
+			const QColor bg = l->palette().color(QPalette::Active, QPalette::Base);
+			auto near = [](QRgb px, const QColor& c, int tol) {
+				return std::abs(qRed(px) - c.red()) <= tol && std::abs(qGreen(px) - c.green()) <= tol && std::abs(qBlue(px) - c.blue()) <= tol;
+			};
+			for (int row = 0; row < l->topLevelItemCount(); row++)
+			{
+				const QRect r = EnsureMeasureDialog()->RulerCheckRect(row);
+				const QRect pr = QRect(int(r.x() * dpr), int(r.y() * dpr), int(r.width() * dpr), int(r.height() * dpr)).intersected(img.rect());
+				BoxPx b;
+				for (int y = pr.top(); y <= pr.bottom(); y++)
+					for (int x = pr.left(); x <= pr.right(); x++)
+					{
+						const QRgb px = img.pixel(x, y);
+						b.accent += near(px, ac, 24);
+						b.drawn += !near(px, bg, 30);
+					}
+				n.push_back(b);
+			}
+			return n;
+		};
+		auto box_log = [log](const char* what, const std::vector<BoxPx>& b) {
+			QString s;
+			for (const BoxPx& x : b) s += QString(" %1/%2").arg(x.accent).arg(x.drawn);
+			log("%s: check box pixels per row (accent/drawn):%s", what, s.toLocal8Bit().constData());
+		};
+		add("no rulers", [=]() {
+			EnsureMeasureDialog()->show();
+			*vol = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
+			check(*vol != nullptr, "a volume loaded");
+			if (!*vol) return;
+			select();
+			// where the view-plane point lies in the volume (rulers are drawn there)
+			QRect in;
+			for (int y = 0; y < cv->height(); y += 8)
+				for (int x = 0; x < cv->width(); x += 8)
+				{
+					FLIVR::Point p;
+					if (m_ruler_tool->GetPointPlane(p, x, y) > 0.0 && (*vol)->InsideClippingPlanes(p))
+						in |= QRect(x, y, 1, 1);
+				}
+			check(in.width() > 150 && in.height() > 150, "the volume covers enough of the view");
+			if (in.width() <= 150 || in.height() <= 150) return;
+			const QPoint c0 = in.center();
+			const int dx = in.width() / 4, dy = in.height() / 4;
+			// a 2-point ruler lower right -> upper left, a locator upper right,
+			// later a locator lower left
+			*pts = { c0 + QPoint(dx, dy), c0 - QPoint(dx, dy), c0 + QPoint(dx, -dy), c0 + QPoint(-dx, dy) };
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetRulerAutoSelect(false);
+			m_ruler_tool->SetPointVolumeMode(0);   // View Plane
+			QCheckBox* c = chk();
+			check(c != nullptr, "Show Rulers in the Measurement window");
+			if (!c) return;
+			check(c->checkState() == Qt::Checked && !c->isEnabled(),
+				QString("no rulers: %1, %2").arg(state(c->checkState())).arg(c->isEnabled() ? "enabled" : "disabled"));
+			m_canvas->RefreshView();
+		});
+		capture("rs_none");
+		add("rulers", [=]() {
+			QCheckBox* c = chk();
+			if (!c || pts->size() < 4) return;
+			m_ruler_tool->SetRulerType(0);         // 2-point ruler
+			m_ruler_tool->SetIntMode(5);
+			click((*pts)[0]);
+			click((*pts)[1]);
+			m_ruler_tool->SetRulerType(2);         // locator
+			click((*pts)[2]);
+			m_ruler_tool->SetIntMode(1);
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			check(rl->size() == 2 && (*rl)[0]->GetNumPoint() == 2 && (*rl)[1]->GetNumPoint() == 1,
+				QString("a 2-point ruler and a locator (%1 rulers)").arg(rl->size()));
+			check(c->checkState() == Qt::Checked && c->isEnabled() && m_ruler_tool->GetRulersShown() == Qt::Checked,
+				QString("rulers: Show Rulers %1, %2").arg(state(c->checkState())).arg(c->isEnabled() ? "enabled" : "disabled"));
+			check(grabbable() == 3, QString("shown: the 3 points can be grabbed (%1)").arg(grabbable()));
+			check(!grey(0) && !grey(1), "shown: the rows are not grey");
+			check(checked(0) && checked(1), "shown: both rows' check boxes checked");
+			const QRect r0 = EnsureMeasureDialog()->RulerCheckRect(0), r1 = EnsureMeasureDialog()->RulerCheckRect(1);
+			log("check box rects (list viewport): row 0 %d,%d %dx%d, row 1 %d,%d %dx%d; ID column %d px", r0.x(), r0.y(), r0.width(),
+				r0.height(), r1.x(), r1.y(), r1.width(), r1.height(), list() ? list()->columnWidth(MeasureDialog::ColID) : -1);
+			check(r0.width() >= 12 && r0.height() >= 12 && r1.top() > r0.bottom(), "each row has a box of its own");
+			const auto b = boxes("rs_list_shown");
+			box_log("shown", b);
+			check(b.size() == 2 && b[0].accent > 100 && b[1].accent > 100, "shown: a checked box is drawn on every row");
+			const int row = edit_press(2);
+			check(row == 1, QString("shown: an Edit press on the locator selects its row (row %1)").arg(row));
+			m_canvas->RefreshView();
+		});
+		capture("rs_shown");
+		add("hide", [=]() {
+			QCheckBox* c = chk();
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			if (!c || rl->size() < 2) return;
+			c->click();
+			check(shown() == 0, QString("unchecked: every ruler hidden (%1 shown)").arg(shown()));
+			check(c->checkState() == Qt::Unchecked && m_ruler_tool->GetRulersShown() == Qt::Unchecked,
+				"the box is " + state(c->checkState()));
+			check(grabbable() == 0, QString("hidden: no point can be grabbed or picked (%1)").arg(grabbable()));
+			check(m_ruler_tool->PickRulerAt((*pts)[2].x(), (*pts)[2].y()) == nullptr, "hidden: a click on the locator picks nothing");
+			check(EnsureMeasureDialog()->RowCount() == 2 && grey(0) && grey(1), QString("hidden: the 2 rows stay, in grey (%1 rows)")
+				.arg(EnsureMeasureDialog()->RowCount()));
+			check(!checked(0) && !checked(1), "hidden: both rows' check boxes unchecked");
+			const auto b = boxes("rs_list_hidden");
+			box_log("hidden", b);
+			check(b.size() == 2 && b[0].accent <= 5 && b[1].accent <= 5 && b[0].drawn > 30 && b[1].drawn > 30,
+				"hidden: an unchecked box is drawn on every row");
+			const FLIVR::Point before = *(*rl)[1]->GetPoint(0);
+			const int row = edit_press(2);
+			check(row == -1 && (*(*rl)[1]->GetPoint(0) - before).length() < 1e-9,
+				QString("hidden: an Edit press on the locator grabs nothing (row %1)").arg(row));
+			m_canvas->RefreshView();
+		});
+		capture("rs_hidden");
+		add("show one", [=]() {
+			QCheckBox* c = chk();
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			if (!c || rl->size() < 2) return;
+			// all hidden; the locator's box in the list: only the locator is shown
+			check(click_box(1), "row 1 has a check box");
+			check(checked(1) && !checked(0) && (*rl)[1]->GetDisp() && !(*rl)[0]->GetDisp(),
+				QString("a click on row 1's box shows the locator only (%1 shown)").arg(shown()));
+			check(c->checkState() == Qt::PartiallyChecked && m_ruler_tool->GetRulersShown() == Qt::PartiallyChecked,
+				"Show Rulers " + state(c->checkState()));
+			check(grabbable() == 1 && m_ruler_tool->GetEditingRulerPoint((*pts)[2].x(), (*pts)[2].y()),
+				QString("only the locator's point can be grabbed (%1)").arg(grabbable()));
+			check(grey(0) && !grey(1), "row 0 grey, row 1 not");
+			QTreeWidget* l = list();
+			check(l && !EnsureMeasureDialog()->ListEditing(), "no name editor opened");
+			const auto b = boxes("rs_list_one");
+			box_log("one shown", b);
+			check(b.size() == 2 && b[0].accent <= 5 && b[0].drawn > 30 && b[1].accent > 100, "row 0's box drawn unchecked, row 1's checked");
+			m_canvas->RefreshView();
+		});
+		capture("rs_one");
+		add("double click", [=]() {
+			QTreeWidget* l = list();
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			const QRect r = EnsureMeasureDialog()->RulerCheckRect(0);
+			if (!l || rl->size() < 2 || r.isEmpty()) return;
+			// as Qt delivers a double click: press, release, double click, release
+			list_mouse(QEvent::MouseButtonPress, r.center());
+			list_mouse(QEvent::MouseButtonRelease, r.center());
+			const bool once = checked(0) && (*rl)[0]->GetDisp();
+			list_mouse(QEvent::MouseButtonDblClick, r.center());
+			list_mouse(QEvent::MouseButtonRelease, r.center());
+			check(once && !checked(0) && !(*rl)[0]->GetDisp(), QString("a double click on row 0's box toggles it twice (after the first click %1)")
+				.arg(once ? "shown" : "not shown"));
+			check(!EnsureMeasureDialog()->ListEditing(), "... and does not open the name editor");
+			if (EnsureMeasureDialog()->ListEditing())
+				if (QWidget* fw = QApplication::focusWidget())
+				{
+					QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+					QCoreApplication::sendEvent(fw, &esc);
+				}
+			check(shown() == 1 && (*rl)[1]->GetDisp(), "only the locator shown again");
+			m_canvas->RefreshView();
+		});
+		add("new locator", [=]() {
+			QCheckBox* c = chk();
+			if (!c || pts->size() < 4) return;
+			m_ruler_tool->SetRulerType(2);
+			m_ruler_tool->SetIntMode(5);
+			click((*pts)[3]);
+			m_ruler_tool->SetIntMode(1);
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			check(rl->size() == 3 && (*rl)[2]->GetDisp() && shown() == 2, QString("a new locator is shown, the 2-point ruler stays hidden (%1 rulers, %2 shown)")
+				.arg(rl->size()).arg(shown()));
+			check(c->checkState() == Qt::PartiallyChecked && m_ruler_tool->GetRulersShown() == Qt::PartiallyChecked,
+				"the box is " + state(c->checkState()));
+			check(grabbable() == 2, QString("the 2 locators' points can be grabbed (%1)").arg(grabbable()));
+			check(grey(0) && !grey(1) && !grey(2) && !checked(0) && checked(1) && checked(2), "rows: the hidden one unchecked and grey, the others not");
+			m_canvas->RefreshView();
+		});
+		capture("rs_partial");
+		add("show all", [=]() {
+			QCheckBox* c = chk();
+			if (!c) return;
+			c->click();
+			check(shown() == 3 && c->checkState() == Qt::Checked && m_ruler_tool->GetRulersShown() == Qt::Checked,
+				QString("partly checked, click: all shown (%1), the box %2").arg(shown()).arg(state(c->checkState())));
+			check(grabbable() == 4, QString("all 4 points can be grabbed (%1)").arg(grabbable()));
+			check(!grey(0) && !grey(1) && !grey(2) && checked(0) && checked(1) && checked(2), "no grey rows, every box checked");
+			const auto b = boxes("rs_list_all");
+			box_log("all shown", b);
+			check(b.size() == 3 && b[0].accent > 100 && b[1].accent > 100 && b[2].accent > 100, "a checked box is drawn on all 3 rows");
+			m_canvas->RefreshView();
+		});
+		capture("rs_all");
+		add("hide all", [=]() {
+			QCheckBox* c = chk();
+			if (!c) return;
+			c->click();
+			check(shown() == 0 && c->checkState() == Qt::Unchecked, QString("checked, click: all hidden (%1 shown), the box %2")
+				.arg(shown()).arg(state(c->checkState())));
+			// a hidden unfinished ruler that a click adds a point to is shown
+			m_ruler_tool->SetRulerType(1);   // polyline
+			m_ruler_tool->SetIntMode(5);
+			click((*pts)[3] + QPoint(0, -40));
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			Ruler* poly = rl->size() == 4 ? (*rl)[3] : nullptr;
+			c->click();   // show all
+			c->click();   // hide all, the unfinished polyline too
+			check(poly && !poly->GetDisp() && !poly->GetFinished(), "an unfinished polyline is hidden with the rest");
+			click((*pts)[3] + QPoint(40, -40));
+			check(poly && poly->GetDisp() && poly->GetNumPoint() == 2 && shown() == 1,
+				QString("a click adds its 2nd point and shows it (%1 points, %2 shown)").arg(poly ? poly->GetNumPoint() : 0).arg(shown()));
+			m_ruler_tool->FinishRuler();
+			m_ruler_tool->SetIntMode(1);
+			if (poly)
+			{
+				rl->pop_back();
+				delete poly;
+				m_ruler_tool->RulersModified();
+			}
+			check(rl->size() == 3 && shown() == 0 && c->checkState() == Qt::Unchecked,
+				QString("polyline deleted: %1 rulers, all hidden, the box %2").arg(rl->size()).arg(state(c->checkState())));
+			m_canvas->RefreshView();
+		});
+		capture("rs_hidden2");
+		add("images", [=]() {
+			if (pts->size() < 4) return;
+			const QStringList names = { "rs_none", "rs_shown", "rs_hidden", "rs_one", "rs_partial", "rs_all", "rs_hidden2" };
+			std::vector<QImage> img;
+			for (const QString& n : names)
+				img.push_back(QImage(st->dir + "/" + n + ".png").convertToFormat(QImage::Format_RGB32));
+			bool ok = true;
+			for (const QImage& i : img)
+				ok = ok && !i.isNull() && i.size() == img[0].size();
+			check(ok, "seven captures of the same size");
+			if (!ok) return;
+			const double s = double(img[0].width()) / cv->width();
+			// pixels that differ, and those outside a box around point q (a locator and its ID)
+			auto diff = [&img, s](int a, int b, const QPoint& q = QPoint(), long long* outside = nullptr) {
+				const QRect box(int((q.x() - 35) * s), int((q.y() - 35) * s), int(70 * s), int(70 * s));
+				long long n = 0, o = 0;
+				for (int y = 0; y < img[a].height(); y++)
+				{
+					const QRgb* la = (const QRgb*)img[a].constScanLine(y);
+					const QRgb* lb = (const QRgb*)img[b].constScanLine(y);
+					for (int x = 0; x < img[a].width(); x++)
+						if (la[x] != lb[x]) { n++; if (!box.contains(x, y)) o++; }
+				}
+				if (outside) *outside = o;
+				return n;
+			};
+			long long o_one = 0, o_partial = 0, o_all = 0;
+			const long long d_shown = diff(0, 1), d_hidden = diff(0, 2), d_one = diff(0, 3, (*pts)[2], &o_one),
+				d_partial = diff(3, 4, (*pts)[3], &o_partial), d_all = diff(1, 5, (*pts)[3], &o_all), d_hidden2 = diff(0, 6);
+			log("changed pixels vs no rulers: shown %lld, hidden %lld, only the locator %lld (outside it %lld), hidden again %lld; "
+				"+ new locator vs only the locator %lld (outside it %lld); all vs shown %lld (outside the new locator %lld)",
+				d_shown, d_hidden, d_one, o_one, d_hidden2, d_partial, o_partial, d_all, o_all);
+			check(d_shown > 100, "shown: the rulers are drawn");
+			check(d_hidden == 0, "hidden: the image of the view without rulers");
+			check(d_one > 20 && o_one == 0, "row 1's box: only the locator is drawn");
+			check(d_partial > 20 && o_partial == 0, "a new locator: drawn too, nothing else changes");
+			check(d_all > 20 && o_all == 0, "show all: the rulers of before and the new locator");
+			check(d_hidden2 == 0, "hidden again: no ruler drawn");
+		});
+		add("project", [=]() {
+			QCheckBox* c = chk();
+			if (!c) return;
+			const QString prj = st->dir + "/rulershow.vrp";
+			check(SaveProject(prj), "project saved: " + prj);
+			QFile f(prj);
+			const QByteArray txt = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+			check(txt.count("display=0") >= 3, QString("the file has display=0 (%1 times)").arg(txt.count("display=0")));
+			check(OpenProject(prj), "project opened");
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			check(rl->size() == 3 && shown() == 0, QString("opened: %1 rulers, %2 shown").arg(rl->size()).arg(shown()));
+			check(c->checkState() == Qt::Unchecked && c->isEnabled(), "opened: Show Rulers " + state(c->checkState()));
+			check(!checked(0) && !checked(1) && !checked(2), "opened: every row's box unchecked");
+		});
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetIntMode(1);
+			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+			m_ruler_tool->SetPointVolumeMode(m_settings->GetPointVolumeMode());
+			QCheckBox* c = chk();
+			check(c && c->checkState() == Qt::Checked && !c->isEnabled(), "no rulers again: Show Rulers checked, disabled");
+		});
+		add("dialog", [=]() {
+			MeasureDialog* dlg = EnsureMeasureDialog();
+			QCheckBox* c = chk();
+			QCheckBox* s = sid();
+			if (!c || !s) return;
+			QImage im = dlg->grab().toImage();
+			im.save(st->dir + "/rs_dialog.png");
+			const QRect gc = c->geometry(), gs = s->geometry();
+			log("dialog %dx%d (minimum %dx%d); Show ID at start %d,%d %dx%d; Show Rulers %d,%d %dx%d", dlg->width(), dlg->height(),
+				dlg->minimumSizeHint().width(), dlg->minimumSizeHint().height(), gs.x(), gs.y(), gs.width(), gs.height(),
+				gc.x(), gc.y(), gc.width(), gc.height());
+			// macOS: a check box's geometry includes its layout margins, so the
+			// two may touch; compare the centres
+			check(gc.center().x() > gs.center().x() + gs.width() / 2 && std::abs(gc.center().y() - gs.center().y()) <= 2 &&
+				gc.right() < dlg->width(), "Show Rulers right of Show ID at start, on its row, inside the window");
+		}, false);
+	}
+
+	if (kind == "rulerdepth")
+	{
+		// The point goes onto the surface in front. P, Q: binary blocks on
+		// the same grid (x 16..47, y 12..35; P z 4..11, Q z 20..27), one
+		// behind the other along the view, the one behind current. A click
+		// with Auto-select goes onto the block in front with Accumulated
+		// Intensity, Maximum Intensity (equal brightness) and View Plane, in
+		// perspective and Ortho, on its front face (Accumulated / Maximum);
+		// an Edit drag keeps it there. G: a uniform half-bright slab (z
+		// 8..23): the Accumulated point's depth below its front face does
+		// not depend on the Sample Rate (0.18, 1, 2)
+		auto P = std::make_shared<VolumeData*>(nullptr);
+		auto Q = std::make_shared<VolumeData*>(nullptr);
+		auto G = std::make_shared<VolumeData*>(nullptr);
+		auto front = std::make_shared<VolumeData*>(nullptr);
+		auto back = std::make_shared<VolumeData*>(nullptr);
+		auto c = std::make_shared<QPoint>();
+		auto face = std::make_shared<double>(0.0);   // world z of the front block's face towards the camera
+		auto persp0 = std::make_shared<bool>(true);
+		auto vname = [](VolumeData* v) { return v ? QString::fromStdWString(v->GetName()) : QString("(none)"); };
+		auto select = [this](VolumeData* v) {
+			if (!v) return;
+			m_canvas->SetCurrentVolume(v);
+			m_tree->SelectVolume(v);
+		};
+		auto click = [cv](const QPoint& p) {
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+		};
+		// the world z of voxel index z of a volume (the volume's own
+		// transform: the internal z axis is the file's negated)
+		auto world_z = [](VolumeData* v, double zi) {
+			int rx = 1, ry = 1, rz = 1;
+			v->GetResolution(rx, ry, rz);
+			return v->GetTexture()->transform()->project(FLIVR::Point(0.0, 0.0, zi / rz)).z();
+		};
+		// nearer the camera = larger eye-space z
+		auto eye_z = [cv](double x, double y, double z) {
+			const glm::vec4 e = cv->GetMvMat() * glm::vec4(float(x), float(y), float(z), 1.0f);
+			return double(e.z);
+		};
+		// the pixels where every volume of vs has an Accumulated surface: their centre
+		auto overlap = [this, cv](const std::vector<VolumeData*>& vs, bool use_transf) {
+			long long n = 0;
+			double sx = 0.0, sy = 0.0;
+			for (int y = 0; y < cv->height(); y += 6)
+				for (int x = 0; x < cv->width(); x += 6)
+				{
+					bool all = true;
+					for (VolumeData* v : vs)
+					{
+						FLIVR::Point p;
+						if (m_ruler_tool->GetPointVolume(p, x, y, v, 2, use_transf) <= 0.0) { all = false; break; }
+					}
+					if (all) { n++; sx += x; sy += y; }
+				}
+			return n ? QPoint(int(sx / n), int(sy / n)) : QPoint(-1, -1);
+		};
+		add("setup", [=]() {
+			*P = find_vol(L"P.nrrd");
+			*Q = find_vol(L"Q.nrrd");
+			*G = find_vol(L"G.nrrd");
+			check(*P && *Q && *G, "P, Q and G loaded");
+			if (!*P || !*Q || !*G) return;
+			*persp0 = cv->GetPerspective();
+			for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(v == *P || v == *Q);
+			RefreshTree();
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_canvas->RefreshView();
+		});
+		auto locate = [=](const QString& proj) {
+			add(proj + ": the blocks", [=]() {
+				if (!*P || !*Q) return;
+				*c = overlap({ *P, *Q }, true);
+				check(c->x() >= 0, proj + ": P and Q overlap in the view");
+				if (c->x() < 0) return;
+				FLIVR::Point pp, pq;
+				const double tp = m_ruler_tool->GetPointVolume(pp, c->x(), c->y(), *P, 2, true);
+				const double tq = m_ruler_tool->GetPointVolume(pq, c->x(), c->y(), *Q, 2, true);
+				const double zp = eye_z(pp.x(), pp.y(), pp.z()), zq = eye_z(pq.x(), pq.y(), pq.z());
+				*front = zp > zq ? *P : *Q;
+				*back = zp > zq ? *Q : *P;
+				// the face of the block in front towards the camera
+				const double i0 = *front == *P ? 4.0 : 20.0;
+				const double z0 = world_z(*front, i0), z1 = world_z(*front, i0 + 8.0);
+				*face = eye_z(16.0, 12.0, z0) > eye_z(16.0, 12.0, z1) ? z0 : z1;
+				log("%s: pixel %d,%d; surfaces: P t %.2f (%.2f, %.2f, %.2f) eye z %.2f, Q t %.2f (%.2f, %.2f, %.2f) eye z %.2f; in front %s, its face z %.0f",
+					proj.toLocal8Bit().constData(), c->x(), c->y(), tp, pp.x(), pp.y(), pp.z(), zp, tq, pq.x(), pq.y(), pq.z(), zq,
+					vname(*front).toLocal8Bit().constData(), *face);
+				check((*front == *P) == (tp < tq), proj + ": the block in front is the one the ray meets first (rays run front to back)");
+				double vp = 0.0, vq = 0.0;
+				FLIVR::Point mp;
+				m_ruler_tool->GetPointVolume(mp, c->x(), c->y(), *P, 1, true, 0.5, &vp);
+				m_ruler_tool->GetPointVolume(mp, c->x(), c->y(), *Q, 1, true, 0.5, &vq);
+				log("%s: brightest voxel after the transfer function: P %.3f, Q %.3f%s", proj.toLocal8Bit().constData(), vp, vq,
+					vp == vq ? " (equal: the old rule kept the current volume, the one behind)" : "");
+			});
+		};
+		// a click with Auto-select and the block behind current
+		auto pick = [=](const QString& proj, int pmode, const QString& what) {
+			add(proj + ": " + what, [=]() {
+				if (!*front || !*back || c->x() < 0) return;
+				select(*back);
+				m_ruler_tool->ClearRulers();
+				m_ruler_tool->RulersModified();
+				m_ruler_tool->SetRulerAutoSelect(true);
+				m_ruler_tool->SetPointVolumeMode(pmode);
+				m_ruler_tool->SetRulerType(2);   // locator
+				m_ruler_tool->SetIntMode(5);
+				click(*c);
+				m_ruler_tool->SetIntMode(1);
+				std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+				Ruler* r = rl->size() == 1 ? (*rl)[0] : nullptr;
+				const QString on = r ? QString::fromStdWString(r->GetPointVolName(0)) : QString("(no locator)");
+				check(r && on == vname(*front), QString("%1, %2: the point goes onto the block in front, %3 (%4 behind was current)")
+					.arg(proj).arg(what).arg(on).arg(vname(*back)));
+				check(CurrentVolume() == *front, QString("%1, %2: the block in front is selected (current %3)").arg(proj).arg(what).arg(vname(CurrentVolume())));
+				if (r && pmode != 0)
+				{
+					const FLIVR::Point q = *r->GetPoint(0);
+					log("%s, %s: point (%.2f, %.2f, %.2f), %.2f voxels from the face (world z %.0f)", proj.toLocal8Bit().constData(),
+						what.toLocal8Bit().constData(), q.x(), q.y(), q.z(), std::fabs(q.z() - *face), *face);
+					check(std::fabs(q.z() - *face) <= 1.0, QString("%1, %2: on the front face (within 1 voxel)").arg(proj).arg(what));
+				}
+			});
+		};
+		locate("perspective");
+		pick("perspective", 2, "Accumulated Intensity");
+		add("perspective: Edit drag", [=]() {
+			std::vector<Ruler*>* rl = m_ruler_tool->GetRulerList();
+			if (rl->size() != 1 || !*front || !*back) return;
+			select(*back);
+			m_ruler_tool->SetPointVolumeMode(2);
+			m_ruler_tool->SetIntMode(6);
+			cv->SimulateMouse(QEvent::MouseMove, *c, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, *c, Qt::LeftButton, Qt::LeftButton);
+			int on_front = 0;
+			for (int k = 1; k <= 4; k++)
+			{
+				cv->SimulateMouse(QEvent::MouseMove, *c + QPoint(2 * k, k), Qt::LeftButton, Qt::LeftButton);
+				on_front += QString::fromStdWString((*rl)[0]->GetPointVolName(0)) == vname(*front) &&
+					std::fabs((*rl)[0]->GetPoint(0)->z() - *face) <= 1.0;
+			}
+			cv->SimulateMouse(QEvent::MouseButtonRelease, *c + QPoint(8, 4), Qt::LeftButton, Qt::NoButton);
+			m_ruler_tool->SetIntMode(1);
+			check(on_front == 4, QString("Edit drag over both blocks (the one behind current): the point stays on the front face (%1 of 4 moves)").arg(on_front));
+		});
+		pick("perspective", 1, "Maximum Intensity");
+		pick("perspective", 0, "View Plane");
+		add("ortho", [=]() {
+			cv->SetPersp(false);
+			m_canvas->RefreshView();
+		});
+		locate("Ortho");
+		pick("Ortho", 2, "Accumulated Intensity");
+		pick("Ortho", 1, "Maximum Intensity");
+		pick("Ortho", 0, "View Plane");
+		// not about rulers: which block a click in the camera mode selects
+		// (wx PickVolume, the largest distance in Ortho)
+		add("Ortho: camera click", [=]() {
+			if (!*front || !*back || c->x() < 0) return;
+			m_ruler_tool->SetIntMode(1);
+			select(*G);   // hidden: whatever the click selects shows
+			click(*c);
+			log("Ortho: a click in the camera mode selects %s (in front: %s)", vname(CurrentVolume()).toLocal8Bit().constData(),
+				vname(*front).toLocal8Bit().constData());
+			cv->SetPersp(true);
+			m_canvas->RefreshView();
+		});
+		add("perspective: camera click", [=]() {
+			if (!*front || !*back || c->x() < 0) return;
+			select(*G);
+			click(*c);
+			log("perspective: a click in the camera mode selects %s (in front: %s)", vname(CurrentVolume()).toLocal8Bit().constData(),
+				vname(*front).toLocal8Bit().constData());
+			for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(v == *G);
+			RefreshTree();
+			select(*G);
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_canvas->RefreshView();
+		});
+		add("Sample Rate", [=]() {
+			if (!*G) return;
+			const QPoint g = overlap({ *G }, false);
+			check(g.x() >= 0, "the slab G is in the view");
+			if (g.x() < 0) return;
+			const double z0 = world_z(*G, 8.0), z1 = world_z(*G, 24.0);
+			const double gface = eye_z(8.0, 8.0, z0) > eye_z(8.0, 8.0, z1) ? z0 : z1;
+			const double rate0 = (*G)->GetSampleRate();
+			double dmin = 1e9, dmax = -1e9;
+			QString s;
+			for (double r : { 0.18, 1.0, 2.0 })
+			{
+				(*G)->SetSampleRate(r);
+				FLIVR::Point p;
+				const double t = m_ruler_tool->GetPointVolume(p, g.x(), g.y(), *G, 2, false);
+				const double d = t > 0.0 ? std::fabs(p.z() - gface) : 1e9;
+				dmin = std::min(dmin, d);
+				dmax = std::max(dmax, d);
+				s += QString(" %1: %2").arg(r).arg(d, 0, 'f', 2);
+			}
+			(*G)->SetSampleRate(rate0);
+			log("slab of value 128: Accumulated point, voxels below the front face (world z %.0f) per Sample Rate:%s", gface, s.toLocal8Bit().constData());
+			check(dmax <= 1.5, "the point is within 1.5 voxels of the front face at every Sample Rate");
+			check(dmax - dmin <= 0.75, "the depth does not depend on the Sample Rate");
+		});
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetIntMode(1);
+			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+			m_ruler_tool->SetPointVolumeMode(m_settings->GetPointVolumeMode());
+			cv->SetPersp(*persp0);
+			for (VolumeData* v : m_canvas->Volumes()) v->SetDisp(true);
+			RefreshTree();
+			m_canvas->RefreshView();
+		});
+	}
+
+	if (kind == "cellsview")
+	{
+		// After "Apply Transform" with "Cells: shape preserving" (S.nrrd with
+		// landmarks moving it by about (4, -3, 2) voxels), every channel in
+		// turn: Toggle Visibility off, on, and a colour typed in the
+		// Properties colour box; after each, the view still shows the
+		// channels that are on (a capture with lit pixels, not much darker
+		// than before the transform when all are on). VVD_QT_CV_TARGET:
+		// "same" (default) or "vol:<name>"; VVD_QT_CV_DEVICE: 0 CPU, 1 GPU;
+		// VVD_QT_CV_ORTHO=1: Ortho
+		auto lit_px = [](const QString& file) -> long long {
+			QImage img = QImage(file).convertToFormat(QImage::Format_RGB32);
+			if (img.isNull()) return -1;
+			long long n = 0;
+			for (int y = 0; y < img.height(); y++)
+			{
+				const QRgb* l = (const QRgb*)img.constScanLine(y);
+				for (int x = 0; x < img.width(); x++)
+					n += qRed(l[x]) + qGreen(l[x]) + qBlue(l[x]) > 30;
+			}
+			return n;
+		};
+		auto shown_names = [this]() {
+			QStringList s;
+			for (VolumeData* v : m_canvas->Volumes())
+				if (v->GetDisp()) s << QString::fromStdWString(v->GetName());
+			return s;
+		};
+		auto ref_lit = std::make_shared<long long>(-1);
+		auto prev_lit = std::make_shared<long long>(-1);
+		auto n_before = std::make_shared<int>(0);
+		add("landmarks", [=]() {
+			const QString sname = qEnvironmentVariable("VVD_QT_CV_SRC").isEmpty() ? QString("S.nrrd") : qEnvironmentVariable("VVD_QT_CV_SRC");
+			VolumeData* src = find_vol(sname.toStdWString());
+			check(src != nullptr, sname + " loaded");
+			if (!src) return;
+			*n_before = (int)m_canvas->Volumes().size();
+			if (qEnvironmentVariable("VVD_QT_CV_ORTHO") == "1")
+				cv->SetPersp(false);
+			if (qEnvironmentVariable("VVD_QT_CV_FOG") == "1")
+				cv->SetFog(true);
+			m_canvas->SetCurrentVolume(src);
+			m_tree->SelectVolume(src);
+			m_ruler_tool->ClearRulers();
+			// 2-point rulers moving -> target inside src's box (world
+			// coordinates, z the file's negated), the target 3% of the box
+			// size away: x +, y -, z deeper
+			const FLIVR::BBox bb = src->GetBounds();
+			const FLIVR::Vector ext = bb.diagonal();
+			auto at = [&](double fx, double fy, double fz) {
+				return FLIVR::Point(bb.min().x() + fx * ext.x(), bb.min().y() + fy * ext.y(), bb.min().z() + fz * ext.z());
+			};
+			int k = 0;
+			for (double fx : { 0.2, 0.5, 0.8 })
+				for (double fy : { 0.25, 0.75 })
+					for (double fz : { 0.25, 0.75 })
+					{
+						Ruler* r = new Ruler();
+						r->SetRulerType(0);
+						const double jx = 0.003 * (k % 3), jy = -0.002 * (k % 2);
+						r->AddPoint(at(fx, fy, fz));
+						r->AddPoint(at(fx + 0.03 + jx, fy - 0.03 + jy, fz - 0.03));
+						r->SetName(VVDString(QString("lm%1").arg(k).toStdWString()));
+						m_ruler_tool->GetRulerList()->push_back(r);
+						k++;
+					}
+			m_ruler_tool->RulersModified();
+			log("%d landmarks in %ls (box %.2f %.2f %.2f .. %.2f %.2f %.2f); volumes %d; fog %d", k, src->GetName().c_str(),
+				bb.min().x(), bb.min().y(), bb.min().z(), bb.max().x(), bb.max().y(), bb.max().z(), *n_before, (int)cv->GetFog());
+			m_canvas->RefreshView();
+		});
+		capture("cv_before");
+		add("apply", [=]() {
+			*ref_lit = lit_px(st->dir + "/cv_before.png");
+			MeasureDialog* dlg = EnsureMeasureDialog();
+			dlg->show();
+			QComboBox* type = nullptr;
+			QPushButton* apply = nullptr;
+			for (QComboBox* c : dlg->findChildren<QComboBox*>())
+				if (c->findText("Thin Plate Spline") >= 0) type = c;
+			for (QPushButton* b : dlg->findChildren<QPushButton*>()) if (b->text() == "Apply Transform") apply = b;
+			QComboBox* device = dlg->findChild<QComboBox*>("cell_device");
+			QComboBox* tc = dlg->findChild<QComboBox*>("warp_target");
+			if (!type || !apply || !device || !tc) { check(false, "warp controls found"); return; }
+			type->setCurrentIndex(MeasureDialog::WarpCells);
+			const int dev = qEnvironmentVariableIntValue("VVD_QT_CV_DEVICE");
+			if (dev < device->count()) device->setCurrentIndex(dev);
+			dlg->UpdateTargetCombo();
+			QString want = qEnvironmentVariable("VVD_QT_CV_TARGET");
+			if (want.isEmpty()) want = "same";
+			const int ti = tc->findData(want);
+			check(ti >= 0, "target " + want);
+			if (ti >= 0) { tc->setCurrentIndex(ti); Q_EMIT tc->activated(ti); }
+			QElapsedTimer t;
+			t.start();
+			apply->click();
+			// the results dialog is not modal; close it as a user would
+			for (QWidget* w : QApplication::topLevelWidgets())
+				if (qobject_cast<RigidCellsReportDialog*>(w) && w->isVisible()) w->hide();
+			const int n = (int)m_canvas->Volumes().size();
+			VolumeData* res = n > *n_before ? m_canvas->Volumes().back() : nullptr;
+			check(res != nullptr, QString("a result volume added (%1 volumes, %2 ms, device %3)").arg(n).arg(t.elapsed()).arg(device->currentText()));
+			if (res)
+			{
+				int rx, ry, rz;
+				res->GetResolution(rx, ry, rz);
+				log("result %ls %dx%dx%d, max %.0f, nonzero %lld", res->GetName().c_str(), rx, ry, rz, res->GetMaxValue(), data_nonzero(res));
+			}
+			log("before the transform: %lld lit pixels; shown: %s", *ref_lit, shown_names().join(", ").toLocal8Bit().constData());
+			for (VolumeData* v : m_canvas->Volumes())
+			{
+				int nx = 0, ny = 0, nz = 0;
+				double sx = 0, sy = 0, sz = 0, ox = 0, oy = 0, oz = 0;
+				v->GetResolution(nx, ny, nz);
+				v->GetSpacings(sx, sy, sz);
+				v->GetOrigin(ox, oy, oz);
+				log("  %ls: %dx%dx%d, spacing %g %g %g, origin %g %g %g, %d bricks", v->GetName().c_str(), nx, ny, nz,
+					sx, sy, sz, ox, oy, oz, v->GetTexture() ? v->GetTexture()->get_brick_num() : -1);
+			}
+			m_canvas->RefreshView();
+		});
+		capture("cv_after");
+		add("after", [=]() {
+			const long long n = lit_px(st->dir + "/cv_after.png");
+			*prev_lit = n;
+			log("after the transform: %lld lit pixels", n);
+			check(n > *ref_lit / 2, "after the transform the view is drawn");
+		});
+		const char* codes[] = { "r", "g", "b", "y", "m", "c", "o", "w" };
+		const int nvol = std::max(1, qEnvironmentVariableIntValue("VVD_QT_CV_NVOL") > 0 ? qEnvironmentVariableIntValue("VVD_QT_CV_NVOL") : 6);
+		for (int i = 0; i < nvol; i++)
+			for (int a = 0; a < 3; a++)
+			{
+				const QString tag = QString("cv_v%1_%2").arg(i).arg(a == 0 ? "off" : a == 1 ? "on" : "color");
+				const QString code = codes[(i * 3 + a) % 8];
+				add(tag, [=]() {
+					const std::vector<VolumeData*> v = m_canvas->Volumes();
+					if (i >= (int)v.size()) return;
+					VolumeData* vd = v[i];
+					m_tree->SelectVolume(vd);
+					if (a < 2)
+						m_tree->OnAct();   // the tree's Toggle Visibility
+					else if (QLineEdit* ct = m_prop->findChild<QLineEdit*>("ColorText"))
+					{
+						ct->selectAll();
+						ct->insert(code);   // a typed colour (textEdited)
+					}
+					log("%s %ls: shown %s", a == 0 ? "off" : a == 1 ? "on" : ("colour " + code).toLocal8Bit().constData(),
+						vd->GetName().c_str(), shown_names().join(", ").toLocal8Bit().constData());
+				});
+				capture(tag);
+				add(tag + " check", [=]() {
+					const long long n = lit_px(st->dir + "/" + tag + ".png");
+					const int on = shown_names().size();
+					log("%s: %lld lit pixels (%d channels on; before %lld)", tag.toLocal8Bit().constData(), n, on, *prev_lit);
+					check(on == 0 || n > 0, tag + ": channels are on and the view shows them");
+					if (a == 1 || a == 2)
+						check(n > *ref_lit / 2, tag + ": all on, the view is not much darker than before the transform");
+					*prev_lit = n;
+				});
+			}
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			cv->SetPersp(true);
+		});
+	}
+
+	if (kind == "treegroups")
+	{
+		// Groups dragged in the Workspace with every group expanded (six
+		// volumes on the command line, put into G1, G2, G3 by dragging them
+		// onto the groups): a group dropped on the lower half of another
+		// group's rows (its volumes included) lands after it, on the upper
+		// half before it, below every row at the end, on its own rows nowhere
+		// else; the line during the drag is where it lands
+		QTreeWidget* tw = m_tree->Tree();
+		auto order = [this]() {
+			QStringList s;
+			for (int i = 0; i < m_canvas->GetLayerNum(); i++)
+				if (TreeLayer* l = m_canvas->GetLayer(i))
+				{
+					const QString n = QString::fromStdWString(l->GetName());
+					if (n == "G1" || n == "G2" || n == "G3") s << n;
+				}
+			return s.join(" ");
+		};
+		auto group = [this](const char* name) { return m_tree->FindItem(name, TreePanel::TypeGroup); };
+		auto last_child = [](QTreeWidgetItem* g) { return g && g->childCount() ? g->child(g->childCount() - 1) : nullptr; };
+		add("make groups", [=]() {
+			const std::vector<VolumeData*> v = m_canvas->Volumes();
+			if (v.size() < 6) { check(false, QString("six volumes (%1)").arg(v.size())); return; }
+			for (const char* g : { "G1", "G2", "G3" }) m_canvas->AddGroup(VVDString(QString(g).toStdWString()));
+			m_tree->UpdateTree();
+			for (int i = 0; i < 6; i++)
+			{
+				const char* g = i < 2 ? "G1" : i < 4 ? "G2" : "G3";
+				m_tree->SimulateDrag(m_tree->FindItem(QString::fromStdWString(v[i]->GetName()), TreePanel::TypeVolume), group(g), false);
+				QCoreApplication::processEvents();   // the tree is rebuilt after a drop
+			}
+			tw->expandAll();
+			log("groups: %s; G1 %d, G2 %d, G3 %d volumes", order().toLocal8Bit().constData(),
+				group("G1") ? group("G1")->childCount() : -1, group("G2") ? group("G2")->childCount() : -1, group("G3") ? group("G3")->childCount() : -1);
+			check(order() == "G1 G2 G3" && group("G1") && group("G1")->childCount() == 2 && group("G3") && group("G3")->childCount() == 2,
+				"G1 G2 G3, two volumes each, by dragging the volumes onto the groups");
+		});
+		add("line", [=]() {
+			tw->expandAll();
+			// a drag of G3 over G1's last volume, lower half: the line under G1's rows
+			QTreeWidgetItem* src = group("G3");
+			QTreeWidgetItem* dst = last_child(group("G1"));
+			auto* dtw = qobject_cast<DataTreeWidget*>(tw);
+			if (!src || !dst || !dtw) { check(false, "G3, G1's volumes and the tree"); return; }
+			const QRect r = tw->visualItemRect(dst);
+			const QPoint pos(r.center().x(), r.bottom() - 2);
+			dtw->SetDragItem(src);
+			QMimeData mime;
+			mime.setData("application/x-vvd-tree-item", src->text(0).toUtf8());
+			QDragEnterEvent enter(pos, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(tw->viewport(), &enter);
+			QDragMoveEvent move(pos, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(tw->viewport(), &move);
+			const int line = dtw->DropLineY();
+			QDragLeaveEvent leave;
+			QCoreApplication::sendEvent(tw->viewport(), &leave);
+			dtw->SetDragItem(nullptr);
+			log("line at y %d; G1's last row %d..%d", line, r.top(), r.bottom());
+			check(line == r.bottom(), "dragging G3 over G1's last volume shows the line under G1's rows");
+			check(dtw->DropLineY() == -1, "the line is gone when the drag leaves");
+		});
+		add("after G1", [=]() {
+			tw->expandAll();
+			m_tree->SimulateDrag(group("G3"), last_child(group("G1")), true);
+		});
+		add("after G1 check", [=]() {
+			log("G3 onto G1's last volume, lower half: %s", order().toLocal8Bit().constData());
+			check(order() == "G1 G3 G2", "G3 dropped on G1's last volume lands after G1");
+		});
+		add("before G2", [=]() {
+			tw->expandAll();
+			QTreeWidgetItem* g2 = group("G2");
+			m_tree->SimulateDrag(group("G1"), g2 && g2->childCount() ? g2->child(0) : nullptr, false);
+		});
+		add("before G2 check", [=]() {
+			log("G1 onto G2's first volume, upper half: %s", order().toLocal8Bit().constData());
+			check(order() == "G3 G1 G2", "G1 dropped on G2's first volume lands before G2");
+		});
+		add("own rows", [=]() {
+			tw->expandAll();
+			m_tree->SimulateDrag(group("G1"), last_child(group("G1")), true);
+		});
+		add("own rows check", [=]() {
+			log("G1 onto its own volume: %s", order().toLocal8Bit().constData());
+			check(order() == "G3 G1 G2", "G1 dropped on its own rows stays");
+		});
+		add("to the end", [=]() {
+			// the groups collapsed for room below the rows; the view open
+			tw->collapseAll();
+			if (QTreeWidgetItem* g3 = group("G3"))
+				for (QTreeWidgetItem* p = g3->parent(); p; p = p->parent()) tw->expandItem(p);
+			QStringList all;
+			for (int i = 0; i < m_canvas->GetLayerNum(); i++)
+				if (TreeLayer* l = m_canvas->GetLayer(i)) all << QString::fromStdWString(l->GetName());
+			QTreeWidgetItem* top = tw->topLevelItem(tw->topLevelItemCount() - 1);
+			log("before: layers %s; %d top-level items, last %s with %d children; viewport %dx%d",
+				all.join(", ").toLocal8Bit().constData(), tw->topLevelItemCount(), top ? top->text(0).toLocal8Bit().constData() : "-",
+				top ? top->childCount() : -1, tw->viewport()->width(), tw->viewport()->height());
+			const bool ok = m_tree->SimulateDrag(group("G3"), nullptr, false);
+			log("drag below every row: %s", ok ? "dropped" : "not dropped (no room below the rows?)");
+		});
+		add("to the end check", [=]() {
+			QString last;
+			for (int i = 0; i < m_canvas->GetLayerNum(); i++)
+				if (TreeLayer* l = m_canvas->GetLayer(i)) last = QString::fromStdWString(l->GetName());
+			log("G3 below every row: %s, last layer %s", order().toLocal8Bit().constData(), last.toLocal8Bit().constData());
+			check(order() == "G1 G2 G3" && last == "G3", "G3 dropped below every row moves to the end");
+		});
+	}
+
+	if (kind == "bulbs")
+	{
+		// Workspace bulbs: a volume's bulb has its colour at full brightness
+		// (largest component 255), not the dim colour itself; a grey one is white
+		add("bulbs", [=]() {
+			VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
+			QTreeWidget* tw = m_tree->findChild<QTreeWidget*>();
+			if (!vd || !tw) { check(false, "a volume and the tree"); return; }
+			const FLIVR::Color keep = vd->GetColor();
+			auto bulb = [&]() -> QImage {
+				m_tree->UpdateTreeColors();
+				for (QTreeWidgetItemIterator it(tw); *it; ++it)
+					if ((*it)->text(0) == QString::fromStdWString(vd->GetName()))
+					{
+						const QIcon ic = (*it)->icon(0);
+						const QList<QSize> sz = ic.availableSizes();
+						return ic.pixmap(sz.isEmpty() ? QSize(16, 16) : sz.first()).toImage().convertToFormat(QImage::Format_ARGB32);
+					}
+				return QImage();
+			};
+			auto count = [](const QImage& img, int r, int g, int b) {
+				int n = 0;
+				for (int y = 0; y < img.height(); y++)
+					for (int x = 0; x < img.width(); x++)
+					{
+						const QRgb p = img.pixel(x, y);
+						if (qAlpha(p) > 0 && std::abs(qRed(p) - r) <= 1 && std::abs(qGreen(p) - g) <= 1 && std::abs(qBlue(p) - b) <= 1) n++;
+					}
+				return n;
+			};
+			struct C { double r, g, b; int er, eg, eb; const char* what; };
+			for (const C& c : { C{ 0.2, 0.05, 0.25, 204, 51, 255, "dim purple" }, C{ 0.3, 0.3, 0.3, 255, 255, 255, "dim grey" },
+				C{ 0.0167, 0.0167, 0.0167, 255, 255, 255, "almost black" } })
+			{
+				vd->SetColor(FLIVR::Color(c.r, c.g, c.b));
+				const QImage img = bulb();
+				const int full = count(img, c.er, c.eg, c.eb);
+				const int dim = count(img, int(std::lround(c.r * 255)), int(std::lround(c.g * 255)), int(std::lround(c.b * 255)));
+				log("%s (%.4f %.4f %.4f): %dx%d bulb, %d pixels at (%d %d %d), %d at the colour itself", c.what, c.r, c.g, c.b,
+					img.width(), img.height(), full, c.er, c.eg, c.eb, dim);
+				check(full > 0 && dim == 0, QString("%1: the bulb shows the colour at full brightness").arg(c.what));
+			}
+			vd->SetColor(keep);
+			m_tree->UpdateTreeColors();
+		});
+
+		// The legend in the view: its square has the colour of the bulb
+		// (wx: the colour itself, dark for a dim channel). The first case
+		// finds the square at the bottom left: the leftmost run of columns
+		// holding its colour (a selected name is drawn in that colour too,
+		// after a gap). The grey ones are white like the frame around the
+		// square and the text, so each case is read inside that square.
+		struct L { double r, g, b; int er, eg, eb; const char* what; };
+		const std::vector<L> legend = { L{ 0.013035, 0.002031, 0.016703, 199, 31, 255, "dim violet" },
+			L{ 0.2, 0.05, 0.25, 204, 51, 255, "dim purple" }, L{ 0.0167, 0.0167, 0.0167, 255, 255, 255, "almost black" } };
+		auto square = std::make_shared<QRect>();
+		auto keep_color = std::make_shared<FLIVR::Color>();
+		add("legend on", [=]() {
+			VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
+			if (!vd) return;
+			*keep_color = vd->GetColor();
+			for (VolumeData* v : m_canvas->Volumes()) v->SetLegend(v == vd);
+			m_overlays->SetDrawLegend(true);
+		});
+		for (size_t i = 0; i < legend.size(); i++)
+		{
+			const L c = legend[i];
+			const QString file = QString("legend%1").arg(i);
+			add(QString("legend %1").arg(c.what), [=]() {
+				if (VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0])
+					vd->SetColor(FLIVR::Color(c.r, c.g, c.b));
+				m_canvas->RefreshView();
+			});
+			capture(file);
+			add(QString("legend %1 check").arg(c.what), [=]() {
+				const QImage img = QImage(st->dir + "/" + file + ".png").convertToFormat(QImage::Format_RGB32);
+				if (img.isNull()) { check(false, "legend capture " + file); return; }
+				auto near = [](QRgb p, int r, int g, int b) {
+					return std::abs(qRed(p) - r) <= 2 && std::abs(qGreen(p) - g) <= 2 && std::abs(qBlue(p) - b) <= 2;
+				};
+				const int x_end = std::min(img.width(), 240), y_beg = std::max(0, img.height() - 240);
+				if (i == 0)
+				{
+					int x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+					for (int x = 0; x < x_end; x++)
+					{
+						bool any = false;
+						for (int y = y_beg; y < img.height() && !any; y++) any = near(img.pixel(x, y), c.er, c.eg, c.eb);
+						if (any) { if (x0 < 0) x0 = x; x1 = x; }
+						else if (x0 >= 0) break;
+					}
+					if (x0 >= 0)
+						for (int y = y_beg; y < img.height(); y++)
+							for (int x = x0; x <= x1; x++)
+								if (near(img.pixel(x, y), c.er, c.eg, c.eb)) { if (y0 < 0) y0 = y; y1 = y; break; }
+					*square = x0 >= 0 && y0 >= 0 ? QRect(QPoint(x0, y0), QPoint(x1, y1)) : QRect();
+				}
+				const QRect sq = *square;
+				const bool found = sq.width() >= 4 && std::abs(sq.width() - sq.height()) <= 2;
+				const int dr = int(std::lround(c.r * 255)), dg = int(std::lround(c.g * 255)), db = int(std::lround(c.b * 255));
+				int full = 0, dim = 0;
+				if (found)
+					for (int y = sq.top(); y <= sq.bottom(); y++)
+						for (int x = sq.left(); x <= sq.right(); x++)
+						{
+							const QRgb p = img.pixel(x, y);
+							full += near(p, c.er, c.eg, c.eb);
+							dim += near(p, dr, dg, db);
+						}
+				const QRgb mid = found ? img.pixel(sq.center()) : 0;
+				log("legend %s (%.4f %.4f %.4f): square %d,%d %dx%d in %dx%d, centre (%d %d %d), %d of %d pixels at (%d %d %d), %d at the colour itself",
+					c.what, c.r, c.g, c.b, sq.x(), sq.y(), sq.width(), sq.height(), img.width(), img.height(),
+					qRed(mid), qGreen(mid), qBlue(mid), full, found ? sq.width() * sq.height() : 0, c.er, c.eg, c.eb, dim);
+				check(found && full == sq.width() * sq.height() && dim == 0,
+					QString("legend %1: the square shows the colour at full brightness").arg(c.what));
+			});
+		}
+		add("legend off", [=]() {
+			if (VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0])
+				vd->SetColor(*keep_color);
+			for (VolumeData* v : m_canvas->Volumes()) v->SetLegend(false);
+			m_overlays->SetDrawLegend(false);
+			m_canvas->RefreshView();
+		});
+	}
+
+	if (kind == "panes")
+	{
+		// Panes ON/OFF across sessions and projects. VVD_QT_PANES_STATE=<file>:
+		// with VVD_QT_PANES_PHASE=1 every pane and the main toolbar are hidden
+		// and Measurement opened, and the window state is written to <file>
+		// in the VVD_QT_STATE_HEX format. The second run starts from that
+		// state (VVD_QT_STATE_HEX=<file>): after the restored state has
+		// settled every pane and the toolbar are shown and Measurement is
+		// closed; a project saved then keeps each pane's ON/OFF (Record/Export
+		// and Measurement too), and opening it brings that back.
+		struct PaneName { int pane; const char* name; };
+		const std::vector<PaneName> panes = { { PaneTree, "Workspace" }, { PaneMovie, "Record/Export" },
+			{ PaneAdjust, "Output Adjustments" }, { PaneClip, "Clipping Planes" }, { PaneProp, "Properties" } };
+		// let the window and the restored state settle (Qt keeps re-applying
+		// a restored state until ~150 ms after the last resize)
+		auto wait = [=](int ms) {
+			st->waiting_capture = true;
+			QElapsedTimer t;
+			t.start();
+			while (t.elapsed() < ms)
+				QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+			st->waiting_capture = false;
+		};
+		auto state_line = [=]() {
+			QStringList s;
+			for (const PaneName& p : panes) s << QString("%1 %2").arg(p.name).arg(IsPaneShown(p.pane) ? "on" : "off");
+			s << QString("toolbar %1").arg(m_main_tb && !m_main_tb->isHidden() ? "on" : "off");
+			s << QString("Measurement %1").arg(IsPaneShown(PaneMeasure) ? "on" : "off");
+			return s.join(", ");
+		};
+		const QString state_file = qEnvironmentVariable("VVD_QT_PANES_STATE");
+		if (qEnvironmentVariable("VVD_QT_PANES_PHASE") == "1")
+		{
+			add("hide all", [=]() {
+				for (const PaneName& p : panes) ShowPane(p.pane, false);
+				if (m_main_tb) m_main_tb->hide();
+				ShowPane(PaneMeasure, true);
+				wait(800);
+				log("before quitting: %s", state_line().toLocal8Bit().constData());
+				QFile f(state_file);
+				const bool ok = f.open(QIODevice::WriteOnly | QIODevice::Text) &&
+					f.write("geometry " + saveGeometry().toHex() + "\n") > 0 &&
+					f.write("windowState2 " + saveState().toHex() + "\n") > 0 &&
+					f.write("innerState2 " + m_inner->saveState().toHex() + "\n") > 0;
+				check(ok, "window state written to " + state_file);
+			});
+		}
+		else
+		{
+			add("start", [=]() {
+				wait(1500);
+				log("new session: %s", state_line().toLocal8Bit().constData());
+				for (const PaneName& p : panes)
+					check(IsPaneShown(p.pane), QString("new session: %1 shown").arg(p.name));
+				check(m_main_tb && !m_main_tb->isHidden(), "new session: main toolbar shown");
+				check(!IsPaneShown(PaneMeasure), "new session: Measurement closed");
+			});
+			const QString prj = st->dir + "/panes.vrp";
+			add("save project", [=]() {
+				ShowPane(PaneMovie, false);
+				ShowPane(PaneProp, false);
+				ShowPane(PaneMeasure, true);
+				wait(500);
+				log("saving with: %s", state_line().toLocal8Bit().constData());
+				check(SaveProject(prj), "project saved");
+				QFile f(prj);
+				QString text;
+				if (f.open(QIODevice::ReadOnly | QIODevice::Text)) text = QString::fromUtf8(f.readAll());
+				auto has = [&](const char* kv) { return text.contains(QString("\n") + kv + "\n"); };
+				check(has("ui_movie_view=0"), "project: ui_movie_view=0 (Record/Export off)");
+				check(has("ui_prop_view=0"), "project: ui_prop_view=0");
+				check(has("ui_measure_view=1"), "project: ui_measure_view=1 (Measurement open)");
+				check(has("ui_tree_view=1") && has("ui_adjust_view=1") && has("ui_clip_view=1") && has("ui_main_tb=1"),
+					"project: the other panes and the toolbar on");
+			});
+			add("open project", [=]() {
+				ShowDefaultPanes();
+				wait(300);
+				log("before opening: %s", state_line().toLocal8Bit().constData());
+				check(OpenProject(prj), "project opened");
+				wait(1500);
+				log("after opening: %s", state_line().toLocal8Bit().constData());
+				check(!IsPaneShown(PaneMovie) && !IsPaneShown(PaneProp), "opened project: Record/Export and Properties off");
+				check(IsPaneShown(PaneMeasure), "opened project: Measurement open");
+				check(IsPaneShown(PaneTree) && IsPaneShown(PaneAdjust) && IsPaneShown(PaneClip) && m_main_tb && !m_main_tb->isHidden(),
+					"opened project: the other panes and the toolbar on");
+			});
+		}
+	}
+
+	if (kind == "resizeview")
+	{
+		// The view after it changes size (the user's report: the whole
+		// rendering disappears after the Properties pane is hidden and the
+		// view zoomed, or after a channel's colour / ON-OFF, which select the
+		// channel and refit the Properties pane). Opens what the command line
+		// gives (e.g. a project), then rounds of: Properties hidden / shown,
+		// wheel zoom, both at once, the window resized, a channel off / on /
+		// coloured, Properties hidden / shown while frames are drawn back to
+		// back (with and without zooming); a capture after each, which must
+		// show the channels (lit pixels). Then the CAMetalLayer's drawable
+		// must have the swapchain's size (MoltenVK 1.4 left it at 1x1: the
+		// blank view) and the swapchain the view's (not the old image
+		// stretched), and a resize alone must keep the objects' size on the
+		// screen. VVD_QT_RV_CYCLES: rounds (default 2); VVD_QT_RV_WIN=<w>x<h>:
+		// the main window size first (default: the screen's available area);
+		// VVD_VK_OLD_RESIZE=1: the swapchain handling before the fix
+		auto lit_px = [](const QString& file) -> long long {
+			QImage img = QImage(file).convertToFormat(QImage::Format_RGB32);
+			if (img.isNull()) return -1;
+			long long n = 0;
+			for (int y = 0; y < img.height(); y++)
+			{
+				const QRgb* l = (const QRgb*)img.constScanLine(y);
+				for (int x = 0; x < img.width(); x++)
+					n += qRed(l[x]) + qGreen(l[x]) + qBlue(l[x]) > 30;
+			}
+			return n;
+		};
+		auto info = [log, cv](const QString& tag) {
+			log("%s: %s", tag.toLocal8Bit().constData(), cv->DebugStateLine().toLocal8Bit().constData());
+		};
+		auto ref = std::make_shared<long long>(-1);
+		add("rv setup", [=]() {
+			const QStringList wh = qEnvironmentVariable("VVD_QT_RV_WIN").split('x');
+			if (wh.size() == 2 && wh[0].toInt() > 0 && wh[1].toInt() > 0)
+				resize(wh[0].toInt(), wh[1].toInt());
+			else if (screen())
+				setGeometry(screen()->availableGeometry());
+			ShowPane(PaneProp, true);
+			int drawn = 0;
+			for (VolumeData* v : cv->PopVolumeList()) drawn += v && v->GetDisp();
+			log("volumes %d, drawn %d; method %d, mem swap %d; main window %dx%d", (int)cv->Volumes().size(), drawn,
+				cv->GetVolMethod(), (int)FLIVR::TextureRenderer::get_mem_swap(), width(), height());
+			info("setup");
+		});
+		capture("rv_00_start");
+		add("rv start check", [=]() {
+			*ref = lit_px(st->dir + "/rv_00_start.png");
+			log("start: %lld lit pixels", *ref);
+			check(*ref > 0, "the view is drawn at the start");
+			info("start");
+		});
+		// a shown channel (round r), selected as a click in the tree does
+		auto pick = [this, cv](int r) -> VolumeData* {
+			std::vector<VolumeData*> d;
+			for (VolumeData* v : cv->PopVolumeList()) if (v && v->GetDisp()) d.push_back(v);
+			if (d.empty()) return nullptr;
+			VolumeData* vd = d[(r * 7 + 3) % d.size()];
+			m_tree->SelectVolume(vd);
+			return vd;
+		};
+		auto picked = std::make_shared<VolumeData*>(nullptr);
+		// the objects' size on the screen: the zoom times the side the
+		// projection fits it to (HandleProjection: Ortho the shorter side,
+		// perspective the height)
+		auto px_scale = [cv]() {
+			const double side = cv->GetPerspective() ? cv->height() : std::min(cv->width(), cv->height());
+			return side * cv->GetScaleFactor();
+		};
+		auto scale_before = std::make_shared<double>(0.0);
+		// frames back to back for ms milliseconds, with a wheel notch every
+		// 150 ms when wheel != 0: a user zooming while the view redraws (the
+		// runner's ticks wait meanwhile, see waiting_capture)
+		auto spin = [=](int ms, int wheel) {
+			st->waiting_capture = true;
+			QElapsedTimer t;
+			t.start();
+			qint64 next_wheel = 0;
+			const long long f0 = cv->PresentedFrames();
+			while (t.elapsed() < ms)
+			{
+				if (wheel && t.elapsed() >= next_wheel)
+				{
+					cv->SimulateWheel(cv->rect().center(), wheel);
+					next_wheel += 150;
+				}
+				cv->RefreshView();
+				QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+			}
+			st->waiting_capture = false;
+			log("  %lld frames in %d ms", cv->PresentedFrames() - f0, ms);
+		};
+		// keeps: a change of the view's size alone (the objects must keep
+		// their size on the screen)
+		struct Act { QString name; std::function<void(int)> fn; bool keeps; };
+		const std::vector<Act> acts = {
+			{ "prop_off", [=](int) { ShowPane(PaneProp, false); }, true },
+			{ "zoom_in", [=](int) { cv->SimulateWheel(cv->rect().center(), 240); }, false },
+			{ "prop_on", [=](int) { ShowPane(PaneProp, true); }, true },
+			{ "zoom_out", [=](int) { cv->SimulateWheel(cv->rect().center(), -240); }, false },
+			{ "prop_off_zoom", [=](int) { ShowPane(PaneProp, false); cv->SimulateWheel(cv->rect().center(), 120); }, false },
+			{ "prop_on_zoom", [=](int) { ShowPane(PaneProp, true); cv->SimulateWheel(cv->rect().center(), -120); }, false },
+			{ "win_smaller", [=](int) { resize(width() - 160, height() - 120); }, true },
+			{ "win_back", [=](int) { resize(width() + 160, height() + 120); }, true },
+			{ "vol_off", [=](int r) { *picked = pick(r); if (*picked) m_tree->OnAct(); }, true },
+			{ "vol_on", [=](int) { if (*picked) { m_tree->SelectVolume(*picked); m_tree->OnAct(); } }, true },
+			{ "vol_color", [=](int r) {
+				if (!*picked) return;
+				m_tree->SelectVolume(*picked);
+				if (QLineEdit* ct = m_prop->findChild<QLineEdit*>("ColorText"))
+				{
+					ct->selectAll();
+					ct->insert(r % 2 ? "y" : "c");   // a typed colour (textEdited)
+				}
+			}, true },
+			{ "prop_off_spin_zoom", [=](int) { ShowPane(PaneProp, false); spin(2000, 60); }, false },
+			{ "prop_on_spin_zoom", [=](int) { ShowPane(PaneProp, true); spin(2000, -60); }, false },
+			{ "prop_off_spin", [=](int) { ShowPane(PaneProp, false); spin(1500, 0); }, true },
+			{ "prop_on_spin", [=](int) { ShowPane(PaneProp, true); spin(1500, 0); }, true },
+			// the timing behind the blank view, made certain: (1) a swapchain
+			// rebuild right after a present, while that frame is still on its
+			// way to the screen (MoltenVK 1.4 then leaves the drawable at
+			// 1x1); (2) the layer changing right after a present (as when Qt
+			// resizes it late; here its drawable size set off by 2), so the
+			// next acquire is suboptimal and the rebuild for it again has a
+			// frame on its way
+			{ "present_rebuild", [=](int) {
+				QSize px, sc, dr;
+				cv->RefreshView();
+				cv->RenderNow();
+				if (auto vk = cv->GetVulkan())
+					vk->setSize((int)vk->destWidth, (int)vk->destHeight);
+				cv->SurfaceSizes(px, sc, dr);
+				log("  rebuilt with a frame on its way: drawable %dx%d, swapchain %dx%d", dr.width(), dr.height(), sc.width(), sc.height());
+				cv->RefreshView();
+				cv->RenderNow();
+				cv->SurfaceSizes(px, sc, dr);
+				cv->DebugSetLayerDrawable(sc.width() + 2, sc.height());
+				cv->RefreshView();
+				cv->RenderNow();
+				cv->SurfaceSizes(px, sc, dr);
+				log("  after the suboptimal frame: drawable %dx%d, swapchain %dx%d", dr.width(), dr.height(), sc.width(), sc.height());
+				info("  present_rebuild");
+			}, true },
+		};
+		const int cycles = std::max(1, qEnvironmentVariableIntValue("VVD_QT_RV_CYCLES") > 0 ? qEnvironmentVariableIntValue("VVD_QT_RV_CYCLES") : 2);
+		for (int r = 0; r < cycles; r++)
+			for (size_t a = 0; a < acts.size(); a++)
+			{
+				const QString tag = QString("rv_r%1_%2_%3").arg(r).arg(int(a), 2, 10, QChar('0')).arg(acts[a].name);
+				const auto fn = acts[a].fn;
+				const bool keeps = acts[a].keeps;
+				add(tag, [=]() {
+					*scale_before = px_scale();
+					log("%s (%s)", tag.toLocal8Bit().constData(), *picked && (a >= 8 && a <= 10) ?
+						QString::fromStdWString((*picked)->GetName()).toLocal8Bit().constData() : "");
+					fn(r);
+				});
+				capture(tag);
+				add(tag + " check", [=]() {
+					const long long n = lit_px(st->dir + "/" + tag + ".png");
+					log("%s: %lld lit pixels (start %lld)", tag.toLocal8Bit().constData(), n, *ref);
+					info(tag);
+					check(n > *ref / 20, tag + ": the view shows the channels");
+					QSize px, sc, dr;
+					cv->SurfaceSizes(px, sc, dr);
+					if (dr.isValid())
+						check(dr == sc, tag + QString(": the layer's drawable %1x%2 has the swapchain's size %3x%4")
+							.arg(dr.width()).arg(dr.height()).arg(sc.width()).arg(sc.height()));
+					check(sc == px, tag + QString(": the swapchain %1x%2 has the view's size %3x%4")
+						.arg(sc.width()).arg(sc.height()).arg(px.width()).arg(px.height()));
+					if (keeps)
+					{
+						const double ratio = px_scale() / *scale_before;
+						check(std::fabs(ratio - 1.0) < 0.01, tag + QString(": the objects keep their size on the screen (x%1, zoom %2)")
+							.arg(ratio, 0, 'f', 3).arg(cv->GetScaleFactor(), 0, 'f', 3));
+					}
+				});
+			}
+		add("rv clean up", [=]() { ShowPane(PaneProp, true); info("end"); });
+	}
+
 	if (kind == "rulersel")
 	{
 		// Measurement list follows the view: the ruler picked in the view (a
@@ -2174,6 +3481,238 @@ void MainWindow::RunPaintTest(const QString& kind)
 			m_ruler_tool->RulersModified();
 			m_ruler_tool->SetIntMode(1);
 			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+		});
+	}
+
+	if (kind == "rulerclip")
+	{
+		// Measurement Edit mode: a ruler point dragged in the view keeps the
+		// clipping planes of every volume. Auto-select on: on each move the
+		// volume under the pointer becomes the selected one (Workspace tree,
+		// Clipping Planes pane). Without sync (volume A clipped), with "Sync
+		// All Chan." and with "Sync Group"; View Plane, Maximum Intensity and
+		// Accumulated.
+		auto vols = std::make_shared<std::vector<VolumeData*>>();
+		auto select = [this](VolumeData* v) { m_canvas->SetCurrentVolume(v); m_tree->SelectVolume(v); };
+		auto rng = [this](int a) { int lo, hi; m_clip->GetClipRange(a, lo, hi); return QString("%1..%2").arg(lo).arg(hi); };
+		auto ranges = [rng]() { return rng(0) + " " + rng(1) + " " + rng(2); };
+		auto params = [](VolumeData* v) {
+			QStringList s;
+			std::vector<FLIVR::Plane*>* pl = v && v->GetVR() ? v->GetVR()->get_planes() : nullptr;
+			if (pl) for (FLIVR::Plane* p : *pl) s << QString::number(p->GetParam(), 'f', 4);
+			return s.join(' ');
+		};
+		auto vname = [](VolumeData* v) { return v ? v->GetName().ToQt() : QString("(none)"); };
+		auto reset = [this]() {
+			for (QPushButton* b : m_clip->findChildren<QPushButton*>())
+				if (b->text() == QStringLiteral("Reset Clipping Planes")) b->click();
+		};
+		auto sync_group = [this](bool on) {
+			for (QCheckBox* b : m_clip->findChildren<QCheckBox*>())
+				if (b->text() == QStringLiteral("Sync Group") && b->isEnabled() && b->isChecked() != on) b->click();
+		};
+		// pixels brighter than the background
+		auto bright = [](const QString& file) -> long long {
+			QImage img(file);
+			if (img.isNull()) return -1;
+			img = img.convertToFormat(QImage::Format_RGB32);
+			long long n = 0;
+			for (int y = 0; y < img.height(); y++)
+			{
+				const QRgb* line = (const QRgb*)img.constScanLine(y);
+				for (int x = 0; x < img.width(); x++)
+					n += qRed(line[x]) + qGreen(line[x]) + qBlue(line[x]) > 60;
+			}
+			return n;
+		};
+		auto click = [cv](const QPoint& p) {
+			cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+			cv->SimulateMouse(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+			cv->SimulateMouse(QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+		};
+		struct Drag
+		{
+			QPoint from, to;       // A brighter at from, B at to
+			QStringList saved;     // params A, params B, pane ranges (A selected)
+			bool ok = false;
+		};
+		auto drag = std::make_shared<Drag>();
+
+		add("setup", [=]() {
+			vols->clear();
+			for (VolumeData* v : m_canvas->Volumes()) vols->push_back(v);
+			check(vols->size() >= 2, "two volumes loaded");
+			if (vols->size() < 2) return;
+			if (m_clip_dock) { m_clip_dock->show(); m_clip_dock->raise(); }
+			EnsureMeasureDialog()->show();
+			select((*vols)[0]);
+			DataGroup* ga = m_canvas->GetParentGroup((*vols)[0]);
+			DataGroup* gb = m_canvas->GetParentGroup((*vols)[1]);
+			log("volume A %s (group %s), volume B %s (group %s); render method %d; Auto-select (settings) %d, point mode (settings) %d",
+				vname((*vols)[0]).toLocal8Bit().constData(), ga ? ga->GetName().ToQt().toLocal8Bit().constData() : "-",
+				vname((*vols)[1]).toLocal8Bit().constData(), gb ? gb->GetName().ToQt().toLocal8Bit().constData() : "-",
+				(int)m_canvas->GetVolMethod(), (int)m_settings->GetRulerAutoSelect(), m_settings->GetPointVolumeMode());
+		});
+
+		struct Case { const char* name; int sync; int mode; };   // sync: 0 none, 1 Sync All Chan., 2 Sync Group
+		const Case cases[] = {
+			{ "no sync, View Plane", 0, 0 }, { "no sync, Max Intensity", 0, 1 }, { "no sync, Accumulated", 0, 2 },
+			{ "Sync All Chan., View Plane", 1, 0 }, { "Sync All Chan., Max Intensity", 1, 1 }, { "Sync All Chan., Accumulated", 1, 2 },
+			{ "Sync Group, View Plane", 2, 0 }, { "Sync Group, Accumulated", 2, 2 } };
+		int n = 0;
+		for (const Case& cs : cases)
+		{
+			const QString name = cs.name;
+			const QString tag = QString("rc%1").arg(n++);
+			const int sync = cs.sync, mode = cs.mode;
+			add(name + ": clip", [=]() {
+				drag->ok = false;
+				if (vols->size() < 2) return;
+				VolumeData* a = (*vols)[0];
+				VolumeData* b = (*vols)[1];
+				select(a);
+				m_clip->SetChannLink(false);
+				sync_group(false);
+				reset();
+				if (sync == 1)
+					m_clip->SetChannLink(true);
+				if (sync == 2)
+				{
+					if (!m_canvas->GetParentGroup(a)) { log("%s: volume A is in no group, skipped", cs.name); return; }
+					sync_group(true);
+					check(m_clip->GetGroupSync(), "Sync Group on");
+				}
+				for (int k = 0; k < 3; k++) m_clip->SetLink(k, false);
+				int lo, hi;
+				m_clip->GetClipRange(0, lo, hi);
+				m_clip->SetClipRange(0, hi / 5, hi * 4 / 5);
+				m_clip->GetClipRange(2, lo, hi);
+				m_clip->SetClipRange(2, hi * 9 / 20, hi * 11 / 20 + 1);
+				m_clip->SetLink(2, true);
+				log("%s: ranges %s; planes A %s, B %s", cs.name, ranges().toLocal8Bit().constData(),
+					params(a).toLocal8Bit().constData(), params(b).toLocal8Bit().constData());
+				check(params(a) != "0.0000 0.0000 0.0000 0.0000 0.0000 0.0000", "volume A is clipped");
+				if (sync) check(params(b) == params(a), "volume B has the same planes (sync)");
+
+				// the locator: where the view-plane point lies inside A's
+				// clipped box and A is the brighter volume; the drag ends
+				// where B is
+				drag->from = drag->to = QPoint(-1, -1);
+				double best_a = 0.0, best_b = 0.0;
+				for (int y = 8; y < cv->height() - 8; y += 4)
+					for (int x = 8; x < cv->width() - 8; x += 4)
+					{
+						FLIVR::Point pp, pa, pb;
+						double va = 0.0, vb = 0.0;
+						m_ruler_tool->GetPointVolume(pa, x, y, a, 1, true, 0.5, &va);
+						m_ruler_tool->GetPointVolume(pb, x, y, b, 1, true, 0.5, &vb);
+						const bool in_a = m_ruler_tool->GetPointPlane(pp, x, y) > 0.0 && a->InsideClippingPlanes(pp);
+						if (in_a && va > vb && va - vb > best_a) { best_a = va - vb; drag->from = QPoint(x, y); }
+						if (vb > va && vb - va > best_b) { best_b = vb - va; drag->to = QPoint(x, y); }
+					}
+				log("%s: drag from %d,%d (A brighter by %.2f) to %d,%d (B brighter by %.2f)", cs.name, drag->from.x(), drag->from.y(), best_a,
+					drag->to.x(), drag->to.y(), best_b);
+				check(drag->from.x() >= 0 && drag->to.x() >= 0, "a point where A is brighter and one where B is");
+				if (drag->from.x() < 0 || drag->to.x() < 0) return;
+				m_ruler_tool->ClearRulers();
+				m_ruler_tool->RulersModified();
+				m_ruler_tool->SetRulerAutoSelect(false);
+				m_ruler_tool->SetPointVolumeMode(0);
+				m_ruler_tool->SetRulerType(2);
+				m_ruler_tool->SetIntMode(5);
+				click(drag->from);
+				m_ruler_tool->SetIntMode(1);
+				select(a);
+				check(m_ruler_tool->GetRulerList()->size() == 1, "a locator at the start point");
+				drag->saved = QStringList{ params(a), params(b), ranges() };
+				drag->ok = m_ruler_tool->GetRulerList()->size() == 1;
+			});
+			capture(tag + "_before");
+			add(name + ": drag", [=]() {
+				if (!drag->ok) return;
+				VolumeData* a = (*vols)[0];
+				VolumeData* b = (*vols)[1];
+				m_ruler_tool->SetRulerAutoSelect(true);
+				m_ruler_tool->SetPointVolumeMode(mode);
+				m_ruler_tool->SetIntMode(6);
+				check(m_ruler_tool->RulerOfPoint(m_ruler_tool->GetEditingRulerPoint(drag->from.x(), drag->from.y())) != nullptr,
+					"the locator can be grabbed");
+				cv->SimulateMouse(QEvent::MouseMove, drag->from, Qt::NoButton, Qt::NoButton);
+				cv->SimulateMouse(QEvent::MouseButtonPress, drag->from, Qt::LeftButton, Qt::LeftButton);
+				const int steps = 12;
+				int changed_a = 0, changed_b = 0, kept_sel = 0, kept_rng = 0, drawn = 0, on_b = 0;
+				QStringList seq;
+				Ruler* r = m_ruler_tool->GetRulerList()->front();
+				for (int k = 1; k <= steps; k++)
+				{
+					const QPoint p = drag->from + (drag->to - drag->from) * k / steps;
+					cv->SimulateMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::LeftButton);
+					QCoreApplication::processEvents();
+					const bool ca = params(a) != drag->saved[0], cb = params(b) != drag->saved[1];
+					changed_a += ca;
+					changed_b += cb;
+					kept_sel += m_clip->GetVolume() == a && m_canvas->GetCurrentVolume() == a && m_tree->CurrentVolume() == a;
+					kept_rng += ranges() == drag->saved[2];
+					drawn += m_ruler_tool->IsRulerDrawn(r);
+					on_b += r->GetPointVolName(0) == b->GetName();
+					seq << (m_clip->GetVolume() == a ? "A" : m_clip->GetVolume() == b ? "B" : "-");
+					if (ca || cb)
+						log("  move %d: planes A %s, B %s", k, params(a).toLocal8Bit().constData(), params(b).toLocal8Bit().constData());
+				}
+				const FLIVR::Point* pt = r->GetPoint(0);
+				log("%s: Clipping Planes pane on each move: %s; point (%.1f, %.1f, %.1f) on %s, inside A's planes %d, B's %d; ranges now %s", cs.name,
+					seq.join(' ').toLocal8Bit().constData(), pt->x(), pt->y(), pt->z(), r->GetPointVolName(0).ToQt().toLocal8Bit().constData(),
+					(int)a->InsideClippingPlanes(*const_cast<FLIVR::Point*>(pt)), (int)b->InsideClippingPlanes(*const_cast<FLIVR::Point*>(pt)),
+					ranges().toLocal8Bit().constData());
+				check(on_b > 0 && r->GetPointVolName(0) == b->GetName(), QString("Auto-select: the point goes onto volume B (%1 of %2 moves)").arg(on_b).arg(steps));
+				check(kept_sel == steps, QString("dragging: volume A stays selected (tree, Clipping Planes, current volume) on %1 of %2 moves").arg(kept_sel).arg(steps));
+				check(kept_rng == steps, QString("dragging: the Clipping Planes pane keeps A's ranges on %1 of %2 moves").arg(kept_rng).arg(steps));
+				check(drawn == steps, QString("dragging: the locator is drawn on %1 of %2 moves").arg(drawn).arg(steps));
+				check(changed_a == 0, QString("dragging: volume A keeps its planes (changed on %1 of %2 moves)").arg(changed_a).arg(steps));
+				check(changed_b == 0, QString("dragging: volume B keeps its planes (changed on %1 of %2 moves)").arg(changed_b).arg(steps));
+			});
+			capture(tag + "_drag");   // the button is still down
+			add(name + ": release", [=]() {
+				if (!drag->ok) return;
+				VolumeData* a = (*vols)[0];
+				VolumeData* b = (*vols)[1];
+				Ruler* r = m_ruler_tool->GetRulerList()->front();
+				const bool in_a = a->InsideClippingPlanes(*r->GetPoint(0));
+				cv->SimulateMouse(QEvent::MouseButtonRelease, drag->to, Qt::LeftButton, Qt::NoButton);
+				m_ruler_tool->SetIntMode(1);
+				if (in_a)
+					check(m_clip->GetVolume() == a && m_canvas->GetCurrentVolume() == a,
+						"released inside A's clipping planes: volume A still selected (" + vname(m_clip->GetVolume()) + ")");
+				else
+					check(m_clip->GetVolume() == b && m_canvas->GetCurrentVolume() == b,
+						"released outside A's clipping planes: volume B, the locator's volume, selected (" + vname(m_clip->GetVolume()) + ")");
+				check(m_ruler_tool->IsRulerDrawn(r), "released: the locator is drawn");
+				check(params(a) == drag->saved[0], "released: volume A's planes " + params(a) + " (before " + drag->saved[0] + ")");
+				check(params(b) == drag->saved[1], "released: volume B's planes " + params(b) + " (before " + drag->saved[1] + ")");
+				select(a);
+				check(ranges() == drag->saved[2], "volume A selected: the pane shows " + ranges() + " (before " + drag->saved[2] + ")");
+			});
+			capture(tag + "_after");
+			add(name + ": images", [=]() {
+				if (!drag->ok) return;
+				const long long b0 = bright(st->dir + "/" + tag + "_before.png");
+				const long long b1 = bright(st->dir + "/" + tag + "_drag.png");
+				const long long b2 = bright(st->dir + "/" + tag + "_after.png");
+				log("%s: lit pixels before %lld, while dragging %lld, after %lld", cs.name, b0, b1, b2);
+				const auto near = [b0](long long v) { return b0 > 0 && (v > b0 ? v - b0 : b0 - v) <= b0 / 20 + 400; };
+				check(near(b1) && near(b2), "the view shows the same clipped data while dragging and after");
+			}, false);
+		}
+		add("clean up", [=]() {
+			m_ruler_tool->ClearRulers();
+			m_ruler_tool->RulersModified();
+			m_ruler_tool->SetIntMode(1);
+			m_ruler_tool->SetRulerAutoSelect(m_settings->GetRulerAutoSelect());
+			m_ruler_tool->SetPointVolumeMode(m_settings->GetPointVolumeMode());
+			if (vols->size() >= 2) select((*vols)[0]);
+			m_clip->SetChannLink(false);
+			sync_group(false);
+			reset();
 		});
 	}
 

@@ -168,6 +168,7 @@ void RulerTool::SetIntMode(int mode)
 	if (m_int_mode != 6)
 		m_editing_ruler_point = nullptr;
 	m_camera_drag = m_point_drag = false;
+	m_drag_vd = nullptr;
 	if (changed) Q_EMIT intModeChanged(m_int_mode);
 }
 
@@ -189,18 +190,42 @@ void RulerTool::SetDrawStartIds(bool b)
 }
 void RulerTool::SetDrawLandmarks(bool b) { m_draw_landmarks = b; Refresh(); }
 
+Qt::CheckState RulerTool::GetRulersShown() const
+{
+	bool shown = false, hidden = false;
+	for (Ruler* r : m_ruler_list)
+	{
+		if (!r) continue;
+		if (r->GetDisp()) shown = true;
+		else hidden = true;
+	}
+	if (!hidden)
+		return Qt::Checked;
+	return shown ? Qt::PartiallyChecked : Qt::Unchecked;
+}
+
+void RulerTool::SetRulersShown(bool show)
+{
+	for (Ruler* r : m_ruler_list)
+		if (r) r->SetDisp(show);
+	Refresh();
+	Q_EMIT rulersChanged();
+}
+
 void RulerTool::ClearRulers()
 {
 	for (Ruler* r : m_ruler_list) delete r;
 	m_ruler_list.clear();
 	m_editing_ruler_point = nullptr;
 	m_point_drag = false;
+	m_drag_vd = nullptr;
 }
 
 void RulerTool::RulersModified()
 {
 	m_editing_ruler_point = nullptr;
 	m_point_drag = false;
+	m_drag_vd = nullptr;
 	Refresh();
 	Q_EMIT rulersChanged();
 }
@@ -299,30 +324,66 @@ bool RulerTool::GetRulerFinished()
 
 VolumeData* RulerTool::AutoSelectVolume(int mx, int my)
 {
+	VolumeData* best = AutoSelectCandidate(mx, my);
+	if (best && best != CurVol())
+	{
+		Q_EMIT volumeAutoSelected(best);
+		if (m_canvas && m_canvas->GetCurrentVolume() != best)
+			m_canvas->SetCurrentVolume(best);
+	}
+	return best;
+}
+
+VolumeData* RulerTool::AutoSelectCandidate(int mx, int my)
+{
 	if (!m_ruler_auto_select || !m_canvas)
 		return nullptr;
 	VolumeData* cur_vol = CurVol();
+	// Accumulated Intensity: the volume whose surface the ray meets first
+	const bool surface = m_point_volume_mode == 2;
 	VolumeData* best = nullptr;
-	double best_val = 0.0;
+	double best_val = 0.0, best_t = 0.0;
+	bool best_surf = false;
 	for (VolumeData* vd : m_canvas->PopVolumeList())
 	{
 		if (!vd || !vd->GetDisp()) continue;
 		Point p;
 		double val = 0.0;
-		//Maximum Intensity, value after the transfer function (as drawn)
-		if (GetPointVolume(p, mx, my, vd, 1, true, 0.5, &val) <= 0.0)
+		//Maximum Intensity, value after the transfer function (as drawn);
+		//t: the distance of the (first) brightest voxel along the ray
+		double t = GetPointVolume(p, mx, my, vd, 1, true, 0.5, &val);
+		if (t <= 0.0)
 			continue;
-		if (!best || val > best_val || (val == best_val && vd == cur_vol))
+		//the surface: where the accumulated opacity after the transfer
+		//function reaches 0.5 (a volume without one only when none has one)
+		bool surf = false;
+		if (surface)
+		{
+			Point ps;
+			const double ts = GetPointVolume(ps, mx, my, vd, 2, true);
+			if (ts > 0.0)
+			{
+				t = ts;
+				surf = true;
+			}
+		}
+		// rays run front to back (also in Ortho): a smaller t is nearer
+		bool better;
+		if (!best)
+			better = true;
+		else if (surf != best_surf)
+			better = surf;
+		else if (surf)
+			better = t < best_t || (t == best_t && vd == cur_vol);
+		else
+			better = val > best_val || (val == best_val && (t < best_t || (t == best_t && vd == cur_vol)));
+		if (better)
 		{
 			best = vd;
 			best_val = val;
+			best_t = t;
+			best_surf = surf;
 		}
-	}
-	if (best && best != cur_vol)
-	{
-		Q_EMIT volumeAutoSelected(best);
-		if (m_canvas && m_canvas->GetCurrentVolume() != best)
-			m_canvas->SetCurrentVolume(best);
 	}
 	return best;
 }
@@ -400,6 +461,7 @@ void RulerTool::AddRulerPoint(int mx, int my)
 			{
 				if (ruler->AddPoint(p))
 					ruler->SetPointVolName(ruler->GetNumPoint() - 1, pvol);
+				ruler->SetDisp(true);   // hidden (Show Rulers) while unfinished: shown again
 				new_ruler = false;
 				picked = ruler;
 			}
@@ -449,6 +511,7 @@ void RulerTool::AddPaintRulerPoint(VolumeSelector* sel)
 		if (ruler && !ruler->GetFinished())
 		{
 			picked = ruler;
+			ruler->SetDisp(true);   // hidden (Show Rulers) while unfinished: shown again
 			if (ruler->AddPoint(center) && !pvol.empty())
 				ruler->SetPointVolName(ruler->GetNumPoint() - 1, pvol);
 			ruler->AddInfoNames(VVDString(QString::asprintf("\tv%d", ruler->GetNumPoint() - 1).toStdWString()));
@@ -551,12 +614,28 @@ double RulerTool::GetPointVolume(Point& mp, int mx, int my,
 		mspc = sqrt(1.0 / (resx * resx) + 1.0 / (resy * resy) + 1.0 / (resz * resz)) / 2.0;
 	if (vd->GetVR())
 		planes = vd->GetVR()->get_planes();
+	// Accumulated Intensity: the length of a step in voxels (see below)
+	double step_vox = 1.0;
 	if (bbox.intersect(mp1, vv, hit))
 	{
 		Transform* textrans = tex->transform();
 		Vector vv2 = textrans->unproject(vv);
 		vv2.normalize();
 		Point hp1 = textrans->unproject(hit);
+		// at most half a voxel along every axis (not in wx: the fixed step in
+		// the 0..1 texture space went 3.4 voxels at a time along the long
+		// axis of a 2953x625x625 volume, past the surface of thin objects)
+		const double vox_max = std::max({ std::fabs(vv2.x()) * resx, std::fabs(vv2.y()) * resy, std::fabs(vv2.z()) * resz });
+		if (vd->GetSampleRate() > 0.0 && vox_max > 0.0)
+			mspc = 0.5 / vox_max;
+		// ... and its length in voxels (geometric mean voxel size)
+		{
+			const Vector ext = bbox.diagonal();
+			const double vox = std::cbrt(std::fabs(ext.x() / resx * ext.y() / resy * ext.z() / resz));
+			const double len = textrans->project(vv2 * mspc).length();
+			if (vox > 0.0 && len > 0.0)
+				step_vox = len / vox;
+		}
 		while (true)
 		{
 			tmp_xx = int(hp1.x() * resx);
@@ -616,10 +695,13 @@ double RulerTool::GetPointVolume(Point& mp, int mx, int my,
 				}
 				else if (mode == 2)
 				{
-					//accumulate
+					//accumulate: a sample's value is its opacity per voxel of
+					//path (not in wx: the exponent was the volume's Sample
+					//Rate, so at a low rate, e.g. 0.18, the point went deeper
+					//than the surface drawn; this is the old result at 1)
 					if (value > 0.0)
 					{
-						alpha = 1.0 - pow(Clamp(1.0 - value, 0.0, 1.0), vd->GetSampleRate());
+						alpha = 1.0 - pow(Clamp(1.0 - value, 0.0, 1.0), step_vox);
 						max_int += alpha * (1.0 - max_int);
 						//use the sample position instead of the voxel center:
 						//the voxel center can fall outside a clipping plane
@@ -1226,7 +1308,8 @@ Point* RulerTool::GetEditingRulerPoint(int mx, int my)
 	for (i = 0; i < (int)m_ruler_list.size() && !found; i++)
 	{
 		Ruler* ruler = m_ruler_list[i];
-		if (!ruler) continue;
+		// a hidden ruler (Show Rulers) is not drawn: its points are not picked
+		if (!ruler || !ruler->GetDisp()) continue;
 
 		bool skip = true;
 		if (cur_vol)
@@ -1316,6 +1399,33 @@ Ruler* RulerTool::RulerOfPoint(const Point* p) const
 	return nullptr;
 }
 
+bool RulerTool::InsideCurrentClipping(Ruler* ruler) const
+{
+	VolumeData* cur_vol = CurVol();
+	if (!ruler || !cur_vol)
+		return true;
+	for (int j = 0; j < ruler->GetNumPoint(); ++j)
+		if (ruler->GetPoint(j) && cur_vol->InsideClippingPlanes(*(ruler->GetPoint(j))))
+			return true;
+	return false;
+}
+
+bool RulerTool::IsRulerDrawn(Ruler* ruler) const
+{
+	if (!ruler || !ruler->GetDisp())   // hidden (Show Rulers)
+		return false;
+	if (ruler->GetTimeDep() && ruler->GetTime() != m_tseq_cur_num)
+		return false;
+	// the ruler being dragged: also outside the clipping planes (with
+	// Auto-select its point can go onto another volume, which is not
+	// selected while dragging)
+	if (m_point_drag && m_editing_ruler_point)
+		for (int j = 0; j < ruler->GetNumPoint(); ++j)
+			if (ruler->GetPoint(j) == m_editing_ruler_point)
+				return true;
+	return InsideCurrentClipping(ruler);
+}
+
 Ruler* RulerTool::PickRulerAt(int mx, int my)
 {
 	if (!m_draw_rulers)
@@ -1352,7 +1462,7 @@ bool RulerTool::SwitchRulerBalloonVisibility_Point(int mx, int my)
 	for (i = 0; i < (int)m_ruler_list.size() && !found; i++)
 	{
 		Ruler* ruler = m_ruler_list[i];
-		if (!ruler) continue;
+		if (!ruler || !ruler->GetDisp()) continue;   // hidden (Show Rulers)
 
 		for (j = 0; j < ruler->GetNumPoint(); j++)
 		{
@@ -1420,6 +1530,7 @@ bool RulerTool::MousePress(QMouseEvent* e)
 	{
 		if (m_int_mode == 6)
 		{
+			m_drag_vd = nullptr;
 			m_editing_ruler_point = GetEditingRulerPoint(pos.x(), pos.y());
 			if (Ruler* r = RulerOfPoint(m_editing_ruler_point))
 				Q_EMIT rulerPicked(r);
@@ -1457,12 +1568,16 @@ bool RulerTool::MouseMove(QMouseEvent* e)
 			m_editing_ruler_point)
 		{
 			const QPoint pos = e->position().toPoint();
-			//Auto-select: the volume under the pointer becomes current
-			VolumeData* auto_vd = AutoSelectVolume(pos.x(), pos.y());
+			//Auto-select: the point goes onto the volume under the pointer,
+			//which is not selected while dragging (the current volume, the
+			//Workspace tree and the Clipping Planes pane stay as they were;
+			//MouseRelease)
+			VolumeData* auto_vd = AutoSelectCandidate(pos.x(), pos.y());
 			VolumeData* cur_vol = auto_vd ? auto_vd : CurVol();
 			Point point;
 			bool failed = false;
 			VVDString pvol;
+			VolumeData* on_vd = nullptr;
 			if (m_point_volume_mode)
 			{
 				double t = GetPointVolume(point,
@@ -1476,7 +1591,10 @@ bool RulerTool::MouseMove(QMouseEvent* e)
 						pos.x(), pos.y(),
 						cur_vol, 1, m_ruler_use_transf);
 				if (t > 0.0 && cur_vol)
+				{
 					pvol = cur_vol->GetName();
+					on_vd = cur_vol;
+				}
 				if (t <= 0.0)
 					t = GetPointPlane(point,
 						pos.x(), pos.y(),
@@ -1492,11 +1610,15 @@ bool RulerTool::MouseMove(QMouseEvent* e)
 				if (t <= 0.0)
 					failed = true;
 				else if (auto_vd)
+				{
 					pvol = auto_vd->GetName();
+					on_vd = auto_vd;
+				}
 			}
 
 			if (!failed)
 			{
+				m_drag_vd = on_vd;
 				m_editing_ruler_point->x(point.x());
 				m_editing_ruler_point->y(point.y());
 				m_editing_ruler_point->z(point.z());
@@ -1542,8 +1664,29 @@ bool RulerTool::MouseRelease(QMouseEvent* e)
 		else if (m_int_mode == 6)
 		{
 			bool was_point = m_point_drag;
+			Ruler* moved = was_point ? RulerOfPoint(m_editing_ruler_point) : nullptr;
+			VolumeData* drag_vd = m_drag_vd;
 			m_editing_ruler_point = 0;
 			m_point_drag = false;
+			m_drag_vd = nullptr;
+			//Auto-select: the volume the point went onto is selected only
+			//when the ruler is no longer drawn with the current volume (none
+			//of its points inside its clipping planes, e.g. a locator moved
+			//onto another volume) but is with that one
+			if (moved && drag_vd && m_canvas && drag_vd != CurVol() && !InsideCurrentClipping(moved))
+			{
+				const auto vols = m_canvas->PopVolumeList();
+				bool inside = false;
+				if (std::find(vols.begin(), vols.end(), drag_vd) != vols.end())
+					for (int k = 0; k < moved->GetNumPoint() && !inside; ++k)
+						inside = moved->GetPoint(k) && drag_vd->InsideClippingPlanes(*(moved->GetPoint(k)));
+				if (inside)
+				{
+					Q_EMIT volumeAutoSelected(drag_vd);
+					if (m_canvas->GetCurrentVolume() != drag_vd)
+						m_canvas->SetCurrentVolume(drag_vd);
+				}
+			}
 			Refresh();
 			return was_point && !camera;
 		}
@@ -1740,23 +1883,9 @@ void RulerTool::DrawRulers()
 			(ruler->GetTimeDep() &&
 				ruler->GetTime() == m_tseq_cur_num))
 		{
-			bool skip = true;
-			if (cur_vol)
-			{
-				for (int j = 0; j < ruler->GetNumPoint(); ++j)
-				{
-					p2 = *(ruler->GetPoint(j));
-					if (cur_vol->InsideClippingPlanes(p2))
-					{
-						skip = false;
-						break;
-					}
-				}
-			}
-			else
-				skip = false;
-
-			if (skip)
+			// wx: a point inside the current volume's clipping planes; the
+			// ruler being dragged in any case (IsRulerDrawn)
+			if (!IsRulerDrawn(ruler))
 				continue;
 
 			if (ruler->GetUseColor())
