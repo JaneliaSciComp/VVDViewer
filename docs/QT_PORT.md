@@ -772,7 +772,18 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   included) the pointer is in, or at the end below every row; a line shows
   where (`TreePanel::GroupDropTarget`). wx moved a group only when it was
   dropped on another group's own row, and then always below it when coming
-  from above. Real layer list in
+  from above. Not in wx: rename as in Finder / Explorer: a click on the name
+  of the item already selected (volume, mesh, annotations, group: the items
+  with Rename in their menu) opens the editor once the double-click interval
+  has passed without a second click, so a double click still toggles; a
+  click on the bulb or beside the name, the click that brings the window to
+  the front and the press that ends a rename start none
+  (`DataTreeWidget::NameRect`, Qt's SelectedClicked trigger would take any
+  part of the row and needs editable items). The editor, from the click or
+  the menu, selects the name of a volume, mesh or annotations up to the
+  extension of its file (".nrrd", ".tif"; a group's whole name), so typing
+  replaces just that; Return renames, Escape keeps the name. Real layer
+  list in
   `RenderCanvasLayers.cpp` (wx m_layer_list API); groups drawn per group with
   their blend mode. Scroll position: restored after the selection and the
   layout (see "Bug fixes").
@@ -1696,6 +1707,7 @@ command line.
 | `cellsview` | After Apply Transform with "Cells: shape preserving" (12 landmarks inside the source box, `VVD_QT_CV_SRC`, target `VVD_QT_CV_TARGET` same / vol:<name>, device `VVD_QT_CV_DEVICE`, `VVD_QT_CV_ORTHO`, `VVD_QT_CV_FOG` Depth Int.): every channel in turn off, on and recoloured (tree Toggle Visibility, Properties colour box); each capture still shows the channels that are on, not much darker than before the transform (`cv_before.png`, `cv_after`, `cv_v<i>_off/on/color`) |
 | `resizeview` | Opens the files given (e.g. a project), then rounds of: Properties hidden / shown, wheel zoom, both at once, the window resized, a channel off / on / recoloured, Properties hidden / shown while frames are drawn back to back (with and without zooming). After each: the capture shows the channels, the CAMetalLayer's drawable has the swapchain's size and the swapchain the view's, and a resize alone keeps the objects' size on the screen (`VVD_QT_RV_CYCLES` rounds, `VVD_QT_RV_WIN` window size; `VVD_VK_OLD_RESIZE=1` for the swapchain handling before the fix) |
 | `treegroups` | Six volumes put into G1, G2, G3 by dragging them onto the groups, every group expanded: G3 over G1's last volume shows the line under G1's rows (gone when the drag leaves); G3 dropped there lands after G1, G1 on G2's first volume (upper half) before G2, G1 on its own volume stays, G3 below every row moves to the end |
+| `treerename` | Two volumes (C1.nrrd C2.nrrd): a click selects C1, a second click on its name opens the editor only after the double-click interval, "C1" of "C1.nrrd" selected; "Glia A" typed and Return rename it "Glia A.nrrd" (still selected and shown); two double clicks on the selected name toggle it off and on, no editor; a click on the bulb or beside the name, another volume clicked within the interval, the click right after the window's activation: no rename; Escape keeps the name; a group's whole name selected; the menu's Rename selects like the click |
 | `bulbs` | Workspace bulb colours: the first volume coloured dim purple (0.2 0.05 0.25), dim grey and almost black; its bulb has (204 51 255), white and white, never the dim colour itself. Then the legend in the view (that volume only): captured with a dim violet (0.0130 0.0020 0.0167, a channel colour at luminance 0.017), dim purple and almost black, every pixel of its square is (199 31 255), (204 51 255) and white |
 | `panes` | Two runs. `VVD_QT_PANES_PHASE=1 VVD_QT_PANES_STATE=<file>`: every pane and the main toolbar hidden, Measurement opened, the window state written to `<file>`. Then `VVD_QT_STATE_HEX=<file>`: after the restored state has settled every pane and the toolbar are shown and Measurement is closed; a project saved with Record/Export and Properties off and Measurement open has `ui_movie_view=0`, `ui_prop_view=0`, `ui_measure_view=1`, and opening it brings that back (`panes.vrp`) |
 | `rulersel` | Measurement list and the view (one or two volumes): 36 View Plane locators clicked in a grid inside the volume (each new one the selected, shown row; the list scrolls), Edit press on locator 30 with the list at the top, Edit drag of locator 20 (row kept, list not scrolled, the row shows the new position), camera-mode click on locator 3 and beside it, a new locator with the list at the top, the selected row's colour (`rulersel_list.png`) |

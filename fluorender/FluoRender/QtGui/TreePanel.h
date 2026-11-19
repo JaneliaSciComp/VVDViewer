@@ -17,7 +17,10 @@
 //     toggle visibility (wx OnAct; with Ctrl held: randomize colours)
 //   * right-click: the wx context menu of the item type (OnContextMenu)
 //   * Delete / Backspace: delete the selection (DeleteSelection)
-//   * "Rename" menu entry: in-place label edit (OnRenameMenu / OnRenamed)
+//   * "Rename" menu entry: in-place label edit (OnRenameMenu / OnRenamed);
+//     not in wx: also a click on the name of the item already selected,
+//     as in Finder / Explorer (DataTreeWidget), and the editor selects a
+//     data name without its file extension
 //   * drag & drop: DataTreeCtrl::OnEndDrag -- reorder within the view or a
 //     group, move into / out of / between groups; a volume dropped on the
 //     view item or on empty space leaves its group and, through
@@ -29,6 +32,8 @@
 #include <QWidget>
 #include <QString>
 #include <QTreeWidget>
+#include <QElapsedTimer>
+#include <QVariant>
 #include <map>
 #include <set>
 #include <unordered_set>
@@ -38,7 +43,9 @@
 #include "Core/VVDString.h"
 
 class QAction;
+class QLineEdit;
 class QMenu;
+class QTimer;
 class QTreeWidgetItem;
 class DataManager;
 class RenderCanvas;
@@ -61,6 +68,17 @@ public:
 	void SetDragItem(QTreeWidgetItem* item) { m_drag_item = item; }   // testing
 	// a group dragged: where the line shows it would land (viewport y; -1 none)
 	int DropLineY() const { return m_drop_line_y; }
+
+	// Rename as in Finder / Explorer (not in wx, where only the menu
+	// renames): a click on the name of the item that was already selected
+	// starts the rename of the context menu once the double-click interval
+	// has passed without a second click (a double click still toggles).
+	// The name: the text of the item's row, as wide as the text (not the
+	// bulb, not the space after it), in viewport coordinates.
+	QRect NameRect(QTreeWidgetItem* item) const;
+	bool ClickRenamePending() const;
+	void CancelClickRename();
+	bool Editing() const { return state() == QAbstractItemView::EditingState; }
 protected:
 	void startDrag(Qt::DropActions supportedActions) override;
 	void dragEnterEvent(QDragEnterEvent* e) override;
@@ -69,11 +87,29 @@ protected:
 	void dropEvent(QDropEvent* e) override;
 	void keyPressEvent(QKeyEvent* e) override;
 	void paintEvent(QPaintEvent* e) override;
+	void mousePressEvent(QMouseEvent* e) override;
+	void mouseReleaseEvent(QMouseEvent* e) override;
+	void mouseDoubleClickEvent(QMouseEvent* e) override;
+	void focusOutEvent(QFocusEvent* e) override;
+	void changeEvent(QEvent* e) override;
+	void closeEditor(QWidget* editor, QAbstractItemDelegate::EndEditHint hint) override;
 private:
 	void SetDropLine(int y);
+	void OnClickRenameTimer();
 	TreePanel* m_panel = nullptr;
 	QTreeWidgetItem* m_drag_item = nullptr;
 	int m_drop_line_y = -1;
+	// click rename: the item pressed on its name, then (after the release)
+	// the item to rename when the timer fires -- by type, data and name, as
+	// the tree may have been rebuilt meanwhile
+	QTreeWidgetItem* m_click_item = nullptr;
+	QPoint m_click_pos;
+	QTimer* m_rename_timer = nullptr;
+	int m_rename_type = -1;
+	QVariant m_rename_ptr;
+	QString m_rename_name;
+	QElapsedTimer m_editor_closed;   // a press that closed an editor renames nothing
+	QElapsedTimer m_activated;       // nor does the click that activated the window
 };
 
 class TreePanel : public QWidget
@@ -158,6 +194,8 @@ public:
 	bool SimulateDrag(QTreeWidgetItem* src, QTreeWidgetItem* dst, bool after);
 	QTreeWidgetItem* FindItem(const QString& name, int type = -1) const;
 	bool IsFixed() const { return m_fixed; }
+	// the line edit of a rename in progress (null: none), for tests
+	QLineEdit* RenameEditor() const;
 
 	QTreeWidgetItem* ParentVolItem(QTreeWidgetItem* item) const;   // wx GetParentVolItem
 	QTreeWidgetItem* ParentMeshItem(QTreeWidgetItem* item) const;  // wx GetParentMeshItem
@@ -241,6 +279,8 @@ private Q_SLOTS:
 
 private:
 	friend class DataTreeWidget;
+	// a click on the name renames: the items with "Rename" in their menu
+	bool CanClickRename(const QTreeWidgetItem* item) const;
 	Annotations* m_sel_ann = nullptr;
 	VolumeData* VolumeOf(const QTreeWidgetItem* item) const;
 	MeshData* MeshOf(const QTreeWidgetItem* item) const;

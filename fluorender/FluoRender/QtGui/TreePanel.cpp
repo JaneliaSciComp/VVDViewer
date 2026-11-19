@@ -25,6 +25,11 @@
 #include <QTimer>
 #include <QScrollBar>
 #include <QStringList>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QFocusEvent>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 
 #include <climits>
 #include <cmath>
@@ -72,6 +77,28 @@ namespace
 	}
 	QString Q(const VVDString& s) { return QString::fromStdWString(s); }
 	VVDString V(const QString& s) { return VVDString(s.toStdWString()); }
+
+	// what a rename selects first (Finder / Explorer): the name of a volume,
+	// mesh or annotations up to the extension of its file (".nrrd", ".tif",
+	// ".swc": 1-8 letters or digits with a letter after the last dot), any
+	// other name whole
+	int RenameSelectionLength(const QString& name, int type)
+	{
+		if (type != TreePanel::TypeVolume && type != TreePanel::TypeMesh && type != TreePanel::TypeAnnotations)
+			return (int)name.size();
+		const int dot = (int)name.lastIndexOf(QLatin1Char('.'));
+		const int n = (int)name.size() - dot - 1;
+		if (dot <= 0 || n < 1 || n > 8)
+			return (int)name.size();
+		bool letter = false;
+		for (int i = dot + 1; i < (int)name.size(); i++)
+		{
+			if (!name[i].isLetterOrNumber())
+				return (int)name.size();
+			letter = letter || name[i].isLetter();
+		}
+		return letter ? dot : (int)name.size();
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -81,12 +108,142 @@ namespace
 DataTreeWidget::DataTreeWidget(TreePanel* panel, QWidget* parent)
 	: QTreeWidget(parent), m_panel(panel)
 {
+	m_rename_timer = new QTimer(this);
+	m_rename_timer->setSingleShot(true);
+	connect(m_rename_timer, &QTimer::timeout, this, &DataTreeWidget::OnClickRenameTimer);
+}
+
+// ---------------------------------------------------------------------------
+// rename by a click on the name of the selected item (Finder / Explorer;
+// not in wx). Qt's SelectedClicked trigger is not used: it starts on any
+// part of the row (the bulb too) and needs the items editable, which would
+// let a double click edit instead of toggle.
+// ---------------------------------------------------------------------------
+
+QRect DataTreeWidget::NameRect(QTreeWidgetItem* item) const
+{
+	if (!item) return QRect();
+	const QModelIndex index = indexFromItem(item, 0);
+	QStyleOptionViewItem opt;
+	initViewItemOption(&opt);
+	opt.index = index;
+	opt.rect = visualRect(index);
+	opt.text = item->text(0);
+	opt.features |= QStyleOptionViewItem::HasDisplay;
+	const QVariant font = item->data(0, Qt::FontRole);
+	if (font.isValid()) opt.font = font.value<QFont>();
+	opt.fontMetrics = QFontMetrics(opt.font);
+	const QIcon icon = item->icon(0);
+	if (!icon.isNull())
+	{
+		opt.icon = icon;
+		opt.features |= QStyleOptionViewItem::HasDecoration;
+		opt.decorationSize = iconSize();
+	}
+	QRect r = style()->subElementRect(QStyle::SE_ItemViewItemText, &opt, this);
+	const int margin = style()->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, this) + 1;
+	const int w = opt.fontMetrics.horizontalAdvance(opt.text) + 2 * margin;
+	if (w < r.width()) r.setWidth(w);
+	return r;
+}
+
+bool DataTreeWidget::ClickRenamePending() const
+{
+	return m_rename_timer->isActive();
+}
+
+void DataTreeWidget::CancelClickRename()
+{
+	m_click_item = nullptr;
+	m_rename_timer->stop();
+}
+
+// a press on the name of the current, selected item without modifiers may
+// be the first half of a rename click
+void DataTreeWidget::mousePressEvent(QMouseEvent* e)
+{
+	CancelClickRename();
+	const QPoint pos = e->position().toPoint();
+	QTreeWidgetItem* item = itemAt(pos);
+	// the press that ended a rename (the editor loses the focus to the tree
+	// first and closes) starts none, nor the click that brought the window
+	// to the front (Finder)
+	const bool closed_editor = m_editor_closed.isValid() && m_editor_closed.elapsed() < 250;
+	const bool activating = m_activated.isValid() && m_activated.elapsed() < 300;
+	if (item && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && !closed_editor && !activating &&
+		!Editing() && item == currentItem() && item->isSelected() &&
+		m_panel->CanClickRename(item) && NameRect(item).contains(pos))
+	{
+		m_click_item = item;
+		m_click_pos = pos;
+	}
+	QTreeWidget::mousePressEvent(e);
+}
+
+// released on the same item without moving: the rename starts when no
+// second click has come within the double-click interval
+void DataTreeWidget::mouseReleaseEvent(QMouseEvent* e)
+{
+	QTreeWidgetItem* item = m_click_item;
+	m_click_item = nullptr;
+	QTreeWidget::mouseReleaseEvent(e);
+	const QPoint pos = e->position().toPoint();
+	if (!item || e->button() != Qt::LeftButton || itemAt(pos) != item ||
+		(pos - m_click_pos).manhattanLength() >= QApplication::startDragDistance() ||
+		item != currentItem() || !item->isSelected())
+		return;
+	m_rename_type = TreePanel::ItemType(item);
+	m_rename_ptr = item->data(0, ROLE_PTR);
+	m_rename_name = item->text(0);
+	m_rename_timer->start(QApplication::doubleClickInterval());
+}
+
+// a double click toggles (wx OnAct, through itemActivated), never renames
+void DataTreeWidget::mouseDoubleClickEvent(QMouseEvent* e)
+{
+	CancelClickRename();
+	QTreeWidget::mouseDoubleClickEvent(e);
+	CancelClickRename();   // the base passes it on as a press when it is on another item
+}
+
+// the focus went elsewhere (the view, another window): no rename
+void DataTreeWidget::focusOutEvent(QFocusEvent* e)
+{
+	CancelClickRename();
+	QTreeWidget::focusOutEvent(e);
+}
+
+void DataTreeWidget::changeEvent(QEvent* e)
+{
+	if (e->type() == QEvent::ActivationChange)
+	{
+		m_activated.start();
+		CancelClickRename();
+	}
+	QTreeWidget::changeEvent(e);
+}
+
+void DataTreeWidget::closeEditor(QWidget* editor, QAbstractItemDelegate::EndEditHint hint)
+{
+	m_editor_closed.start();
+	QTreeWidget::closeEditor(editor, hint);
+}
+
+void DataTreeWidget::OnClickRenameTimer()
+{
+	QTreeWidgetItem* cur = currentItem();
+	if (!cur || !cur->isSelected() || Editing() || !isVisible() ||
+		TreePanel::ItemType(cur) != m_rename_type || cur->data(0, ROLE_PTR) != m_rename_ptr ||
+		cur->text(0) != m_rename_name || !m_panel->CanClickRename(cur))
+		return;
+	m_panel->OnRenameMenu();
 }
 
 // wx OnBeginDrag: volumes, meshes, annotations, groups and segments can be
 // dragged; the drag carries nothing but the item
 void DataTreeWidget::startDrag(Qt::DropActions)
 {
+	CancelClickRename();
 	QTreeWidgetItem* item = currentItem();
 	if (!item || m_panel->IsFixed())
 		return;
@@ -180,6 +337,7 @@ void DataTreeWidget::dropEvent(QDropEvent* e)
 // wx OnKeyDown: Delete / Backspace delete the selection; Enter toggles
 void DataTreeWidget::keyPressEvent(QKeyEvent* e)
 {
+	CancelClickRename();
 	if (state() != QAbstractItemView::EditingState &&
 		(e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace))
 	{
@@ -1601,6 +1759,26 @@ void TreePanel::OnRenameMenu()
 		sel_item->setFlags(sel_item->flags() | Qt::ItemIsEditable);
 	}
 	m_tree->editItem(sel_item, 0);
+	// Finder / Explorer: the name is selected without the extension of the
+	// file it came from, so typing replaces just that (wx: all of it)
+	if (QLineEdit* le = RenameEditor())
+		le->setSelection(0, RenameSelectionLength(m_rename_prev, type));
+}
+
+QLineEdit* TreePanel::RenameEditor() const
+{
+	if (!m_tree->Editing()) return nullptr;
+	for (QLineEdit* le : m_tree->viewport()->findChildren<QLineEdit*>())
+		if (!le->isHidden()) return le;
+	return nullptr;
+}
+
+bool TreePanel::CanClickRename(const QTreeWidgetItem* item) const
+{
+	if (m_fixed || !item) return false;
+	const int type = ItemType(item);
+	return type == TypeVolume || type == TypeMesh || type == TypeAnnotations ||
+		type == TypeGroup || type == TypeMGroup;
 }
 
 void TreePanel::OnItemChanged(QTreeWidgetItem* item, int column)

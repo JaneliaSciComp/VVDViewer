@@ -63,6 +63,7 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <set>
 #include "Core/FileUtil.h"
 #include "RenderCanvas.h"
@@ -2904,6 +2905,271 @@ void MainWindow::RunPaintTest(const QString& kind)
 				if (TreeLayer* l = m_canvas->GetLayer(i)) last = QString::fromStdWString(l->GetName());
 			log("G3 below every row: %s, last layer %s", order().toLocal8Bit().constData(), last.toLocal8Bit().constData());
 			check(order() == "G1 G2 G3" && last == "G3", "G3 dropped below every row moves to the end");
+		});
+	}
+
+	if (kind == "treerename")
+	{
+		// Rename as in Finder / Explorer (two volumes on the command line): a
+		// click selects a volume, a second click on its name opens the
+		// editor after the double-click interval, with the name selected up
+		// to ".nrrd"; typing replaces that and Return renames the volume. A
+		// double click toggles and renames nothing; nor does a click on the
+		// bulb or beside the name, or a click on another item in time; Escape
+		// keeps the name. A group's whole name is selected; the menu's Rename
+		// selects like the click.
+		QTreeWidget* tw = m_tree->Tree();
+		auto* dtw = qobject_cast<DataTreeWidget*>(tw);
+		const int interval = QApplication::doubleClickInterval();
+		auto wait = [=](int ms) {
+			st->waiting_capture = true;
+			QElapsedTimer t;
+			t.start();
+			while (t.elapsed() < ms)
+				QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+			st->waiting_capture = false;
+		};
+		auto mouse = [tw](QEvent::Type type, const QPoint& pos) {
+			QMouseEvent ev(type, QPointF(pos), QPointF(tw->viewport()->mapToGlobal(pos)), Qt::LeftButton,
+				type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(tw->viewport(), &ev);
+		};
+		auto click = [=](const QPoint& pos) {
+			mouse(QEvent::MouseButtonPress, pos);
+			mouse(QEvent::MouseButtonRelease, pos);
+		};
+		auto double_click = [=](const QPoint& pos) {
+			click(pos);
+			mouse(QEvent::MouseButtonDblClick, pos);
+			mouse(QEvent::MouseButtonRelease, pos);
+		};
+		auto type_text = [](QWidget* w, const QString& s) {
+			for (const QChar c : s)
+			{
+				QKeyEvent ev(QEvent::KeyPress, 0, Qt::NoModifier, QString(c));
+				QCoreApplication::sendEvent(w, &ev);
+			}
+		};
+		auto key = [](QWidget* w, int k) {
+			QKeyEvent press(QEvent::KeyPress, k, Qt::NoModifier);
+			QCoreApplication::sendEvent(w, &press);
+			QKeyEvent release(QEvent::KeyRelease, k, Qt::NoModifier);
+			QCoreApplication::sendEvent(w, &release);
+		};
+		auto vol = [this](int i) -> VolumeData* {
+			const std::vector<VolumeData*> v = m_canvas->Volumes();
+			return i < (int)v.size() ? v[i] : nullptr;
+		};
+		auto item_of = [this](VolumeData* vd) {
+			return vd ? m_tree->FindItem(QString::fromStdWString(vd->GetName()), TreePanel::TypeVolume) : nullptr;
+		};
+		auto show_item = [tw](QTreeWidgetItem* it) {
+			for (QTreeWidgetItem* p = it ? it->parent() : nullptr; p; p = p->parent()) tw->expandItem(p);
+			if (it) tw->scrollToItem(it);
+		};
+		auto base = [](const QString& n) { const int dot = (int)n.lastIndexOf('.'); return dot > 0 ? n.left(dot) : n; };
+		auto editor_line = [this]() {
+			QLineEdit* le = m_tree->RenameEditor();
+			return (le ? QString("editor \"%1\", selected \"%2\"").arg(le->text(), le->selectedText()) : QString("no editor")).toLocal8Bit();
+		};
+		auto cur_name = [tw]() { return (tw->currentItem() ? tw->currentItem()->text(0) : QString("-")).toLocal8Bit(); };
+		// an editor closes when its window stops being active (Qt), so the
+		// state of the window and the focus are logged with the editor
+		auto focus_line = [this]() {
+			QWidget* f = QApplication::focusWidget();
+			return QString("window active %1, focus %2").arg(isActiveWindow() ? 1 : 0)
+				.arg(f ? QString(f->metaObject()->className()) : QString("-")).toLocal8Bit();
+		};
+		auto first_name = std::make_shared<QString>();
+
+		add("first click", [=]() {
+			VolumeData* v0 = vol(0);
+			QTreeWidgetItem* it = item_of(v0);
+			if (!dtw || !v0 || !vol(1) || !it) { check(false, "two volumes in the tree"); return; }
+			*first_name = QString::fromStdWString(v0->GetName());
+			m_tree->SelectView(m_canvas);   // the volume not selected
+			show_item(it);
+			const QRect row = tw->visualItemRect(it), name = dtw->NameRect(it);
+			log("%ls: row %d,%d %dx%d, name %d,%d %dx%d; double-click interval %d ms", v0->GetName().c_str(),
+				row.x(), row.y(), row.width(), row.height(), name.x(), name.y(), name.width(), name.height(), interval);
+			click(name.center());
+			const bool pending = dtw->ClickRenamePending();
+			wait(interval + 300);
+			log("first click: pending %d, current %s, %s", pending, cur_name().constData(), editor_line().constData());
+			check(tw->currentItem() == item_of(v0) && !pending && !m_tree->RenameEditor(),
+				"a click on a volume not selected selects it and renames nothing");
+		});
+		add("second click", [=]() {
+			QTreeWidgetItem* it = item_of(vol(0));
+			if (!it) { check(false, "the volume's item"); return; }
+			click(dtw->NameRect(it).center());
+			const bool pending = dtw->ClickRenamePending();
+			wait(interval / 2);
+			const bool early = m_tree->RenameEditor() != nullptr;
+			wait(interval / 2 + 300);
+			QLineEdit* le = m_tree->RenameEditor();
+			log("second click: pending %d, editor after %d ms %d, then %s; %s", pending, interval / 2, early,
+				editor_line().constData(), focus_line().constData());
+			check(pending && !early && le && le->text() == *first_name && le->selectedText() == base(*first_name),
+				QString("a second click on the selected name opens the editor after the double-click interval, \"%1\" selected").arg(base(*first_name)));
+		});
+		add("type", [=]() {
+			QLineEdit* le = m_tree->RenameEditor();
+			VolumeData* v0 = vol(0);
+			if (!le || !v0)
+			{
+				log("type: %s; %s", editor_line().constData(), focus_line().constData());
+				check(false, "the editor still open");
+				return;
+			}
+			const bool disp = v0->GetDisp();
+			const QString expect = "Glia A" + first_name->mid(base(*first_name).size());
+			type_text(le, "Glia A");
+			const QString typed = le->text();
+			key(le, Qt::Key_Return);
+			wait(400);
+			QTreeWidgetItem* it = m_tree->FindItem(expect, TreePanel::TypeVolume);
+			log("typed \"Glia A\": editor \"%s\"; Return: volume %ls, item %s, current %s, shown %d -> %d, %s",
+				typed.toLocal8Bit().constData(), v0->GetName().c_str(), it ? "found" : "missing", cur_name().constData(),
+				disp, v0->GetDisp(), editor_line().constData());
+			check(typed == expect && QString::fromStdWString(v0->GetName()) == expect && it && tw->currentItem() == it &&
+				!m_tree->RenameEditor() && v0->GetDisp() == disp,
+				QString("typing replaces the selected part, Return renames the volume \"%1\" (still selected and shown)").arg(expect));
+		});
+		add("double click", [=]() {
+			VolumeData* v0 = vol(0);
+			QTreeWidgetItem* it = item_of(v0);
+			if (!it) { check(false, "the renamed volume's item"); return; }
+			const bool disp = v0->GetDisp();
+			double_click(dtw->NameRect(it).center());
+			wait(interval + 300);
+			const bool disp1 = v0->GetDisp();
+			const bool editor1 = m_tree->RenameEditor() != nullptr;
+			if ((it = item_of(v0))) double_click(dtw->NameRect(it).center());
+			wait(interval + 300);
+			log("two double clicks on the selected name: shown %d -> %d -> %d, editor %d, then %s",
+				disp, disp1, v0->GetDisp(), editor1, editor_line().constData());
+			check(disp1 != disp && v0->GetDisp() == disp && !editor1 && !m_tree->RenameEditor(),
+				"a double click on the selected name toggles the volume and renames nothing");
+		});
+		add("bulb, beside the name", [=]() {
+			VolumeData* v0 = vol(0);
+			QTreeWidgetItem* it = item_of(v0);
+			if (!it) { check(false, "the volume's item"); return; }
+			const QRect row = tw->visualItemRect(it), name = dtw->NameRect(it);
+			const QPoint bulb(row.left() + tw->iconSize().width() / 2 + 2, row.center().y());
+			click(bulb);
+			const bool pend_bulb = dtw->ClickRenamePending();
+			wait(interval + 300);
+			const bool ed_bulb = m_tree->RenameEditor() != nullptr;
+			const QPoint beside(name.right() + 16, row.center().y());
+			const bool room = beside.x() < tw->viewport()->width() - 2;
+			bool pend_beside = false, ed_beside = false;
+			if (room)
+			{
+				click(beside);
+				pend_beside = dtw->ClickRenamePending();
+				wait(interval + 300);
+				ed_beside = m_tree->RenameEditor() != nullptr;
+			}
+			log("bulb at x %d (name %d..%d): pending %d, editor %d; beside the name at x %d (viewport width %d): pending %d, editor %d; current %s",
+				bulb.x(), name.left(), name.right(), pend_bulb, ed_bulb, beside.x(), tw->viewport()->width(), pend_beside, ed_beside, cur_name().constData());
+			check(!name.contains(bulb) && !pend_bulb && !ed_bulb && room && !pend_beside && !ed_beside && tw->currentItem() == item_of(v0),
+				"a click on the bulb or beside the name of the selected volume renames nothing");
+		});
+		add("another item in time", [=]() {
+			VolumeData* v1 = vol(1);
+			QTreeWidgetItem* a = item_of(vol(0));
+			if (!a || !item_of(v1)) { check(false, "two volumes"); return; }
+			show_item(item_of(v1));
+			click(dtw->NameRect(a).center());
+			const bool pending = dtw->ClickRenamePending();
+			if (QTreeWidgetItem* b = item_of(v1)) click(dtw->NameRect(b).center());
+			wait(interval + 300);
+			log("the selected name clicked, then %ls at once: pending %d, current %s, %s", v1->GetName().c_str(), pending,
+				cur_name().constData(), editor_line().constData());
+			check(pending && tw->currentItem() == item_of(v1) && !m_tree->RenameEditor(),
+				"another volume clicked within the interval is selected, nothing renamed");
+		});
+		add("Escape", [=]() {
+			VolumeData* v1 = vol(1);
+			QTreeWidgetItem* b = item_of(v1);
+			if (!b) { check(false, "the second volume"); return; }
+			const QString before = QString::fromStdWString(v1->GetName());
+			click(dtw->NameRect(b).center());
+			wait(interval + 300);
+			QLineEdit* le = m_tree->RenameEditor();
+			const QString sel = le ? le->selectedText() : QString();
+			if (le)
+			{
+				type_text(le, "X");
+				key(le, Qt::Key_Escape);
+			}
+			wait(300);
+			QTreeWidgetItem* after = item_of(v1);
+			log("rename of %s: selected \"%s\", \"X\" typed, Escape: name %ls, item %s, %s", before.toLocal8Bit().constData(),
+				sel.toLocal8Bit().constData(), v1->GetName().c_str(), after ? after->text(0).toLocal8Bit().constData() : "-", editor_line().constData());
+			check(le && sel == base(before) && QString::fromStdWString(v1->GetName()) == before && after && after->text(0) == before &&
+				!m_tree->RenameEditor(), "Escape keeps the name");
+		});
+		add("group", [=]() {
+			QTreeWidgetItem* it = item_of(vol(0));
+			QTreeWidgetItem* g = it ? it->parent() : nullptr;
+			if (!g || TreePanel::ItemType(g) != TreePanel::TypeGroup) { check(false, "the volume's group"); return; }
+			const QString gname = g->text(0);
+			click(dtw->NameRect(g).center());   // selects it
+			wait(interval + 300);
+			const bool ed1 = m_tree->RenameEditor() != nullptr;
+			if ((g = m_tree->FindItem(gname, TreePanel::TypeGroup))) click(dtw->NameRect(g).center());
+			wait(interval + 300);
+			QLineEdit* le = m_tree->RenameEditor();
+			const QString sel = le ? le->selectedText() : QString();
+			if (le) key(le, Qt::Key_Escape);
+			wait(200);
+			log("group %s: first click editor %d; second click selected \"%s\"", gname.toLocal8Bit().constData(), ed1, sel.toLocal8Bit().constData());
+			check(!ed1 && le && sel == gname, "a group's second click selects its whole name");
+		});
+		add("menu", [=]() {
+			QTreeWidgetItem* it = item_of(vol(0));
+			if (!it) { check(false, "the volume's item"); return; }
+			const QString name = it->text(0);
+			tw->setCurrentItem(it);
+			QMenu* menu = m_tree->BuildContextMenu(it);
+			QAction* rename = nullptr;
+			if (menu)
+				for (QAction* a : menu->actions())
+					if (a->text() == "Rename") rename = a;
+			if (rename) rename->trigger();
+			QLineEdit* le = m_tree->RenameEditor();
+			const QString sel = le ? le->selectedText() : QString();
+			if (le) key(le, Qt::Key_Escape);
+			if (menu) menu->deleteLater();
+			wait(200);
+			log("menu Rename of %s: selected \"%s\"", name.toLocal8Bit().constData(), sel.toLocal8Bit().constData());
+			check(rename && le && sel == base(name), "the menu's Rename selects the name without its extension too");
+		});
+		add("activating click", [=]() {
+			// the click that brings the window to the front: the window's
+			// activation change comes just before its press
+			QTreeWidgetItem* it = item_of(vol(0));
+			if (!it) { check(false, "the volume's item"); return; }
+			tw->setCurrentItem(it);
+			QEvent activation(QEvent::ActivationChange);
+			QCoreApplication::sendEvent(tw, &activation);
+			click(dtw->NameRect(it).center());
+			const bool pending = dtw->ClickRenamePending();
+			wait(interval + 300);
+			const bool editor = m_tree->RenameEditor() != nullptr;
+			// a click later on: a rename again
+			if ((it = item_of(vol(0)))) click(dtw->NameRect(it).center());
+			const bool pending2 = dtw->ClickRenamePending();
+			wait(interval + 300);
+			QLineEdit* le = m_tree->RenameEditor();
+			if (le) key(le, Qt::Key_Escape);
+			wait(200);
+			log("click right after the window's activation: pending %d, editor %d; %d ms later: pending %d, editor %d",
+				pending, editor, interval + 300, pending2, le != nullptr);
+			check(!pending && !editor && pending2 && le, "the click that activates the window renames nothing, the next one does");
 		});
 	}
 
