@@ -1475,6 +1475,10 @@ void MainWindow::CaptureProjectView(ProjectIO::ProjectView& v, int view)
 		v.draw_camctr = overlays->GetDrawCamCtr();
 		v.draw_fps = overlays->GetDrawInfo();
 		v.draw_legend = overlays->GetDrawLegend();
+		v.legend_on_objects = overlays->GetNamesOnObjects();
+		v.legend_names_manual = overlays->GetNamesManual();
+		for (const auto& [vd, pos] : overlays->NamePositions())
+			v.legend_name_pos.push_back({ QString::fromStdWString(vd->GetName()), pos.x(), pos.y() });
 	}
 	//camera (wx VRenderView::GetRotations: x = 360 - m_rotx)
 	c->GetTranslations(v.transx, v.transy, v.transz);
@@ -1577,6 +1581,13 @@ void MainWindow::ApplyProjectView(const ProjectIO::ProjectView& v, int view)
 		overlays->SetDrawCamCtr(v.draw_camctr);
 		overlays->SetDrawInfo(v.draw_fps);
 		overlays->SetDrawLegend(v.draw_legend);   // legends of the data: ProjectIO
+		overlays->SetNamesOnObjects(v.legend_on_objects);
+		// the names' places by hand (by volume name; the volumes are loaded)
+		overlays->ResetNamePositions();
+		for (const ProjectIO::ProjectView::NamePos& np : v.legend_name_pos)
+			if (VolumeData* vd = m_data_mgr->GetVolumeData(VVDString(np.name.toStdWString())))
+				overlays->SetNamePosition(vd, QPointF(np.dx, np.dy));
+		overlays->SetNamesManual(v.legend_names_manual);
 	}
 	if (vpanel) vpanel->SyncOverlayChecks();
 	//camera (wx VRenderView::SetRotations: m_rotx = 360 - x)

@@ -415,6 +415,7 @@ void ViewPanel::SetOverlays(ViewOverlays* ov)
 	if (m_overlays == ov) { SyncOverlayChecks(); return; }
 	if (m_overlays) disconnect(m_overlays, nullptr, this, nullptr);
 	m_overlays = ov;
+	if (m_legend_menu) m_legend_menu->SetOverlays(ov);
 	if (ov)
 	{
 		// view defaults read before the overlays existed (LoadDefaultSettings)

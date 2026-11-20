@@ -217,6 +217,45 @@ int RenderCanvas::Get2DAdjust(VolumeData* vd, glm::vec4* loc) const
 	return IMG_SHDR_BRIGHTNESS_CONTRAST_HDR;
 }
 
+Color RenderCanvas::ScreenColor(VolumeData* vd) const
+{
+	if (!vd)
+		return Color(1.0, 1.0, 1.0);
+	glm::vec4 loc[3];
+	const int shader = Get2DAdjust(m_vol_method == VolMethodMulti ? nullptr : vd, loc);
+	const Color c = vd->GetColor();
+	const double in[3] = { c.r(), c.g(), c.b() };
+	double out[3];
+	for (int i = 0; i < 3; i++)
+	{
+		const double v = std::max(0.0, in[i]);
+		const double g = loc[0][i];
+		const double pg = std::pow(v, g);
+		double x;
+		if (shader == IMG_SHDR_LEVELS)
+		{
+			// IMG_SHADER_CODE_LEVELS
+			const double l = loc[1][i];
+			x = l <= 1.0 ? pg / std::clamp(l, 0.001, 1.0) : std::pow(pg, l * l * l);
+		}
+		else
+		{
+			// IMG_SHADER_CODE_BRIGHTNESS_CONTRAST_HDR; in a uniform area the
+			// local average (mip levels) is the colour itself
+			double b = loc[1][i];
+			if (b > 1.0)
+				b = b < 2.0 ? 1.0 / (2.0 - b) : 256.0;
+			const double h = loc[2][i];
+			const double avg = pg / std::pow(std::max(v, 0.001), g);
+			x = pg * b;
+			x = x * (1.0 - h) + h * avg;
+			x = x * (1.0 - h) + h * (1.0 - 1.0 / (x + 1.0));
+		}
+		out[i] = std::clamp(x, 0.0, 1.0);
+	}
+	return Color(out[0], out[1], out[2]);
+}
+
 // ---------------------------------------------------------------------------
 // perspective / free fly
 // ---------------------------------------------------------------------------

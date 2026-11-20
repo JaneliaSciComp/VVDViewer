@@ -1219,6 +1219,16 @@ void RenderCanvas::DrawVolumes(int nx, int ny)
 	}
 }
 
+void RenderCanvas::SetViewCursor(const QCursor& c)
+{
+	if (m_window) m_window->setCursor(c);
+}
+
+void RenderCanvas::UnsetViewCursor()
+{
+	if (m_window) m_window->unsetCursor();
+}
+
 // verbatim from VRenderVulkanView::DrawFinalBuffer
 void RenderCanvas::SimulateMouse(int type, const QPoint& pos, Qt::MouseButton button, Qt::MouseButtons buttons,
 	Qt::KeyboardModifiers mods)
@@ -1738,6 +1748,16 @@ void RenderCanvas::mousePressEvent(QMouseEvent* e)
 	}
 	if (CanvasTool* t = ActiveTool())
 		if (t->MousePress(e)) { m_drag_buttons = Qt::NoButton; return; }
+	// a tool's own drag (a name in the manual layout of Names on Objects)
+	if (e->button() == Qt::LeftButton && e->type() != QEvent::MouseButtonDblClick)
+		for (CanvasTool* t : m_tools)
+			if (t && t->GrabPress(e))
+			{
+				m_grab_tool = t;
+				m_drag_buttons = Qt::NoButton;
+				m_pick = false;
+				return;
+			}
 	m_last_pos = e->pos();
 	m_drag_buttons = e->buttons();
 	if (e->button() == Qt::LeftButton)
@@ -1757,6 +1777,15 @@ void RenderCanvas::mousePressEvent(QMouseEvent* e)
 
 void RenderCanvas::mouseReleaseEvent(QMouseEvent* e)
 {
+	if (m_grab_tool && e->button() == Qt::LeftButton)
+	{
+		CanvasTool* t = m_grab_tool;
+		m_grab_tool = nullptr;
+		t->DragRelease(e);
+		m_drag_buttons = e->buttons();
+		m_pick = false;
+		return;
+	}
 	// wx RightUp -> OnContextMenu (in every mode but the ruler's)
 	const bool rclick = e->button() == Qt::RightButton && m_rclick;
 	if (e->button() == Qt::RightButton) m_rclick = false;
@@ -1801,6 +1830,7 @@ void RenderCanvas::mouseMoveEvent(QMouseEvent* e)
 	// a right drag (zoom; painting in the paint modes) opens no menu
 	if ((e->buttons() & Qt::RightButton) && e->pos() != m_rclick_pos)
 		m_rclick = false;
+	if (m_grab_tool) { m_grab_tool->DragMove(e); return; }
 	if (CanvasTool* t = ActiveTool())
 		if (t->MouseMove(e)) return;
 	if (m_drag_buttons == Qt::NoButton) return;

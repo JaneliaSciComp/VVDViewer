@@ -173,6 +173,61 @@ engine changes that also change the wx app are under "Bug fixes".
 * **Legend drop-down** (`LegendMenu`) on the render view replaces the floating
   Legend dialog: rows / Show All / Hide All, the menu stays open; legend
   clicks redraw only the overlays (no brick-loop restart).
+* **Legend names without file extensions** (not in wx, which shows the
+  full name): the list at the bottom of the view and the names on objects
+  drop the extension, `ViewOverlays::LegendName`: the last ".<2-6 letters
+  / digits, one a letter>" at the end or before an "_" suffix, and a
+  ".nii" etc. before ".gz" / ".bz2" / ".xz" / ".zst" / ".zip" ("cell.nrrd"
+  -> "cell", "stack.tif_Ch1" -> "stack_Ch1", "cell.nrrd_1" -> "cell_1",
+  "x.nii.gz" -> "x", "cell_v1.5" stays). The drop-down's rows and the
+  Workspace keep the full names.
+* **Names on Objects** (new, in the Legend drop-down; saved with the view as
+  `legend_on_objects`, a key wx does not read): each displayed volume with
+  its legend on gets its colour square on its cell body with its name
+  beside it, instead of a row of the list at the bottom (meshes stay in the
+  list). The cell body is the thickest part of the object, the centre of
+  the largest sphere that fits in it (`QtGui/CellBody`: voxels above the
+  volume's threshold, reduced to blocks of about 1/320 of its longest side
+  that count as inside when half full, so processes and sheets drop out;
+  exact Euclidean distance transform in physical units; of the blocks at
+  the peak, the one nearest their mean). It is computed once per volume
+  data and threshold, one volume at a time in the global thread pool on
+  every core (a 2953x625x625 8-bit mask: about 50 ms); the task holds the
+  data, so deleting the volume meanwhile is harmless. Squares are drawn on
+  whole pixels with a 2-pixel frame in the text colour. Each name follows a
+  square of its colour, as in the list: the cell body's square when the
+  name is beside it (right of it), else its own. Names are laid out from
+  the rightmost cell body, right of its square or, at the view's right
+  edge, left of it; one that would overlap a square, a name or a line
+  placed before, or whose line would cross one, moves by whole lines
+  (down, up, two down, ...) with its own square, right above or below the
+  cell body's and joined to it by a straight line (left of the cell body
+  the line turns on the name's line to the end of the name). Names run
+  right, so the lines of the names placed later pass left of them. The
+  selected volume's name is bold; text over a shadow in the background
+  colour. A label is left out while its cell body is clipped away or off
+  screen. `ViewOverlays::SetNamesOnObjects` / `DrawObjectNames`.
+  **Name Position** (below it in the drop-down): *Auto* is the layout
+  above, in every frame; *Manual (drag names)* keeps each name where it is
+  (switching changes nothing on screen) and a name dragged with the left
+  button in the view moves there: its square and the name right of it,
+  a straight line from the cell body's square to the name's square (to the
+  end of the name when the cell body is right of it). The place is kept
+  relative to the cell body, in lines of the legend's text, so a name
+  follows its cell body when the view turns or zooms; a name dropped onto
+  its cell body's square goes back beside it; names shown later are laid
+  out around the placed ones and then kept too. A press on a name takes
+  the drag only in Manual (an open hand over a name, closed while
+  dragging; `CanvasTool::GrabPress` / `DragMove` / `DragRelease`, offered
+  to every tool after the active one); in Auto it turns the view as
+  before. *Reset Name Positions* lays them out automatically again (in
+  Manual: and keeps them there); back in Auto the kept places return when
+  Manual is chosen again. Saved with the view: `legend_names_manual` and
+  `/properties/legend_names` (`name_<i>` = volume name, `pos_<i>` = the
+  offset), keys wx does not read. The items are greyed while Names on
+  Objects is off. A cell body is tied to the data object it was computed
+  from (`weak_ptr`), so volumes made at the addresses of deleted ones
+  (opening a project) get their own.
 * **Components & Tracking menu entries**: wx has every entry commented out
   (the dialog is unreachable); the Qt app adds "Components && Tracking..." to
   the Analyze drop-down, the Tools menu and the tree's context menu.
@@ -761,7 +816,8 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   SWC segment trees (meshes, built on expansion as wx), wx bulb icons (not
   in wx: a volume's / mesh's bulb has its colour at full brightness, so a
   dim channel colour still shows its hue; grey and black give white;
-  `QtGui/SwatchColor.h`, also the squares of the legend in the view),
+  `QtGui/SwatchColor.h`; the legend in the view shows the colour on the
+  screen instead, see "Overlays"),
   visibility history (PushVisHistory / Undo / Redo, 10 steps),
   ShowAllDatasets / HideOtherDatasets / HideSelectedItem, single selection,
   toggle (double click / Enter / button), rename, Delete key, every wx context
@@ -810,10 +866,18 @@ byte-identically; Thin Plate Spline output is byte-identical to the wx app.
   (`VolumeRenderer::prepareVRayPipeline` uses peel 0 for colormap 2). Mesh shadows
   use the Settings shadow direction too (was 0).
 * **Overlays** (`ViewOverlays`): Center, Info, Legend, scale bar, colormap,
-  annotation labels (`DrawAnnotations`). Not in wx: a legend square (and a
-  selected name) has the colour of the Workspace bulb, the data colour at
-  full brightness (`VVDSwatchColor`); wx drew the colour itself, so a dim
-  channel gave a black square in the view and in captures. An annotation
+  annotation labels (`DrawAnnotations`). Not in wx: a volume's legend
+  square (and its name when selected) has the colour the volume gets on the
+  screen (`RenderCanvas::ScreenColor`): its colour, luminance included,
+  through the Output Adjustments it is drawn with (its own in Layered and
+  Composite, the view's in Depth mode; the formulas of the brightness /
+  contrast / HDR and the easy-mode levels shaders, the HDR term for a
+  uniform area). wx drew the colour itself: with a strong gamma (7.86 shown,
+  0.127 stored) a dim channel rendered bright had a black square, and a
+  small component lifted by the gamma changed the hue (red with a little
+  blue rendered magenta, blue with a little green teal). Shading and
+  overlapping data are left out; meshes keep their diffuse colour (wx).
+  Names on Objects: see "Legend drop-down". An annotation
   layer that carries a mesh (the `Mesh:` line of its file) is drawn as that
   mesh, ADDed with the
   layer's alpha (`RenderCanvas::DrawAnnotationMesh`). Settings gradient
@@ -1708,7 +1772,9 @@ command line.
 | `resizeview` | Opens the files given (e.g. a project), then rounds of: Properties hidden / shown, wheel zoom, both at once, the window resized, a channel off / on / recoloured, Properties hidden / shown while frames are drawn back to back (with and without zooming). After each: the capture shows the channels, the CAMetalLayer's drawable has the swapchain's size and the swapchain the view's, and a resize alone keeps the objects' size on the screen (`VVD_QT_RV_CYCLES` rounds, `VVD_QT_RV_WIN` window size; `VVD_VK_OLD_RESIZE=1` for the swapchain handling before the fix) |
 | `treegroups` | Six volumes put into G1, G2, G3 by dragging them onto the groups, every group expanded: G3 over G1's last volume shows the line under G1's rows (gone when the drag leaves); G3 dropped there lands after G1, G1 on G2's first volume (upper half) before G2, G1 on its own volume stays, G3 below every row moves to the end |
 | `treerename` | Two volumes (C1.nrrd C2.nrrd): a click selects C1, a second click on its name opens the editor only after the double-click interval, "C1" of "C1.nrrd" selected; "Glia A" typed and Return rename it "Glia A.nrrd" (still selected and shown); two double clicks on the selected name toggle it off and on, no editor; a click on the bulb or beside the name, another volume clicked within the interval, the click right after the window's activation: no rename; Escape keeps the name; a group's whole name selected; the menu's Rename selects like the click |
-| `bulbs` | Workspace bulb colours: the first volume coloured dim purple (0.2 0.05 0.25), dim grey and almost black; its bulb has (204 51 255), white and white, never the dim colour itself. Then the legend in the view (that volume only): captured with a dim violet (0.0130 0.0020 0.0167, a channel colour at luminance 0.017), dim purple and almost black, every pixel of its square is (199 31 255), (204 51 255) and white |
+| `bulbs` | Workspace bulb colours: the first volume coloured dim purple (0.2 0.05 0.25), dim grey and almost black; its bulb has (204 51 255), white and white, never the dim colour itself |
+| `objectnames` | cellA / cellC / cellB.nrrd (400x100x100 binary cells: a soma each, processes, a sheet on A; C's soma right of A's): LegendName on 11 names (extensions dropped, suffixes kept); each cell body from its data within 2 voxels of the soma centre, also for a 1-voxel line, nothing (none), 16-bit data above a threshold; with three colours and Output Adjustments of a real project (gamma 0.127, luminance 0.504 / 1.148) and Composite: ScreenColor = the shader's formula, the list's squares in those colours and the rendering at each cell body within 12 of them; Names on Objects: each square (frame drawn, colour inside) where its label is, a square of its colour before each name (the cell body's beside it, its own right above / below it when moved), names not overlapping (one of A and C moved by a line), no moved name's line across another name or square, inside the view, no list; B under a name too long for the right: left of its cell body after its own square (moved: the line's corner drawn); Name Position Manual: every name where it was, A's name dragged 60 right and 40 down goes there (its colour, a line drawn, the view not turned, the others still), keeps its offset when the view turns 30 degrees, Auto lays it out again and Manual brings the dragged place back, saved and back after opening the project (legend_names_manual=1, the places), dropped onto its square: beside it, Reset: the automatic layout kept; in Auto a drag on a name turns the view; the Legend menu's Name Position items switch the placement and are greyed without Names on Objects; the labels follow a 30 degree rotation; saved as legend_on_objects=1 and back after opening the project; the Legend menu item checked and toggling |
+| `namesview` | whatever is loaded, `VVD_QT_NAMES_SETUP=<file>` (lines "name r g b gamma luminance shading alpha"): Names on Objects, logs each cell body (voxels), label and when it appeared; namesview.png and namesview_list.png (names off) |
 | `panes` | Two runs. `VVD_QT_PANES_PHASE=1 VVD_QT_PANES_STATE=<file>`: every pane and the main toolbar hidden, Measurement opened, the window state written to `<file>`. Then `VVD_QT_STATE_HEX=<file>`: after the restored state has settled every pane and the toolbar are shown and Measurement is closed; a project saved with Record/Export and Properties off and Measurement open has `ui_movie_view=0`, `ui_prop_view=0`, `ui_measure_view=1`, and opening it brings that back (`panes.vrp`) |
 | `rulersel` | Measurement list and the view (one or two volumes): 36 View Plane locators clicked in a grid inside the volume (each new one the selected, shown row; the list scrolls), Edit press on locator 30 with the list at the top, Edit drag of locator 20 (row kept, list not scrolled, the row shows the new position), camera-mode click on locator 3 and beside it, a new locator with the list at the top, the selected row's colour (`rulersel_list.png`) |
 | `rulerclip` | Edit-mode drag with Auto-select on two volumes (96x80x40), volume A clipped (x 19..76, z 18..23 linked): without sync (A only), with Sync All Chan. and with Sync Group; View Plane, Maximum Intensity and Accumulated. A locator inside A's planes dragged to where B is brighter: the point goes onto B, A stays selected (tree, Clipping Planes, current volume) and the pane keeps A's ranges on every move, the locator is drawn, no plane of A or B changes; after the release A is still selected when the point is inside A's planes, else B (the locator stays drawn); the view is the same before, during and after the drag (`rc<n>_before.png`, `_drag`, `_after`) |

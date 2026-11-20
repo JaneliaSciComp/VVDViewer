@@ -20,6 +20,7 @@
 
 #include <QWidget>
 #include <QWindow>
+#include <QCursor>
 #include <QString>
 #include <memory>
 #include <vector>
@@ -231,7 +232,14 @@ public:
 
 	// ---- tools (brush, rulers): see CanvasTool.h
 	void AddTool(CanvasTool* t) { if (t && std::find(m_tools.begin(), m_tools.end(), t) == m_tools.end()) m_tools.push_back(t); }
-	void RemoveTool(CanvasTool* t) { m_tools.erase(std::remove(m_tools.begin(), m_tools.end(), t), m_tools.end()); }
+	void RemoveTool(CanvasTool* t)
+	{
+		m_tools.erase(std::remove(m_tools.begin(), m_tools.end(), t), m_tools.end());
+		if (m_grab_tool == t) m_grab_tool = nullptr;
+	}
+	// the mouse cursor over the 3D view (its native window)
+	void SetViewCursor(const QCursor& c);
+	void UnsetViewCursor();
 
 	// ---- frame state for tools (valid inside a frame / after the first one)
 	const glm::mat4& GetMvMat() const { return m_mv_mat; }      // object model-view
@@ -417,6 +425,12 @@ public:
 	// (IMG_SHDR_LEVELS in easy mode, else IMG_SHDR_BRIGHTNESS_CONTRAST_HDR)
 	// and fills loc[0..2]. vd == nullptr: the view's own values (Depth mode).
 	int Get2DAdjust(VolumeData* vd, glm::vec4* loc) const;
+	// The colour a fully bright voxel of vd gets on the screen (not in wx;
+	// the legend's squares): its colour, luminance included, through the 2D
+	// adjustment it is drawn with -- its own in Layered and Composite, the
+	// view's in Depth mode -- with the formulas of the two shaders (the HDR
+	// term for a uniform area). Shading and overlapping data are left out.
+	FLIVR::Color ScreenColor(VolumeData* vd) const;
 
 	// ---- camera modes (RenderCanvasCamera.cpp; wx VRenderVulkanView)
 	// wx SetPersp: ortho also leaves free-fly mode (restoring the camera)
@@ -830,6 +844,7 @@ private:
 	double m_rotx = 0.0, m_roty = 0.0, m_rotz = 0.0;
 	FLIVR::Quaternion m_q;
 	std::vector<CanvasTool*> m_tools;
+	CanvasTool* m_grab_tool = nullptr;   // the tool dragging since its GrabPress
 	bool m_tablet_down = false;
 	double m_tablet_pressure = 1.0;
 	QString m_capture_path;

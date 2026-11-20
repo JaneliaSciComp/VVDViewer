@@ -6,7 +6,8 @@
 //
 //   wx                                       here
 //   m_draw_camctr / m_camctr_size            SetDrawCamCtr / SetCamCtrSize   (DrawCamCtr)
-//   m_draw_legend, m_sb_height               SetDrawLegend                   (DrawLegend, DrawName)
+//   m_draw_legend, m_sb_height               SetDrawLegend                   (DrawLegend, DrawName;
+//                                            not in wx: SetNamesOnObjects, DrawObjectNames)
 //   m_disp_scale_bar, m_disp_scale_bar_text, EnableScaleBar / EnableSBText /  (DrawScaleBar)
 //   m_sb_length, m_sb_text, m_sb_unit,       SetScaleBarLen / SetSBText /
 //   m_sb_num, m_sclbar_digit,                SetSbUnitSel / SetSbNumText /
@@ -24,13 +25,23 @@
 // Colormap, Frame, Info. The tool is never active (no mouse capture); it
 // follows the mouse through CanvasTool::HoverMove for the Info coordinates
 // and redraws on mouse moves while they are shown (wx OnMouse: m_draw_coord
-// -> RefreshGL(false, false)).
+// -> RefreshGL(false, false)). With Names on Objects placed by hand
+// (SetNamesManual) a press on a name takes the drag (CanvasTool::GrabPress)
+// and moves that name; the cursor is an open hand over a name.
 
 #include <QObject>
 #include <QPointer>
 #include <QPoint>
+#include <QPointF>
+#include <QRectF>
+#include <QSize>
 #include <QString>
 #include <QElapsedTimer>
+#include <atomic>
+#include <deque>
+#include <map>
+#include <utility>
+#include <vector>
 #include <memory>
 
 #include "CanvasTool.h"
@@ -41,6 +52,7 @@ class RenderCanvas;
 class RulerTool;
 class TextRenderer;
 class VolumeData;
+namespace FLIVR { class VL_Nrrd; }
 
 class ViewOverlays : public QObject, public CanvasTool
 {
@@ -74,6 +86,54 @@ public:
 	// ---- legend (hidden "Legend" check box, default on)
 	void SetDrawLegend(bool b) { m_draw_legend = b; Refresh(); }
 	bool GetDrawLegend() const { return m_draw_legend; }
+	// "Names on Objects" of the Legend menu (not in wx; saved with the view):
+	// each displayed volume with its legend on gets its colour square on its
+	// cell body (VVDFindCellBody, computed in the background once per volume
+	// data and threshold) with its name beside it after a square of its
+	// colour, instead of a row of the list at the bottom; names that would
+	// overlap move by whole lines with their square, a line running straight
+	// to it from the cell body's. Meshes stay in the list.
+	void SetNamesOnObjects(bool b);
+	bool GetNamesOnObjects() const { return m_names_on_objects; }
+	// a volume's or mesh's name as the legend shows it (the list and the
+	// names on objects; not in wx): without its file extension, the last
+	// ".<2-6 letters / digits, one a letter>" at the end or before an "_"
+	// suffix, and a ".nii" etc. before ".gz" / ".bz2" / ".xz" / ".zst" /
+	// ".zip": "cell.nrrd" -> "cell", "stack.tif_Ch1" -> "stack_Ch1",
+	// "cell.nrrd_1" -> "cell_1", "x.nii.gz" -> "x", "cell_v1.5" stays
+	static QString LegendName(const QString& name);
+	// how the names are placed: automatically in every frame (default), or
+	// by hand: each name keeps its place relative to its cell body, the one
+	// it was laid out at when it was first shown by hand or the one it was
+	// dragged to in the view (a name dragged onto its cell body's square
+	// goes back beside it). Saved with the view.
+	void SetNamesManual(bool b);
+	bool GetNamesManual() const { return m_names_manual; }
+	// the places by hand: each name's square relative to its cell body's,
+	// in lines of the legend's text (x right, y down), for the volumes the
+	// view has
+	std::vector<std::pair<VolumeData*, QPointF>> NamePositions() const;
+	void SetNamePosition(VolumeData* vd, const QPointF& offset);
+	// every name laid out automatically again (by hand: and kept there)
+	void ResetNamePositions();
+	// testing: the label a volume got in the last frame (frame pixels, y
+	// down): the centre of its square on the cell body, the box of its name
+	// with the square before it and the centre of that square (the cell
+	// body's when the name is beside it, right of it: then not in the box);
+	// false: none (no cell body yet, clipped, off screen, legend off)
+	bool LabelOf(VolumeData* vd, QPointF* anchor, QRectF* name_box, QPointF* name_square = nullptr) const;
+	// the frame size those are in (logical: the overlays' layout size)
+	QSize LabelFrameSize() const { return m_label_frame; }
+	// testing: a volume's cell body (texture coordinates); false: none (yet)
+	bool CellBodyOf(VolumeData* vd, double& fx, double& fy, double& fz) const
+	{
+		auto it = m_anchors.find(vd);
+		if (it == m_anchors.end() || !it->second.done || !it->second.found) return false;
+		fx = it->second.fx; fy = it->second.fy; fz = it->second.fz;
+		return true;
+	}
+	// cell bodies being computed or waiting
+	int PendingCellBodies() const { return int(m_anchor_queue.size()) + (m_anchor_running_vd ? 1 : 0); }
 
 	// ---- scale bar (VPropView controls)
 	void EnableScaleBar() { m_disp_scale_bar = true; Refresh(); }
@@ -108,6 +168,9 @@ public:
 	// ---- CanvasTool
 	bool IsActive() const override { return false; }
 	void HoverMove(QMouseEvent* e) override;
+	bool GrabPress(QMouseEvent* e) override;
+	void DragMove(QMouseEvent* e) override;
+	void DragRelease(QMouseEvent* e) override;
 	void DrawOverlay(RenderCanvas* canvas, int nx, int ny) override;
 	void DrawOverlayPost(RenderCanvas* canvas, int nx, int ny) override;   // frame, Info
 
@@ -121,6 +184,19 @@ private:
 	void DrawLegend(int nx, int ny);
 	void DrawName(double x, double y, int nx, int ny, const QString& name,
 		FLIVR::Color color, double font_height, bool highlighted);
+	// Names on Objects: the labels, the background computation of the cell
+	// bodies (one at a time) and its result on the main thread
+	void DrawObjectNames(int nx, int ny);
+	void DrawLeader(double x0, double y0, double x1, double y1, int nx, int ny, FLIVR::Color color);
+	// a square of 2 * half + 1 pixels centred on (x, y) in color, in a frame of
+	// 2 pixels in frame_color, every edge on a whole pixel
+	void DrawMarker(double x, double y, int half, int nx, int ny, FLIVR::Color color, FLIVR::Color frame_color);
+	// a quad (x, y pairs; frame pixels, y down) in one colour
+	void DrawQuadPx(const float* xy, int nx, int ny, FLIVR::Color color);
+	void QueueCellBody(VolumeData* vd);
+	void StartNextCellBody();
+	void OnCellBody(VolumeData* vd, const std::shared_ptr<FLIVR::VL_Nrrd>& vol, const void* data, double thr,
+		bool found, double fx, double fy, double fz);
 	void SetColormapColors(int colormap);
 	void DrawColormap(int nx, int ny);
 	void DrawInfo(int nx, int ny);
@@ -171,6 +247,39 @@ private:
 	bool m_font_dirty = false;
 
 	Vulkan2dRender::V2dObject m_camctr_vobj, m_frame_vobj, m_scbar_vobj, m_name_vobj, m_cmap_vobj;
+
+	// Names on Objects
+	bool m_names_on_objects = false;
+	struct CellBodyAnchor
+	{
+		const void* data = nullptr;   // the volume data it was computed from
+		double thr = -1.0;            // and its threshold (data units)
+		// and the object holding that data: a volume deleted and another made
+		// at its address (opening a project) cannot inherit the result
+		std::weak_ptr<FLIVR::VL_Nrrd> vol;
+		bool done = false, found = false;
+		double fx = 0.0, fy = 0.0, fz = 0.0;   // texture coordinates
+	};
+	std::map<VolumeData*, CellBodyAnchor> m_anchors;
+	std::deque<VolumeData*> m_anchor_queue;
+	VolumeData* m_anchor_running_vd = nullptr;   // the one being computed
+	QSize m_label_frame;
+	std::shared_ptr<std::atomic<bool>> m_anchor_cancel = std::make_shared<std::atomic<bool>>(false);
+	struct DrawnLabel { QPointF anchor; QRectF box; QPointF square; int order = 0; };
+	std::map<VolumeData*, DrawnLabel> m_drawn_labels;
+	double m_label_fh = 0.0, m_label_edge = 0.0;   // the last layout's text line and square half size
+	// by hand: each name's square - its cell body's square, in text lines
+	bool m_names_manual = false;
+	std::map<VolumeData*, QPointF> m_name_pos;
+	VolumeData* m_drag_vd = nullptr;   // the name being dragged
+	QPointF m_drag_from, m_drag_pos0;  // where the drag started (frame pixels), the name's place then
+	bool m_hand_cursor = false;
+	// the name drawn under p (frame pixels: its box or the square before it),
+	// the one drawn last if several
+	VolumeData* NameAt(const QPointF& p) const;
+	QPointF ToFrame(const QPointF& widget_pos) const;
+	void UpdateHandCursor(const QPointF& p);
+	Vulkan2dRender::V2dObject m_leader_vobj;
 };
 
 #endif // VVD_QT_VIEWOVERLAYS_H

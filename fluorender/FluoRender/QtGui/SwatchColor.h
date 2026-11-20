@@ -4,11 +4,11 @@
 #include "FLIVR/Color.h"
 #include <algorithm>
 
-// The colour of a volume's or mesh's swatch (its bulb in Workspace, its
-// square in the legend of the view): the data colour at full brightness,
-// its largest component at 1, hue and saturation kept; a grey or black one
-// is white. Not in wx, where a dim channel colour (low luminance) gave a
-// dark swatch, hard to tell apart.
+// The colour of a volume's or mesh's bulb in Workspace: the data colour at
+// full brightness, its largest component at 1, hue and saturation kept; a
+// grey or black one is white. Not in wx, where a dim channel colour (low
+// luminance) gave a dark bulb, hard to tell apart. (The legend in the view
+// shows the colour on the screen instead: RenderCanvas::ScreenColor.)
 inline FLIVR::Color VVDSwatchColor(const FLIVR::Color& c)
 {
 	const double m = std::max(c.r(), std::max(c.g(), c.b()));

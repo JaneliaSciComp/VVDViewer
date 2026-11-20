@@ -59,8 +59,7 @@ namespace
 	}
 #define VVD_ICON(name) IconFromPng(icons::name##_png, (int)sizeof(icons::name##_png))
 
-	// a bulb's colour: the data colour at full brightness (VVDSwatchColor,
-	// as the squares of the legend in the view)
+	// a bulb's colour: the data colour at full brightness (VVDSwatchColor)
 	QColor BulbColor(const FLIVR::Color& c)
 	{
 		const FLIVR::Color s = VVDSwatchColor(c);

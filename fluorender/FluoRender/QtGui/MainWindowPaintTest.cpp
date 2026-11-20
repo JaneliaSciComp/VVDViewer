@@ -59,11 +59,14 @@
 #include "ClipPanel.h"
 #include "ViewPanel.h"
 #include "ViewOverlays.h"
+#include "LegendMenu.h"
+#include "CellBody.h"
 #include "SettingsDialog.h"
 #include <QApplication>
 #include <QMessageBox>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QVector3D>
 #include <set>
 #include "Core/FileUtil.h"
 #include "RenderCanvas.h"
@@ -83,6 +86,7 @@
 #include <QScrollBar>
 #include <QCryptographicHash>
 #include <QSettings>
+#include <array>
 #include "FileDialogs.h"
 #include "DataManager.h"
 #include "FLIVR/Texture.h"
@@ -3219,84 +3223,622 @@ void MainWindow::RunPaintTest(const QString& kind)
 			m_tree->UpdateTreeColors();
 		});
 
-		// The legend in the view: its square has the colour of the bulb
-		// (wx: the colour itself, dark for a dim channel). The first case
-		// finds the square at the bottom left: the leftmost run of columns
-		// holding its colour (a selected name is drawn in that colour too,
-		// after a gap). The grey ones are white like the frame around the
-		// square and the text, so each case is read inside that square.
-		struct L { double r, g, b; int er, eg, eb; const char* what; };
-		const std::vector<L> legend = { L{ 0.013035, 0.002031, 0.016703, 199, 31, 255, "dim violet" },
-			L{ 0.2, 0.05, 0.25, 204, 51, 255, "dim purple" }, L{ 0.0167, 0.0167, 0.0167, 255, 255, 255, "almost black" } };
-		auto square = std::make_shared<QRect>();
-		auto keep_color = std::make_shared<FLIVR::Color>();
-		add("legend on", [=]() {
-			VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0];
-			if (!vd) return;
-			*keep_color = vd->GetColor();
-			for (VolumeData* v : m_canvas->Volumes()) v->SetLegend(v == vd);
-			m_overlays->SetDrawLegend(true);
-		});
-		for (size_t i = 0; i < legend.size(); i++)
-		{
-			const L c = legend[i];
-			const QString file = QString("legend%1").arg(i);
-			add(QString("legend %1").arg(c.what), [=]() {
-				if (VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0])
-					vd->SetColor(FLIVR::Color(c.r, c.g, c.b));
-				m_canvas->RefreshView();
-			});
-			capture(file);
-			add(QString("legend %1 check").arg(c.what), [=]() {
-				const QImage img = QImage(st->dir + "/" + file + ".png").convertToFormat(QImage::Format_RGB32);
-				if (img.isNull()) { check(false, "legend capture " + file); return; }
-				auto near = [](QRgb p, int r, int g, int b) {
-					return std::abs(qRed(p) - r) <= 2 && std::abs(qGreen(p) - g) <= 2 && std::abs(qBlue(p) - b) <= 2;
-				};
-				const int x_end = std::min(img.width(), 240), y_beg = std::max(0, img.height() - 240);
-				if (i == 0)
-				{
-					int x0 = -1, x1 = -1, y0 = -1, y1 = -1;
-					for (int x = 0; x < x_end; x++)
+		// (the legend's colours: kind "objectnames")
+	}
+
+	if (kind == "objectnames")
+	{
+		// Legend colours and Names on Objects (cellA / cellC / cellB.nrrd:
+		// binary cells of 400x100x100, a soma each, processes, a sheet on A):
+		// (1) the cell body of each, from its data, is its soma's centre;
+		// (2) with the colours and Output Adjustments of three volumes of a
+		// real project (gamma 0.127, shown 7.86; luminance 0.504 or 1.148),
+		// each square of the legend list has the colour the volume is
+		// rendered in at its soma (Composite); (3) Names on Objects: each
+		// square on its soma, no names overlapping (A's and C's collide), no
+		// list; (4) the labels follow a rotation; (5) the option is saved
+		// with the project; (6) the Legend menu item shows and toggles it.
+		struct Cell { const wchar_t* file; double cx, cy, cz, r, g, b, gamma, bright; };
+		static const Cell cells[3] = {
+			{ L"cellA.nrrd", 100, 50, 50, 1.0, 0.0, 0.196078, 0.127226, 0.503906 },
+			{ L"cellC.nrrd", 132, 50, 50, 0.0, 0.050980, 0.839216, 0.127226, 0.503906 },
+			{ L"cellB.nrrd", 330, 50, 50, 0.013035, 0.002031, 0.016703, 0.127226, 1.148438 } };
+		auto wait = [=](int ms) {
+			st->waiting_capture = true;
+			QElapsedTimer t;
+			t.start();
+			while (t.elapsed() < ms)
+				QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+			st->waiting_capture = false;
+		};
+		auto vol = [=](int i) { return find_vol(cells[i].file); };
+		auto name_of = [=](int i) { return QString::fromWCharArray(cells[i].file).toLocal8Bit(); };
+		// the shader (IMG_SHADER_CODE_BRIGHTNESS_CONTRAST_HDR, no HDR), 8 bit
+		auto expect = [](const Cell& c) {
+			const double b = c.bright > 1.0 ? 1.0 / (2.0 - c.bright) : c.bright;
+			auto ch = [&](double v) { return int(std::lround(std::clamp(std::pow(v, c.gamma) * b, 0.0, 1.0) * 255.0)); };
+			return qRgb(ch(c.r), ch(c.g), ch(c.b));
+		};
+		auto near = [](QRgb a, QRgb b, int tol) {
+			return std::abs(qRed(a) - qRed(b)) <= tol && std::abs(qGreen(a) - qGreen(b)) <= tol && std::abs(qBlue(a) - qBlue(b)) <= tol;
+		};
+		auto rgb_str = [](QRgb c) { return QString("(%1 %2 %3)").arg(qRed(c)).arg(qGreen(c)).arg(qBlue(c)).toLocal8Bit(); };
+		auto load = [=](const QString& file) { return QImage(st->dir + "/" + file + ".png").convertToFormat(QImage::Format_RGB32); };
+		auto all_labelled = [=]() {
+			for (int i = 0; i < 3; i++)
+				if (!m_overlays->LabelOf(vol(i), nullptr, nullptr)) return false;
+			return true;
+		};
+		auto wait_labels = [=](const char* what) {
+			QElapsedTimer t;
+			t.start();
+			while (t.elapsed() < 15000 && (m_overlays->PendingCellBodies() > 0 || !all_labelled()))
+			{
+				m_canvas->RefreshOverlayChange();
+				wait(100);
+			}
+			log("%s: labels after %lld ms (pending %d)", what, t.elapsed(), m_overlays->PendingCellBodies());
+			check(all_labelled(), QString("%1: every cell labelled once its cell body is computed").arg(what));
+		};
+		auto anchors = std::make_shared<std::array<QPointF, 3>>();
+		// white pixels left of a label's anchor: its square's frame (the name,
+		// its line and a moved name are on the right here)
+		auto frame_px = [](const QImage& img, QPoint a) {
+			int n = 0;
+			for (int y = a.y() - 16; y <= a.y() + 16; y++)
+				for (int x = a.x() - 16; x <= a.x() - 2; x++)
+					if (img.rect().contains(x, y))
 					{
-						bool any = false;
-						for (int y = y_beg; y < img.height() && !any; y++) any = near(img.pixel(x, y), c.er, c.eg, c.eb);
-						if (any) { if (x0 < 0) x0 = x; x1 = x; }
-						else if (x0 >= 0) break;
+						const QRgb c = img.pixel(x, y);
+						n += qRed(c) >= 230 && qGreen(c) >= 230 && qBlue(c) >= 230;
 					}
-					if (x0 >= 0)
-						for (int y = y_beg; y < img.height(); y++)
-							for (int x = x0; x <= x1; x++)
-								if (near(img.pixel(x, y), c.er, c.eg, c.eb)) { if (y0 < 0) y0 = y; y1 = y; break; }
-					*square = x0 >= 0 && y0 >= 0 ? QRect(QPoint(x0, y0), QPoint(x1, y1)) : QRect();
-				}
-				const QRect sq = *square;
-				const bool found = sq.width() >= 4 && std::abs(sq.width() - sq.height()) <= 2;
-				const int dr = int(std::lround(c.r * 255)), dg = int(std::lround(c.g * 255)), db = int(std::lround(c.b * 255));
-				int full = 0, dim = 0;
-				if (found)
-					for (int y = sq.top(); y <= sq.bottom(); y++)
-						for (int x = sq.left(); x <= sq.right(); x++)
-						{
-							const QRgb p = img.pixel(x, y);
-							full += near(p, c.er, c.eg, c.eb);
-							dim += near(p, dr, dg, db);
-						}
-				const QRgb mid = found ? img.pixel(sq.center()) : 0;
-				log("legend %s (%.4f %.4f %.4f): square %d,%d %dx%d in %dx%d, centre (%d %d %d), %d of %d pixels at (%d %d %d), %d at the colour itself",
-					c.what, c.r, c.g, c.b, sq.x(), sq.y(), sq.width(), sq.height(), img.width(), img.height(),
-					qRed(mid), qGreen(mid), qBlue(mid), full, found ? sq.width() * sq.height() : 0, c.er, c.eg, c.eb, dim);
-				check(found && full == sq.width() * sq.height() && dim == 0,
-					QString("legend %1: the square shows the colour at full brightness").arg(c.what));
-			});
-		}
-		add("legend off", [=]() {
-			if (VolumeData* vd = m_canvas->Volumes().empty() ? nullptr : m_canvas->Volumes()[0])
-				vd->SetColor(*keep_color);
-			for (VolumeData* v : m_canvas->Volumes()) v->SetLegend(false);
-			m_overlays->SetDrawLegend(false);
+			return n;
+		};
+		// a label's anchor in image pixels (the labels are laid out in the
+		// overlays' logical frame)
+		auto to_image = [=](const QImage& img, QPointF a) {
+			const QSize f = m_overlays->LabelFrameSize();
+			const double s = f.width() > 0 ? double(img.width()) / f.width() : 1.0;
+			return QPoint(int(std::floor(a.x() * s)), int(std::floor(a.y() * s)));
+		};
+
+		add("setup", [=]() {
+			for (int i = 0; i < 3; i++)
+			{
+				VolumeData* vd = vol(i);
+				if (!vd) { check(false, QString("volume %1 loaded").arg(QString::fromLocal8Bit(name_of(i)))); continue; }
+				const Cell& c = cells[i];
+				vd->SetColor(FLIVR::Color(c.r, c.g, c.b));
+				vd->SetGamma(FLIVR::Color(c.gamma, c.gamma, c.gamma));
+				vd->SetBrightness(FLIVR::Color(c.bright, c.bright, c.bright));
+				vd->SetHdr(FLIVR::Color(0.0, 0.0, 0.0));
+				vd->SetShading(false);
+				vd->SetLegend(true);
+				const FLIVR::Color sc = m_canvas->ScreenColor(vd);
+				const QRgb mine = qRgb(int(std::lround(sc.r() * 255)), int(std::lround(sc.g() * 255)), int(std::lround(sc.b() * 255)));
+				log("%s: colour %.4f %.4f %.4f, gamma %.6f, luminance %.6f: ScreenColor %s, the shader's formula %s", name_of(i).constData(),
+					c.r, c.g, c.b, c.gamma, c.bright, rgb_str(mine).constData(), rgb_str(expect(c)).constData());
+				check(near(mine, expect(c), 1), QString("%1: ScreenColor is the shader's colour").arg(QString::fromLocal8Bit(name_of(i))));
+			}
+			m_canvas->SetVolMethod(RenderCanvas::VolMethodComp);
+			m_overlays->SetDrawLegend(true);
+			m_overlays->SetNamesOnObjects(false);
 			m_canvas->RefreshView();
 		});
+		add("legend names", [=]() {
+			// the legend's names without file extensions (suffixes kept)
+			static const char* cases[][2] = {
+				{ "cellA.nrrd", "cellA" }, { "cell_939_EM_seg.nrrd", "cell_939_EM_seg" },
+				{ "stack.tif_Ch1", "stack_Ch1" }, { "cell.nrrd_1", "cell_1" }, { "x.nii.gz", "x" },
+				{ "my.data.v3dpbd", "my.data" }, { "mesh.obj", "mesh" }, { "cell_v1.5", "cell_v1.5" },
+				{ "noext", "noext" }, { "A.TIFF", "A" }, { ".nrrd", ".nrrd" } };
+			bool all_ok = true;
+			for (const auto& c : cases)
+			{
+				const QString got = ViewOverlays::LegendName(QString::fromUtf8(c[0]));
+				if (got != QString::fromUtf8(c[1]))
+				{
+					all_ok = false;
+					log("legend name of %s: %s (expected %s)", c[0], got.toUtf8().constData(), c[1]);
+				}
+			}
+			check(all_ok, "the legend shows names without their file extensions");
+		});
+		add("cell bodies", [=]() {
+			for (int i = 0; i < 3; i++)
+			{
+				Nrrd* n = DataNrrd(vol(i));
+				if (!n) { check(false, "the data of " + QString::fromLocal8Bit(name_of(i))); continue; }
+				QElapsedTimer t;
+				t.start();
+				const VVDCellBody r = VVDFindCellBody(n->data, 1, n->axis[0].size, n->axis[1].size, n->axis[2].size, 1.0, 1.0, 1.0, 0.0);
+				const double err = std::max({ std::abs(r.x - cells[i].cx), std::abs(r.y - cells[i].cy), std::abs(r.z - cells[i].cz) });
+				log("%s: cell body %.1f %.1f %.1f (soma centre %.0f %.0f %.0f), depth %.1f, block %d, %lld ms", name_of(i).constData(),
+					r.x, r.y, r.z, cells[i].cx, cells[i].cy, cells[i].cz, r.depth, r.block, t.elapsed());
+				check(r.found && err <= 2.0, QString("%1: the cell body is the soma's centre (within 2 voxels)").arg(QString::fromLocal8Bit(name_of(i))));
+			}
+			// a line 1 voxel thin (no block half full: any voxel counts), nothing
+			// at all, and 16-bit data above a threshold (the bigger sphere is
+			// below it)
+			std::vector<uint8_t> line(400 * 40 * 40, 0);
+			for (int x = 50; x <= 350; x++) line[(20 * 40 + 20) * 400 + x] = 255;
+			const VVDCellBody rl = VVDFindCellBody(line.data(), 1, 400, 40, 40, 1.0, 1.0, 1.0, 0.0);
+			const std::vector<uint8_t> none(64 * 64 * 64, 0);
+			const VVDCellBody rn = VVDFindCellBody(none.data(), 1, 64, 64, 64, 1.0, 1.0, 1.0, 0.0);
+			std::vector<uint16_t> w(100 * 100 * 100, 0);
+			for (int z = 0; z < 100; z++)
+				for (int y = 0; y < 100; y++)
+					for (int x = 0; x < 100; x++)
+					{
+						const int d1 = (x - 30) * (x - 30) + (y - 50) * (y - 50) + (z - 50) * (z - 50);
+						const int d2 = (x - 70) * (x - 70) + (y - 50) * (y - 50) + (z - 50) * (z - 50);
+						w[(size_t(z) * 100 + y) * 100 + x] = d1 <= 15 * 15 ? 1000 : d2 <= 25 * 25 ? 200 : 0;
+					}
+			const VVDCellBody rw = VVDFindCellBody(w.data(), 2, 100, 100, 100, 1.0, 1.0, 1.0, 500.0);
+			log("thin line: found %d at %.1f %.1f %.1f; empty: found %d; 16 bit, threshold 500: %.1f %.1f %.1f (depth %.1f)",
+				rl.found, rl.x, rl.y, rl.z, rn.found, rw.x, rw.y, rw.z, rw.depth);
+			check(rl.found && std::abs(rl.y - 20.5) <= 1.0 && std::abs(rl.z - 20.5) <= 1.0, "a thin line still gets a point on it");
+			check(!rn.found, "empty data: no cell body");
+			check(rw.found && std::abs(rw.x - 30) <= 1.5 && std::abs(rw.y - 50) <= 1.5 && std::abs(rw.z - 50) <= 1.5,
+				"16 bit: the sphere above the threshold, not the bigger one below it");
+		});
+		add("names on", [=]() {
+			m_overlays->SetNamesOnObjects(true);
+			wait_labels("names on");
+			for (int i = 0; i < 3; i++) m_overlays->LabelOf(vol(i), &(*anchors)[i], nullptr);
+		});
+		capture("objnames_on");
+		add("names on check", [=]() {
+			const QImage img = load("objnames_on");
+			if (img.isNull()) { check(false, "capture objnames_on"); return; }
+			QRectF box[3];
+			QPointF anc[3], sq[3];
+			for (int i = 0; i < 3; i++)
+			{
+				const bool ok = m_overlays->LabelOf(vol(i), &anc[i], &box[i], &sq[i]);
+				const QPoint pi = to_image(img, anc[i]);
+				const QRgb px = img.rect().contains(pi) ? img.pixel(pi) : 0;
+				const int frame = frame_px(img, pi);
+				log("%s: square at %.1f, %.1f (image %d, %d of %dx%d, frame %dx%d) %s, expected %s, %d frame pixels left of it; name box %.0f,%.0f %.0fx%.0f",
+					name_of(i).constData(), anc[i].x(), anc[i].y(), pi.x(), pi.y(), img.width(), img.height(),
+					m_overlays->LabelFrameSize().width(), m_overlays->LabelFrameSize().height(), rgb_str(px).constData(),
+					rgb_str(expect(cells[i])).constData(), frame, box[i].x(), box[i].y(), box[i].width(), box[i].height());
+				check(ok && near(px, expect(cells[i]), 2) && frame >= 8,
+					QString("%1: its square (frame drawn, the rendered colour inside) where its label is").arg(QString::fromLocal8Bit(name_of(i))));
+				// the square before its name, as in the list: the cell body's when
+				// the name is beside it, else its own right above / below that,
+				// or (at the view's right edge) left of the cell body
+				const QPoint qi = to_image(img, sq[i]);
+				const QRgb qpx = img.rect().contains(qi) ? img.pixel(qi) : 0;
+				const bool beside = sq[i] == anc[i], stacked = std::abs(sq[i].x() - anc[i].x()) < 0.01 ||
+					(box[i].right() <= anc[i].x() + 1.5 && sq[i].x() < anc[i].x() - box[i].height());
+				const bool before = std::abs(sq[i].y() - box[i].center().y()) <= 1.0 &&
+					sq[i].x() > box[i].left() - box[i].height() && sq[i].x() < box[i].left() + box[i].height() &&
+					box[i].right() > sq[i].x() + 2.0 * box[i].height();
+				log("%s: the square before its name at %.1f, %.1f (%s) %s, %d frame pixels left of it", name_of(i).constData(),
+					sq[i].x(), sq[i].y(), beside ? "the cell body's" : "its own", rgb_str(qpx).constData(), frame_px(img, qi));
+				check(ok && near(qpx, expect(cells[i]), 2) && frame_px(img, qi) >= 8 && before && (beside || stacked),
+					QString("%1: a square of its colour before its name").arg(QString::fromLocal8Bit(name_of(i))));
+			}
+			bool overlap = false;
+			for (int i = 0; i < 3; i++)
+				for (int j = i + 1; j < 3; j++)
+					overlap = overlap || box[i].intersects(box[j]);
+			// a moved name's line (between the two squares) crosses no other
+			// name or square
+			bool crossed = false;
+			for (int i = 0; i < 3; i++)
+			{
+				if (sq[i] == anc[i]) continue;
+				const double y0 = std::min(anc[i].y(), sq[i].y()) + 0.5 * box[i].height(), y1 = std::max(anc[i].y(), sq[i].y()) - 0.5 * box[i].height();
+				const QRectF line(anc[i].x() - 0.5, y0, 1.0, std::max(0.0, y1 - y0));
+				for (int j = 0; j < 3; j++)
+					if (j != i)
+						crossed = crossed || line.intersects(box[j]) || line.intersects(QRectF(anc[j].x() - 6.0, anc[j].y() - 6.0, 12.0, 12.0));
+			}
+			check(!crossed, "the lines to moved names cross no other name or square");
+			const bool moved = std::abs(box[0].center().y() - (*anchors)[0].y()) > 1.0 || std::abs(box[1].center().y() - (*anchors)[1].y()) > 1.0;
+			const QSize f = m_overlays->LabelFrameSize();
+			bool inside = true;
+			for (const QRectF& b : box) inside = inside && b.left() >= 0.0 && b.right() <= f.width() && b.top() >= 0.0 && b.bottom() <= f.height();
+			check(!overlap && moved && inside, "no names overlapping (A's or C's moved by a line), all in the view");
+			// no list at the bottom left
+			int list_px = 0;
+			for (int y = img.height() * 85 / 100; y < img.height(); y++)
+				for (int x = 0; x < img.width() * 60 / 100; x++)
+					for (const Cell& c : cells)
+						list_px += near(img.pixel(x, y), expect(c), 2);
+			log("pixels of the three colours at the bottom left (the list): %d", list_px);
+			check(list_px == 0, "Names on Objects: the volumes are not listed at the bottom");
+		});
+		// B under a name too long for the room right of it: left of its cell
+		// body, after a square of its own
+		auto cell_b = std::make_shared<VolumeData*>(nullptr);
+		add("long name", [=]() {
+			*cell_b = vol(2);
+			if (*cell_b) (*cell_b)->SetName(L"cellB_with_a_name_much_too_long_to_fit_right_of_its_cell_body.nrrd");
+			m_canvas->RefreshView();
+		});
+		capture("objnames_left");
+		add("long name check", [=]() {
+			const QImage img = load("objnames_left");
+			VolumeData* vd = *cell_b;
+			QPointF a, q;
+			QRectF b;
+			const bool ok = vd && !img.isNull() && m_overlays->LabelOf(vd, &a, &b, &q);
+			const QPoint ai = to_image(img, a), qi = to_image(img, q);
+			const QRgb apx = img.rect().contains(ai) ? img.pixel(ai) : 0, qpx = img.rect().contains(qi) ? img.pixel(qi) : 0;
+			// moved off the cell body's line (the others' squares are in the
+			// way): the line's corner below / above the cell body's square
+			const bool moved = std::abs(q.y() - a.y()) > 1.0;
+			const QPoint ci = to_image(img, QPointF(std::floor(a.x()) + 0.5, std::floor(q.y()) + 0.5));
+			const QRgb cpx = img.rect().contains(ci) ? img.pixel(ci) : 0;
+			const bool corner = !moved || (qRed(cpx) >= 230 && qGreen(cpx) >= 230 && qBlue(cpx) >= 230);
+			log("long name: cell body square at %.1f, %.1f %s; name box %.0f,%.0f %.0fx%.0f; the square before it at %.1f, %.1f %s, %d frame pixels left of it; %s, the corner %s",
+				a.x(), a.y(), rgb_str(apx).constData(), b.x(), b.y(), b.width(), b.height(), q.x(), q.y(), rgb_str(qpx).constData(), frame_px(img, qi),
+				moved ? "moved" : "on its line", rgb_str(cpx).constData());
+			check(ok && b.right() <= a.x() + 1.5 && q.x() > b.left() && q.x() < b.left() + b.height() && std::abs(q.y() - b.center().y()) <= 1.0 &&
+				near(apx, expect(cells[2]), 2) && near(qpx, expect(cells[2]), 2) && frame_px(img, qi) >= 8 && corner,
+				"a name too long for the right: left of its cell body, after a square of its colour");
+			if (vd) vd->SetName(L"cellB.nrrd");
+			m_canvas->RefreshView();
+		});
+		add("names off", [=]() { m_overlays->SetNamesOnObjects(false); });
+		capture("objnames_off");
+		add("names off check", [=]() {
+			const QImage img = load("objnames_off");
+			if (img.isNull()) { check(false, "capture objnames_off"); return; }
+			for (int i = 0; i < 3; i++)
+			{
+				// the list: its square in the expected colour
+				int list_px = 0;
+				for (int y = img.height() * 85 / 100; y < img.height(); y++)
+					for (int x = 0; x < img.width() * 60 / 100; x++)
+						list_px += near(img.pixel(x, y), expect(cells[i]), 2);
+				// the rendering where the label was (5x5 average): the soma
+				const QPoint pi = to_image(img, (*anchors)[i]);
+				int r = 0, g = 0, b = 0, n = 0;
+				for (int dy = -2; dy <= 2; dy++)
+					for (int dx = -2; dx <= 2; dx++)
+						if (img.rect().contains(pi + QPoint(dx, dy)))
+						{
+							const QRgb c = img.pixel(pi + QPoint(dx, dy));
+							r += qRed(c); g += qGreen(c); b += qBlue(c); n++;
+						}
+				const QRgb avg = n ? qRgb(r / n, g / n, b / n) : 0;
+				log("%s: %d list pixels in %s; the rendering at its cell body %s, %d white pixels left of it", name_of(i).constData(), list_px,
+					rgb_str(expect(cells[i])).constData(), rgb_str(avg).constData(), frame_px(img, pi));
+				check(frame_px(img, pi) == 0, QString("%1: names off, no square on it").arg(QString::fromLocal8Bit(name_of(i))));
+				check(list_px >= 25, QString("%1: listed at the bottom, in the rendered colour").arg(QString::fromLocal8Bit(name_of(i))));
+				check(near(avg, expect(cells[i]), 12), QString("%1: rendered in that colour at its cell body (+-12)").arg(QString::fromLocal8Bit(name_of(i))));
+			}
+		});
+		add("rotate", [=]() {
+			double rx, ry, rz;
+			m_canvas->GetRotations(rx, ry, rz);
+			m_canvas->SetRotations(rx, ry, rz + 30.0);
+			m_overlays->SetNamesOnObjects(true);
+			m_canvas->RefreshView();
+		});
+		capture("objnames_rot");
+		add("rotate check", [=]() {
+			const QImage img = load("objnames_rot");
+			if (img.isNull()) { check(false, "capture objnames_rot"); return; }
+			for (int i = 0; i < 3; i++)
+			{
+				QPointF a;
+				const bool ok = m_overlays->LabelOf(vol(i), &a, nullptr);
+				const QPoint pi = to_image(img, a);
+				const QRgb px = img.rect().contains(pi) ? img.pixel(pi) : 0;
+				const double moved = std::hypot(a.x() - (*anchors)[i].x(), a.y() - (*anchors)[i].y());
+				log("%s rotated: square at %.1f, %.1f (moved %.1f) %s", name_of(i).constData(), a.x(), a.y(), moved, rgb_str(px).constData());
+				check(ok && moved > 3.0 && near(px, expect(cells[i]), 2), QString("%1: the label follows the rotation").arg(QString::fromLocal8Bit(name_of(i))));
+			}
+			double rx, ry, rz;
+			m_canvas->GetRotations(rx, ry, rz);
+			m_canvas->SetRotations(rx, ry, rz - 30.0);
+			m_canvas->RefreshView();
+		});
+		// Name Position: Manual. Switching keeps every name where it is; a name
+		// dragged in the view moves by the drag (the view does not turn), keeps
+		// its place next to its cell body when the view turns, is laid out
+		// automatically again in Auto and back where it was dragged in Manual,
+		// and is saved with the project.
+		auto auto_sq = std::make_shared<std::array<QPointF, 3>>();
+		auto drag_off = std::make_shared<QPointF>();   // A's square - its cell body's after the drag
+		auto offset_of = [=](int i, QPointF* off) {
+			QPointF a, q;
+			if (!m_overlays->LabelOf(vol(i), &a, nullptr, &q)) return false;
+			*off = q - a;
+			return true;
+		};
+		// a left drag in the view from a to b (frame pixels of the labels)
+		auto drag = [=](QPointF a, QPointF b) {
+			const QSize f = m_overlays->LabelFrameSize();
+			const double s = f.width() > 0 ? double(m_canvas->width()) / f.width() : 1.0;
+			const QPoint pa = (a * s).toPoint(), pb = (b * s).toPoint();
+			m_canvas->SimulateMouse(QEvent::MouseMove, pa, Qt::NoButton, Qt::NoButton);
+			m_canvas->SimulateMouse(QEvent::MouseButtonPress, pa, Qt::LeftButton, Qt::LeftButton);
+			for (int k = 1; k <= 10; k++)
+				m_canvas->SimulateMouse(QEvent::MouseMove, pa + (pb - pa) * k / 10, Qt::NoButton, Qt::LeftButton);
+			m_canvas->SimulateMouse(QEvent::MouseButtonRelease, pb, Qt::LeftButton, Qt::NoButton);
+		};
+		auto rotations = [=]() { double x, y, z; m_canvas->GetRotations(x, y, z); return QVector3D(float(x), float(y), float(z)); };
+		add("manual", [=]() {
+			for (int i = 0; i < 3; i++) m_overlays->LabelOf(vol(i), nullptr, nullptr, &(*auto_sq)[i]);
+			m_overlays->SetNamesManual(true);
+			m_canvas->RefreshView();
+		});
+		add("manual check", [=]() {
+			bool same = true;
+			for (int i = 0; i < 3; i++)
+			{
+				QPointF q;
+				same = same && m_overlays->LabelOf(vol(i), nullptr, nullptr, &q) && std::hypot(q.x() - (*auto_sq)[i].x(), q.y() - (*auto_sq)[i].y()) < 0.5;
+			}
+			log("manual: %d places kept", int(m_overlays->NamePositions().size()));
+			check(same && m_overlays->NamePositions().size() == 3, "Manual: every name stays where it was, its place kept");
+		});
+		auto rot0 = std::make_shared<QVector3D>();
+		add("drag", [=]() {
+			QRectF box;
+			QPointF a;
+			m_overlays->LabelOf(vol(0), &a, &box);
+			*rot0 = rotations();
+			// from the middle of A's name, 60 right and 40 down
+			const QPointF from(box.right() - 0.25 * box.width(), box.center().y());
+			drag(from, from + QPointF(60.0, 40.0));
+			m_canvas->RefreshView();
+		});
+		capture("objnames_drag");
+		add("drag check", [=]() {
+			const QImage img = load("objnames_drag");
+			QPointF a, q, off;
+			const bool ok = m_overlays->LabelOf(vol(0), &a, nullptr, &q) && offset_of(0, &off);
+			const QPointF want = (*auto_sq)[0] + QPointF(60.0, 40.0);
+			*drag_off = off;
+			const QVector3D r = rotations();
+			// the line from the cell body's square to the name's: white in the middle
+			const QPointF mid = 0.5 * (a + q);
+			int white = 0;
+			for (int dy = -2; dy <= 2; dy++)
+				for (int dx = -2; dx <= 2; dx++)
+				{
+					const QPoint pi = to_image(img, mid + QPointF(dx, dy));
+					if (img.rect().contains(pi))
+					{
+						const QRgb c = img.pixel(pi);
+						white += qRed(c) >= 230 && qGreen(c) >= 230 && qBlue(c) >= 230;
+					}
+				}
+			const QPoint qi = to_image(img, q);
+			const QRgb qpx = img.rect().contains(qi) ? img.pixel(qi) : 0;
+			log("dragged: A's square at %.1f, %.1f (wanted %.1f, %.1f), its colour %s; %d white pixels mid-line; rotation %.2f %.2f %.2f (before %.2f %.2f %.2f)",
+				q.x(), q.y(), want.x(), want.y(), rgb_str(qpx).constData(), white, r.x(), r.y(), r.z(), rot0->x(), rot0->y(), rot0->z());
+			check(ok && std::hypot(q.x() - want.x(), q.y() - want.y()) <= 1.0 && near(qpx, expect(cells[0]), 2) && white >= 1,
+				"a dragged name goes where it is dropped, after its square, with a line to its cell body's");
+			check((r - *rot0).length() < 1e-3, "dragging a name does not turn the view");
+			bool others = true;
+			for (int i = 1; i < 3; i++)
+			{
+				QPointF q2;
+				others = others && m_overlays->LabelOf(vol(i), nullptr, nullptr, &q2) && std::hypot(q2.x() - (*auto_sq)[i].x(), q2.y() - (*auto_sq)[i].y()) < 0.5;
+			}
+			check(others, "the other names stay where they were");
+			m_canvas->SetRotations(rot0->x(), rot0->y(), rot0->z() + 30.0);
+			m_canvas->RefreshView();
+		});
+		add("manual rotated", [=]() {
+			QPointF off;
+			const bool ok = offset_of(0, &off);
+			log("rotated: A's square - its cell body's %.1f, %.1f (dragged: %.1f, %.1f)", off.x(), off.y(), drag_off->x(), drag_off->y());
+			check(ok && std::hypot(off.x() - drag_off->x(), off.y() - drag_off->y()) <= 0.5, "Manual: a name keeps its place next to its cell body when the view turns");
+			m_canvas->SetRotations(rot0->x(), rot0->y(), rot0->z());
+			m_overlays->SetNamesManual(false);
+			m_canvas->RefreshView();
+		});
+		add("auto again", [=]() {
+			QPointF q;
+			const bool ok = m_overlays->LabelOf(vol(0), nullptr, nullptr, &q);
+			log("auto: A's square at %.1f, %.1f (auto layout %.1f, %.1f)", q.x(), q.y(), (*auto_sq)[0].x(), (*auto_sq)[0].y());
+			check(ok && std::hypot(q.x() - (*auto_sq)[0].x(), q.y() - (*auto_sq)[0].y()) < 0.5, "Auto: laid out automatically again");
+			m_overlays->SetNamesManual(true);
+			m_canvas->RefreshView();
+		});
+		add("manual again", [=]() {
+			QPointF off;
+			const bool ok = offset_of(0, &off);
+			check(ok && std::hypot(off.x() - drag_off->x(), off.y() - drag_off->y()) <= 0.5, "Manual again: the dragged name is back where it was dragged");
+		});
+		add("project", [=]() {
+			const QString prj = st->dir + "/objnames.vrp";
+			check(SaveProject(prj), "project saved");
+			QFile f(prj);
+			const QByteArray txt = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+			check(txt.contains("legend_on_objects=1"), "the project has legend_on_objects=1");
+			check(txt.contains("legend_names_manual=1") && txt.contains("/legend_names]") && txt.contains("name_0="),
+				"the project has legend_names_manual=1 and the names' places");
+			m_overlays->SetNamesOnObjects(false);
+			m_overlays->SetNamesManual(false);
+			m_overlays->ResetNamePositions();
+			check(OpenProject(prj), "project opened");
+			check(m_overlays && m_overlays->GetNamesOnObjects() && m_overlays->GetNamesManual(), "opened: Names on Objects on, placed by hand");
+			// B hidden at once: its cell body is computed anyway
+			if (VolumeData* b = vol(2)) b->SetDisp(false);
+			m_canvas->RefreshView();
+		});
+		add("hidden cell body", [=]() {
+			VolumeData* b = vol(2);
+			QElapsedTimer t;
+			t.start();
+			double fx, fy, fz;
+			while (t.elapsed() < 15000 && b && !m_overlays->CellBodyOf(b, fx, fy, fz))
+			{
+				m_canvas->RefreshOverlayChange();
+				wait(100);
+			}
+			const bool found = b && m_overlays->CellBodyOf(b, fx, fy, fz);
+			log("hidden cellB: cell body %s after %lld ms (shown %d)", found ? "found" : "none", t.elapsed(), b ? (int)b->GetDisp() : -1);
+			check(found && b && !b->GetDisp(), "a hidden volume with its legend on gets its cell body too (group captures name it)");
+			if (b) b->SetDisp(true);
+			m_canvas->RefreshView();
+		});
+		add("project labels", [=]() {
+			wait_labels("reopened");
+			QPointF off;
+			const bool ok = offset_of(0, &off);
+			log("reopened: A's square - its cell body's %.1f, %.1f (dragged: %.1f, %.1f)", off.x(), off.y(), drag_off->x(), drag_off->y());
+			check(ok && std::hypot(off.x() - drag_off->x(), off.y() - drag_off->y()) <= 1.0, "reopened: the dragged name where it was dragged");
+		});
+		add("drop on square", [=]() {
+			// A's name dropped onto its cell body's square: beside it again
+			QPointF a, q;
+			m_overlays->LabelOf(vol(0), &a, nullptr, &q);
+			drag(q, a + QPointF(2.0, -1.0));
+			m_canvas->RefreshView();
+		});
+		add("drop on square check", [=]() {
+			QPointF a, q;
+			const bool ok = m_overlays->LabelOf(vol(0), &a, nullptr, &q);
+			log("dropped on its square: A's square at %.1f, %.1f, its cell body's %.1f, %.1f", q.x(), q.y(), a.x(), a.y());
+			check(ok && q == a, "a name dropped onto its cell body's square is beside it again");
+			m_overlays->ResetNamePositions();
+			m_canvas->RefreshView();
+		});
+		add("reset check", [=]() {
+			bool same = true;
+			for (int i = 0; i < 3; i++)
+			{
+				QPointF a, q;
+				same = same && m_overlays->LabelOf(vol(i), &a, nullptr, &q);
+				log("reset: %s square - cell body %.1f, %.1f", name_of(i).constData(), q.x() - a.x(), q.y() - a.y());
+			}
+			// A collides with C (the automatic layout moves it by a line)
+			QPointF off;
+			check(same && offset_of(0, &off) && std::abs(off.x()) < 0.5 && std::abs(off.y()) > 1.0 && m_overlays->NamePositions().size() == 3,
+				"Reset Name Positions: laid out automatically again, kept there");
+			// Auto: a press on a name turns the view
+			m_overlays->SetNamesManual(false);
+			m_canvas->RefreshView();
+		});
+		add("auto press", [=]() {
+			QRectF box;
+			m_overlays->LabelOf(vol(0), nullptr, &box);
+			*rot0 = rotations();
+			const auto pos0 = m_overlays->NamePositions();
+			drag(box.center(), box.center() + QPointF(40.0, 0.0));
+			const QVector3D r = rotations();
+			const auto pos1 = m_overlays->NamePositions();
+			bool kept = pos0.size() == pos1.size();
+			for (size_t i = 0; kept && i < pos0.size(); i++) kept = pos0[i].first == pos1[i].first && pos0[i].second == pos1[i].second;
+			log("auto: a drag on a name: rotation %.2f %.2f %.2f (before %.2f %.2f %.2f)", r.x(), r.y(), r.z(), rot0->x(), rot0->y(), rot0->z());
+			check((r - *rot0).length() > 1.0 && kept, "Auto: a drag on a name turns the view, no name moves by hand");
+			m_canvas->SetRotations(rot0->x(), rot0->y(), rot0->z());
+			m_canvas->RefreshView();
+		});
+		add("menu", [=]() {
+			LegendMenu* menu = m_view ? m_view->GetLegendMenu() : nullptr;
+			QAction* a = menu ? menu->NamesOnObjectsAction() : nullptr;
+			if (!a) { check(false, "the Legend menu's Names on Objects"); return; }
+			menu->Reload();
+			const bool shown_on = a->isChecked() && a->isEnabled();
+			a->trigger();
+			const bool off = !m_overlays->GetNamesOnObjects() && !a->isChecked();
+			a->trigger();
+			log("menu: checked %d, after a click %d (overlays %d), after another %d", shown_on, a->isChecked(), off, m_overlays->GetNamesOnObjects());
+			check(shown_on && off && m_overlays->GetNamesOnObjects() && a->isChecked(), "the Legend menu item shows the option and toggles it");
+			// Name Position: Auto / Manual (drag names) / Reset Name Positions
+			QAction* pa = menu->NamesAutoAction();
+			QAction* pm = menu->NamesManualAction();
+			QAction* pr = menu->ResetNamesAction();
+			menu->Reload();
+			const bool auto_shown = pa && pm && pr && pa->isChecked() && !pm->isChecked() && pa->isEnabled() && pr->isEnabled();
+			if (pm) pm->trigger();
+			const bool to_manual = m_overlays->GetNamesManual() && pm && pm->isChecked() && !pa->isChecked();
+			m_canvas->RefreshView();
+			if (pr) pr->trigger();
+			const bool reset = m_overlays->NamePositions().empty();
+			if (pa) pa->trigger();
+			const bool to_auto = !m_overlays->GetNamesManual();
+			a->trigger();   // Names on Objects off: the placement items greyed
+			const bool greyed = pa && !pa->isEnabled() && !pm->isEnabled() && !pr->isEnabled();
+			a->trigger();
+			log("menu: Auto shown %d, Manual %d, Reset %d, Auto %d, greyed without names %d", auto_shown, to_manual, reset, to_auto, greyed);
+			check(auto_shown && to_manual && reset && to_auto && greyed, "the Legend menu's Name Position items show and switch the placement");
+		});
+	}
+
+	if (kind == "namesview")
+	{
+		// Names on Objects on whatever is loaded (a look at real data).
+		// VVD_QT_NAMES_SETUP=<file>: lines "<volume name> r g b gamma
+		// luminance shading alpha" (as a project stores them) set those
+		// volumes; Composite; every legend on. Waits for the cell bodies (up
+		// to 5 minutes), logging when each label appears, its cell body
+		// (voxels) and its label; captures namesview.png, then
+		// namesview_list.png with the names off.
+		add("setup", [=]() {
+			QFile f(qEnvironmentVariable("VVD_QT_NAMES_SETUP"));
+			if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+				for (const QString& line : QString::fromUtf8(f.readAll()).split('\n', Qt::SkipEmptyParts))
+				{
+					const QStringList v = line.simplified().split(' ');
+					if (v.size() < 8) continue;
+					VolumeData* vd = find_vol(v[0].toStdWString());
+					if (!vd) { log("no volume %s", v[0].toLocal8Bit().constData()); continue; }
+					vd->SetColor(FLIVR::Color(v[1].toDouble(), v[2].toDouble(), v[3].toDouble()));
+					const double g = v[4].toDouble(), b = v[5].toDouble();
+					vd->SetGamma(FLIVR::Color(g, g, g));
+					vd->SetBrightness(FLIVR::Color(b, b, b));
+					vd->SetHdr(FLIVR::Color(0.0, 0.0, 0.0));
+					vd->SetShading(v[6].toInt() != 0);
+					vd->SetAlpha(v[7].toDouble());
+					vd->SetEnableAlpha(true);
+				}
+			for (VolumeData* vd : m_canvas->Volumes()) vd->SetLegend(true);
+			m_canvas->SetVolMethod(RenderCanvas::VolMethodComp);
+			m_overlays->SetDrawLegend(true);
+			m_canvas->RefreshView();
+		});
+		add("names on", [=]() {
+			m_overlays->SetNamesOnObjects(true);
+			std::map<VolumeData*, qint64> seen;
+			QElapsedTimer t;
+			t.start();
+			const std::vector<VolumeData*> vols = m_canvas->Volumes();
+			while (t.elapsed() < 300000 && seen.size() < vols.size())
+			{
+				m_canvas->RefreshOverlayChange();
+				st->waiting_capture = true;
+				QElapsedTimer w;
+				w.start();
+				while (w.elapsed() < 100) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+				st->waiting_capture = false;
+				for (VolumeData* vd : vols)
+				{
+					double fx, fy, fz;
+					if (!seen.count(vd) && (m_overlays->CellBodyOf(vd, fx, fy, fz) || m_overlays->LabelOf(vd, nullptr, nullptr)))
+						seen[vd] = t.elapsed();
+				}
+				if (m_overlays->PendingCellBodies() == 0 && seen.size() < vols.size() && t.elapsed() > 2000) break;
+			}
+			for (VolumeData* vd : vols)
+			{
+				double fx = 0, fy = 0, fz = 0;
+				const bool cb = m_overlays->CellBodyOf(vd, fx, fy, fz);
+				QPointF a;
+				QRectF box;
+				const bool lab = m_overlays->LabelOf(vd, &a, &box);
+				int nx = 0, ny = 0, nz = 0;
+				vd->GetResolution(nx, ny, nz);
+				log("%ls: cell body %s at %.0f %.0f %.0f (voxels), %s at %.0f, %.0f, name %.0f,%.0f; after %lld ms",
+					vd->GetName().c_str(), cb ? "found" : "none", fx * nx, fy * ny, fz * nz, lab ? "label" : "no label",
+					a.x(), a.y(), box.x(), box.y(), seen.count(vd) ? seen[vd] : -1LL);
+			}
+		});
+		capture("namesview");
+		add("names off", [=]() { m_overlays->SetNamesOnObjects(false); });
+		capture("namesview_list");
 	}
 
 	if (kind == "panes")

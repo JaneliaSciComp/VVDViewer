@@ -1,7 +1,9 @@
 #include "LegendMenu.h"
 #include "RenderCanvas.h"
+#include "ViewOverlays.h"
 
 #include <QListWidget>
+#include <QSignalBlocker>
 #include <QWidgetAction>
 #include <QScrollBar>
 #include <QMouseEvent>
@@ -11,6 +13,7 @@
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QPainterPath>
+#include <QActionGroup>
 #include <algorithm>
 
 #include "DataManager.h"
@@ -66,6 +69,28 @@ LegendMenu::LegendMenu(RenderCanvas* canvas, QWidget* parent)
 	m_show_all = addAction(tr("Show All"));
 	m_hide_all = addAction(tr("Hide All"));
 	addSeparator();
+	m_on_objects = addAction(tr("Names on Objects"));
+	m_on_objects->setCheckable(true);
+	m_on_objects->setEnabled(false);   // until SetOverlays
+	m_on_objects->setToolTip(tr("Show each volume's name on its cell body (the thickest part of "
+		"the object) instead of in the list at the bottom of the view"));
+	m_pos_auto = addAction(tr("Name Position: Auto"));
+	m_pos_auto->setCheckable(true);
+	m_pos_auto->setToolTip(tr("Place the names automatically in every view, moving a name to a free "
+		"line where it would overlap another"));
+	m_pos_manual = addAction(tr("Name Position: Manual (drag names)"));
+	m_pos_manual->setCheckable(true);
+	m_pos_manual->setToolTip(tr("Keep each name where it is now; drag a name in the view to move it. "
+		"It keeps its place next to its cell body when the view turns, and is saved with the project."));
+	auto* pos_group = new QActionGroup(this);
+	pos_group->setExclusive(true);
+	pos_group->addAction(m_pos_auto);
+	pos_group->addAction(m_pos_manual);
+	m_pos_auto->setChecked(true);
+	m_pos_reset = addAction(tr("Reset Name Positions"));
+	m_pos_reset->setToolTip(tr("Place every name automatically again (in Manual: and keep it there)"));
+	setToolTipsVisible(true);
+	addSeparator();
 	m_empty = addAction(tr("(no volumes or meshes)"));
 	m_empty->setEnabled(false);
 
@@ -92,11 +117,51 @@ LegendMenu::LegendMenu(RenderCanvas* canvas, QWidget* parent)
 	connect(m_list, &QListWidget::itemClicked, this, &LegendMenu::OnItemClicked);
 	connect(m_show_all, &QAction::triggered, this, [this]() { SetAll(true); });
 	connect(m_hide_all, &QAction::triggered, this, [this]() { SetAll(false); });
+	connect(m_on_objects, &QAction::toggled, this, [this](bool on) {
+		if (m_overlays) m_overlays->SetNamesOnObjects(on);
+		SyncNameActions(); });
+	connect(m_pos_auto, &QAction::triggered, this, [this]() {
+		if (m_overlays) m_overlays->SetNamesManual(false); });
+	connect(m_pos_manual, &QAction::triggered, this, [this]() {
+		if (m_overlays) m_overlays->SetNamesManual(true); });
+	connect(m_pos_reset, &QAction::triggered, this, [this]() {
+		if (m_overlays) m_overlays->ResetNamePositions(); });
+	SyncNameActions();
 	connect(this, &QMenu::aboutToShow, this, &LegendMenu::Reload);
+}
+
+void LegendMenu::SetOverlays(ViewOverlays* ov)
+{
+	m_overlays = ov;
+	m_on_objects->setEnabled(ov != nullptr);
+	QSignalBlocker b(m_on_objects);
+	m_on_objects->setChecked(ov && ov->GetNamesOnObjects());
+	SyncNameActions();
+}
+
+// the placement items: the overlays' mode, usable with Names on Objects on
+void LegendMenu::SyncNameActions()
+{
+	const bool manual = m_overlays && m_overlays->GetNamesManual();
+	{
+		QSignalBlocker b1(m_pos_auto), b2(m_pos_manual);
+		m_pos_auto->setChecked(!manual);
+		m_pos_manual->setChecked(manual);
+	}
+	const bool on = m_overlays && m_on_objects->isChecked();
+	m_pos_auto->setEnabled(on);
+	m_pos_manual->setEnabled(on);
+	m_pos_reset->setEnabled(on);
 }
 
 void LegendMenu::Reload()
 {
+	if (m_overlays)
+	{
+		QSignalBlocker b(m_on_objects);
+		m_on_objects->setChecked(m_overlays->GetNamesOnObjects());
+	}
+	SyncNameActions();
 	const int scroll = m_list->verticalScrollBar()->value();
 	const int old_count = m_list->count();
 	m_list->clear();

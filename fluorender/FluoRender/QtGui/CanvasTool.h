@@ -34,6 +34,13 @@ public:
 	// not), before the active tool / camera see it. Cannot consume the event
 	// (e.g. the Info overlay follows the mouse).
 	virtual void HoverMove(QMouseEvent*) {}
+	// A left press the active tool (if any) did not take, offered to every
+	// registered tool before the camera gets it (e.g. a name dragged in the
+	// manual layout of Names on Objects). true: the tool takes the drag; its
+	// moves and its release then come to DragMove / DragRelease only.
+	virtual bool GrabPress(QMouseEvent*) { return false; }
+	virtual void DragMove(QMouseEvent*) {}
+	virtual void DragRelease(QMouseEvent*) {}
 
 	// Inside the frame (between prepareFrame and submitFrame), after the
 	// scene has been drawn into the swapchain image. GetMvMat()/GetProjMat()

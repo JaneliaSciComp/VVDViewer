@@ -178,6 +178,13 @@ namespace ProjectIO
 		double fog_intensity = 0.0;
 		bool draw_camctr = false, draw_fps = false, draw_legend = true;
 		bool has_draw_legend = false;     // LoadProject: the file has draw_legend
+		bool legend_on_objects = false;   // Qt "Names on Objects" (wx: no key)
+		// Qt: those names placed by hand (legend_names_manual) and the places
+		// (/properties/legend_names: name_<i>, pos_<i>: the name's square
+		// relative to its cell body's, in text lines)
+		bool legend_names_manual = false;
+		struct NamePos { QString name; double dx = 0.0, dy = 0.0; };
+		std::vector<NamePos> legend_name_pos;
 
 		// scale bar
 		bool disp_scale_bar = false, disp_scale_bar_text = false;

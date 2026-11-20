@@ -882,6 +882,18 @@ namespace
 		p.W(L"draw_camctr", v.draw_camctr);
 		p.W(L"draw_fps", v.draw_fps);
 		p.W(L"draw_legend", v.draw_legend);
+		p.W(L"legend_on_objects", v.legend_on_objects);
+		p.W(L"legend_names_manual", v.legend_names_manual);
+		if (!v.legend_name_pos.empty())
+		{
+			const Sec n = p.Sub(L"legend_names");
+			n.W(L"num", (long)v.legend_name_pos.size());
+			for (size_t i = 0; i < v.legend_name_pos.size(); i++)
+			{
+				n.W(L"name_" + std::to_wstring(i), v.legend_name_pos[i].name);
+				n.W(L"pos_" + std::to_wstring(i), Fmt(v.legend_name_pos[i].dx) + L" " + Fmt(v.legend_name_pos[i].dy));
+			}
+		}
 
 		p.W(L"translation", Fmt3(v.transx, v.transy, v.transz));
 		p.W(L"rotation", Fmt3(v.rotx, v.roty, v.rotz));
@@ -941,6 +953,21 @@ namespace
 		p.Read(L"draw_camctr", v.draw_camctr);
 		p.Read(L"draw_fps", v.draw_fps);
 		v.has_draw_legend = p.Read(L"draw_legend", v.draw_legend);
+		p.Read(L"legend_on_objects", v.legend_on_objects);
+		p.Read(L"legend_names_manual", v.legend_names_manual);
+		v.legend_name_pos.clear();
+		const Sec names = p.Sub(L"legend_names");
+		for (long i = 0, num = names.Num(); i < num; i++)
+		{
+			ProjectIO::ProjectView::NamePos np;
+			double d[2];
+			if (names.Read(L"name_" + std::to_wstring(i), np.name) && names.ReadN(L"pos_" + std::to_wstring(i), d, 2))
+			{
+				np.dx = d[0];
+				np.dy = d[1];
+				v.legend_name_pos.push_back(np);
+			}
+		}
 
 		p.Read3(L"translation", v.transx, v.transy, v.transz);
 		p.Read3(L"rotation", v.rotx, v.roty, v.rotz);
